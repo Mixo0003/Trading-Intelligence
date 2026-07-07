@@ -55,11 +55,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     elif data == "status":
         await query.edit_message_text(
-            "📊 Status\n\n"
-            "✅ Bot online\n"
-            "✅ Telegram notifier works\n"
-            "✅ Scheduler ready\n"
-            "✅ Scanner ready",
+            "📊 System Status\n\n"
+            "Bot: Online\n"
+            "Telegram UI: Active\n"
+            "Manual scanner: Available via Scan Now\n"
+            "Scheduler: Separate process, not verified from this screen\n"
+            "Last scan: shown after manual Scan Now\n\n"
+            "Note: this screen only shows what the Telegram process can verify.",
             reply_markup=main_menu_keyboard(),
         )
 
