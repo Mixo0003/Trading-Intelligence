@@ -15,6 +15,7 @@ def run_single_scan(settings: Settings) -> None:
     result = scan_polymarket_weather_markets(
         settings=settings,
         limit=50,
+        min_edge=0.05,
     )
 
     logger.info(
