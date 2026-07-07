@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from telegram import Bot
@@ -15,11 +16,15 @@ def send_telegram_message(
 ) -> bool:
     try:
         bot = Bot(token=settings.telegram_token)
-        bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            disable_web_page_preview=True,
+
+        asyncio.run(
+            bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                disable_web_page_preview=True,
+            )
         )
+
         return True
 
     except Exception as exc:
