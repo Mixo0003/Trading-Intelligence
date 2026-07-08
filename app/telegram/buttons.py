@@ -15,3 +15,20 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🆘 Support", callback_data="support"),
         ],
     ])
+
+
+def filters_keyboard():
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("➖ Min Edge", callback_data="filters:min_edge_down"),
+            InlineKeyboardButton("➕ Min Edge", callback_data="filters:min_edge_up"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Toggle Notifications", callback_data="filters:toggle_notifications"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Back", callback_data="main:back"),
+        ],
+    ])
