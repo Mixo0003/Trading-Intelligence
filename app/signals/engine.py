@@ -4,6 +4,7 @@ from app.signals.generator import WeatherSignal
 from app.weather.forecast import fetch_weather_gov_forecast
 from app.weather.resolution import parse_resolution_details
 from app.weather.stations import get_station
+from app.weather.station_resolver import resolve_station_from_text
 from app.config.settings import Settings
 
 
@@ -38,7 +39,7 @@ def analyze_weather_market(
     text = _market_text(market)
     resolution = parse_resolution_details(text)
 
-    station = get_station(resolution.station_code)
+    station = resolve_station_from_text(text)
 
     forecast = None
     if station is not None:
