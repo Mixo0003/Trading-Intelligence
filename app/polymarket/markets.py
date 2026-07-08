@@ -5,13 +5,39 @@ from app.polymarket.parser import parse_event, parse_market
 
 WEATHER_KEYWORDS = [
     "weather",
+    "rain",
+    "rainfall",
+    "precipitation",
+    "snow",
+    "snowfall",
+    "wind",
+    "wind speed",
+    "gust",
     "temperature",
     "high temperature",
+    "low temperature",
     "daily high",
+    "daily low",
     "hotter",
     "colder",
     "heat",
+    "cold",
+    "noaa",
+    "nws",
+    "national weather service",
+    "weather.gov",
+    "weather underground",
+    "wunderground",
 ]
+
+
+def _market_search_text(market: PolymarketMarket) -> str:
+    return " ".join([
+        market.question or "",
+        market.description or "",
+        market.rules or "",
+        market.slug or "",
+    ]).lower()
 
 
 def get_active_markets(
@@ -30,6 +56,7 @@ def get_active_markets(
     )
 
     items = data if isinstance(data, list) else data.get("markets", [])
+
     return [
         parse_market(item)
         for item in items
@@ -45,12 +72,7 @@ def get_weather_markets(
 
     weather_markets: list[PolymarketMarket] = []
     for market in markets:
-        text = " ".join([
-            market.question or "",
-            market.description or "",
-            market.rules or "",
-            market.slug or "",
-        ]).lower()
+        text = _market_search_text(market)
 
         if any(keyword in text for keyword in WEATHER_KEYWORDS):
             weather_markets.append(market)

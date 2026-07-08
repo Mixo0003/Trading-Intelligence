@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from datetime import date
 
 
 @dataclass(frozen=True)
@@ -17,8 +16,22 @@ def extract_station_code(text: str) -> str | None:
     if not text:
         return None
 
-    matches = re.findall(r"\bK[A-Z]{3}\b", text.upper())
-    return matches[0] if matches else None
+    upper = text.upper()
+
+    # Prefer explicit airport/weather station codes: KORD, KJFK, KLAX, KDFW, KPHX
+    matches = re.findall(r"\bK[A-Z]{3}\b", upper)
+    if matches:
+        return matches[0]
+
+    # Fallback only if text explicitly says station
+    match = re.search(r"(?:STATION|WEATHER STATION|AIRPORT)\s+([A-Z]{3,4})\b", upper)
+    if match:
+        code = match.group(1)
+        if len(code) == 3:
+            return "K" + code
+        return code
+
+    return None
 
 
 def extract_resolution_source(text: str) -> str | None:
@@ -42,10 +55,19 @@ def extract_resolution_source(text: str) -> str | None:
 def extract_metric(text: str) -> str | None:
     lower = (text or "").lower()
 
-    if any(word in lower for word in ["high temperature", "daily high", "maximum temperature", "max temperature"]):
+    if any(w in lower for w in ["rain", "rainfall", "precipitation"]):
+        return "rain"
+
+    if any(w in lower for w in ["snow", "snowfall"]):
+        return "snow"
+
+    if any(w in lower for w in ["wind", "wind speed", "gust"]):
+        return "wind"
+
+    if any(w in lower for w in ["high temperature", "daily high", "maximum temperature", "max temperature"]):
         return "max_temperature_f"
 
-    if any(word in lower for word in ["low temperature", "daily low", "minimum temperature", "min temperature"]):
+    if any(w in lower for w in ["low temperature", "daily low", "minimum temperature", "min temperature"]):
         return "min_temperature_f"
 
     if "temperature" in lower:
@@ -68,8 +90,10 @@ def extract_threshold_f(text: str) -> float | None:
         r"(\d{2,3}(?:\.\d+)?)\s*f\b",
     ]
 
+    lower = text.lower()
+
     for pattern in patterns:
-        match = re.search(pattern, text.lower())
+        match = re.search(pattern, lower)
         if match:
             try:
                 return float(match.group(1))
