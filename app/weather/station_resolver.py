@@ -10,9 +10,11 @@ def _clean_code(code: str | None) -> str | None:
 
     code = code.strip().upper()
 
-    if re.fullmatch(r"K[A-Z]{3}", code):
+    # Any official 4-letter ICAO code: KLGA, SBGR, VILK, MPMG, EGLL, RJTT
+    if re.fullmatch(r"[A-Z]{4}", code):
         return code
 
+    # US shorthand: LGA -> KLGA, JFK -> KJFK
     if re.fullmatch(r"[A-Z]{3}", code):
         return "K" + code
 
@@ -25,32 +27,36 @@ def extract_station_code_from_text(text: str) -> str | None:
 
     upper = text.upper()
 
-    # Direct ICAO code: KLGA, KORD, KJFK
-    match = re.search(r"\bK[A-Z]{3}\b", upper)
-    if match:
-        return match.group(0)
+    # First trust URL ending: .../KLGA, .../SBGR, .../VILK, .../MPMG
+    for url in extract_urls_from_text(text):
+        clean_url = url.rstrip(".,;)")
+        last_part = clean_url.rstrip("/").split("/")[-1].split("?")[0].upper()
+        code = _clean_code(last_part)
+        if code:
+            return code
 
-    # URLs often contain official station code: /KLGA, ?station=KLGA, stationId=KLGA, airport_code=KLGA
-    url_code_patterns = [
-        r"/(K[A-Z]{3})(?:\\b|/|\\?|$)",
+    # Query params
+    query_match = re.search(
         r"[?&](?:station|stationId|station_id|airport|airport_code|icao)=([A-Z]{3,4})(?:&|$)",
-    ]
+        upper,
+    )
+    if query_match:
+        code = _clean_code(query_match.group(1))
+        if code:
+            return code
 
-    for pattern in url_code_patterns:
-        match = re.search(pattern, upper)
-        if match:
-            code = _clean_code(match.group(1))
-            if code:
-                return code
+    # Direct ICAO code in text
+    match = re.search(r"\b[A-Z]{4}\b", upper)
+    if match:
+        code = _clean_code(match.group(0))
+        if code:
+            return code
 
-    # Station wording: LaGuardia Airport Station / JFK Airport Station
     match = re.search(r"\b([A-Z]{3})\s+(?:AIRPORT|STATION)\b", upper)
     if match:
         return _clean_code(match.group(1))
 
     return None
-
-
 
 def extract_urls_from_text(text: str) -> list[str]:
     if not text:
