@@ -1,6 +1,24 @@
 # Market Analysis Strategy
 
-Standard workflow for evaluating any prediction market opportunity.
+End-to-end workflow for evaluating prediction market opportunities in Trading Intelligence.
+
+---
+
+## Prompt Dependencies
+
+This workflow sits in the prompt stack below `system_prompt.md`. Use these files together:
+
+| File | Role in workflow |
+|------|------------------|
+| `thinking_rules.md` | Internal discipline — read first; skip conditions; facts vs assumptions |
+| `strategy.md` | This file — step-by-step analysis workflow |
+| `risk_policy.md` | Bankroll caps, EV thresholds, position sizing |
+| `response_format.md` | Standard output template for final answer |
+| `polymarket.md` | Polymarket metadata, prices, resolution-first rules |
+| `weather.md` | Station, forecast, Wunderground/NWS rules |
+| `sports.md` | Injuries, lineups, pre-match vs live rules |
+
+**Order of application:** `thinking_rules.md` → this workflow → domain prompt → `risk_policy.md` → `response_format.md`
 
 ---
 
@@ -10,85 +28,86 @@ Standard workflow for evaluating any prediction market opportunity.
 
 Classify the market before applying domain rules:
 
-- **Weather** — temperature, precipitation, hurricane, climate threshold
-- **Sports** — match outcome, props, futures, live events
+- **Weather** — temperature, precipitation, hurricane, climate threshold → `weather.md`
+- **Sports** — match outcome, props, futures, live → `sports.md`
 - **Politics / macro** — elections, policy, economic releases
 - **Crypto / finance** — price thresholds, ETF, protocol events
 - **Other** — entertainment, science, custom events
 
-Route to the appropriate domain prompt (`weather.md`, `sports.md`, etc.) after completing common steps.
+All Polymarket markets also follow `polymarket.md`.
 
 ### 2. Read title, description, and rules
 
-- Read the full market **title**, **description**, and **rules** text.
-- Do not infer resolution criteria from the title alone.
-- Note ambiguities, conditional clauses, and edge cases in the rules.
+- Read full **title**, **description**, and **rules** text.
+- **Never analyze from the title alone** (see `thinking_rules.md`).
+- Note ambiguities, conditional clauses, and edge cases.
 
 ### 3. Extract resolution source
 
-- Identify the **official resolution source** named in the market (e.g., Weather Underground, NWS/weather.gov, league official site, AP/Reuters).
-- Extract URLs, station codes, data fields, and measurement windows if specified.
-- If resolution source or criteria are missing or unclear → **SKIP** with reason.
+- Identify the **official resolution source** from rules.
+- Extract URLs, station codes, data fields, and measurement windows.
+- Missing or unclear resolution source → **SKIP** (`thinking_rules.md`).
 
 ### 4. Extract current market price
 
-- Record current **YES** and **NO** prices (or all outcome prices for multi-outcome markets).
-- Note bid/ask spread, liquidity, and time to resolution if available.
-- Use the price relevant to the side under evaluation.
+- Record **YES** and **NO** prices (or all outcome prices).
+- Note spread, liquidity, and time to resolution.
+- Missing price → **SKIP**.
 
 ### 5. Convert price to implied probability
 
-For binary markets:
-
 ```
-implied_probability = price  (when price is in 0–1 decimal form)
-implied_probability = price / 100  (when price is in cents)
+implied_probability = price          (0–1 decimal)
+implied_probability = price / 100    (cents)
 ```
 
-Account for fees, spread, and partial fills when discussing practical EV.
+Account for fees and spread when discussing practical EV.
 
-### 6. Estimate real probability from verified data
+### 6. Estimate probability from verified data
 
-- Pull data only from verified sources aligned with resolution rules.
-- Build a model probability for the relevant outcome.
-- Document every input: source, timestamp, and confidence in the input.
-- Separate **verified** inputs from **estimated** inputs.
+- Pull data only from resolution-aligned sources (domain prompt).
+- Build **estimated probability** for the evaluated outcome.
+- Separate **verified facts**, **assumptions**, and **model estimates** (`thinking_rules.md`).
 
 ### 7. Calculate EV and edge
 
 ```
-edge = model_probability − implied_probability   (for YES side; invert for NO)
-EV% ≈ edge × 100   (simplified; adjust for fees and payout structure when known)
+edge = estimated_probability − implied_probability   (evaluated side)
+EV% ≈ edge × 100   (simplified; adjust for fees when known)
 ```
 
-Cross-check against thresholds in `prompts/risk_policy.md`.
+Gate against thresholds in `risk_policy.md`.
 
 ### 8. Return recommendation
 
 | Tier | Typical conditions |
 |------|-------------------|
-| **AVOID** | Negative EV, unclear rules, bad liquidity, or EV below minimum threshold |
-| **WATCH** | Interesting but insufficient data, marginal EV, or high uncertainty |
-| **SMALL BET** | Positive EV in 3–7% range, moderate confidence |
-| **NORMAL BET** | Positive EV in 7–15% range, good data alignment with rules |
-| **STRONG OPPORTUNITY** | EV > 15%, high confidence, clear resolution source, rules fully understood |
+| **SKIP** | Missing resolution source, price, or critical domain data |
+| **AVOID** | Negative EV, EV below minimum, poor liquidity |
+| **WATCH** | Marginal EV, insufficient secondary data, high uncertainty |
+| **SMALL BET** | EV 3–7%, moderate confidence |
+| **NORMAL BET** | EV 7–15%, strong rule/data alignment |
+| **STRONG OPPORTUNITY** | EV > 15%, high confidence, clear resolution |
 
-Apply position sizing from `prompts/risk_policy.md` in parallel with the tier.
+Apply position sizing from `risk_policy.md`.
 
-### 9. Explain exact reason and uncertainty
+### 9. Explain reason and uncertainty
 
-Every recommendation must include:
+Every recommendation must state:
 
-- **Why** — the specific edge, mispricing, or lack thereof
-- **Key drivers** — forecast, form, injury, rule clause, etc.
-- **What could go wrong** — resolution disputes, model error, late news, weather variance
-- **Missing data** — anything that would change the recommendation if obtained
+- **Why** — specific edge, mispricing, or lack thereof
+- **Key drivers** — forecast, form, rule clause, etc.
+- **What could go wrong** — resolution disputes, model error, late news
+- **Missing data** — exact fields that would change the call
+
+Format output per `response_format.md`.
 
 ---
 
 ## Decision Principles
 
-- **Resolution-first:** If you cannot verify how the market resolves, do not bet — **SKIP**.
-- **Price is not truth:** Market price is the benchmark to beat, not evidence of outcome probability.
-- **Time decay:** Re-evaluate as resolution approaches; forecasts and lineups change.
+- **Resolution-first:** Cannot verify resolution → **SKIP**, not bet.
+- **Price is not truth:** Market price is the benchmark to beat.
+- **Calculate only with inputs:** No guessed prices or forecasts (`thinking_rules.md`).
+- **Time decay:** Re-evaluate as resolution approaches.
 - **No narrative trading:** Stories without verified data do not justify a bet.

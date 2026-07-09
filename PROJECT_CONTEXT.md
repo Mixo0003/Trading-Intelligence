@@ -103,14 +103,17 @@ Dependencies: `requirements_v1.txt`
 
 ## AI and Prompts
 
-AI assistants working on or with this project should read:
+Prompt stack (read in order for market analysis):
 
-- `prompts/system_prompt.md` — role, truth rules, calculation requirements
-- `prompts/strategy.md` — 9-step market analysis workflow
-- `prompts/risk_policy.md` — bankroll and EV thresholds
-- `prompts/polymarket.md` — Polymarket-specific agent rules
-- `prompts/weather.md` — weather market agent rules
-- `prompts/sports.md` — sports rules (future)
+1. `prompts/system_prompt.md` — **AI constitution** (truth-first, no hallucination, no profit guarantees)
+2. `prompts/thinking_rules.md` — internal analysis discipline and skip conditions
+3. `prompts/strategy.md` — end-to-end market analysis workflow
+4. `prompts/risk_policy.md` — bankroll and EV thresholds
+5. `prompts/response_format.md` — standard analysis output template
+6. Domain prompts — `polymarket.md`, `weather.md`, `sports.md`
+
+Development and Cursor:
+
 - `prompts/coding_rules.md` — code change discipline
 - `cursor_rules.md` — short Cursor agent rules
 
