@@ -40,6 +40,8 @@ def _resolve_bankroll_cap(
 def _base_tier_from_ev(ev: float) -> RecommendationTier:
     if ev < EV_THRESHOLD_WATCH:
         return RecommendationTier.WATCH
+    if ev < EV_THRESHOLD_SMALL_BET:
+        return RecommendationTier.WATCH
     if ev < EV_THRESHOLD_NORMAL_BET:
         return RecommendationTier.SMALL_BET
     if ev < EV_THRESHOLD_STRONG_OPPORTUNITY:

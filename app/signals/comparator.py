@@ -33,6 +33,10 @@ def compare_weather_market(data: WeatherComparisonInput) -> WeatherSignal:
             confidence_score=0.0,
             confidence_label="LOW",
             edge=None,
+            ev=None,
+            kelly_fraction=None,
+            recommendation_tier="SKIP",
+            market_probability=None,
             message=message,
         )
 
@@ -43,6 +47,10 @@ def compare_weather_market(data: WeatherComparisonInput) -> WeatherSignal:
             confidence_score=0.0,
             confidence_label="LOW",
             edge=None,
+            ev=None,
+            kelly_fraction=None,
+            recommendation_tier="SKIP",
+            market_probability=None,
             message="⚠️ WEATHER MARKET SKIPPED\n\nReason:\n• Missing forecast temperature.",
         )
 

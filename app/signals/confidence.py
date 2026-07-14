@@ -1,9 +1,16 @@
+from app.ev.types import ConfidenceLevel
+
+
 def confidence_label(score: float) -> str:
     if score >= 0.80:
         return "HIGH"
     if score >= 0.55:
         return "MEDIUM"
     return "LOW"
+
+
+def confidence_score_to_level(score: float) -> ConfidenceLevel:
+    return ConfidenceLevel(confidence_label(score))
 
 
 def calculate_basic_confidence(

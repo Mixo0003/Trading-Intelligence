@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from app.config.settings import Settings
+from app.ev.types import RecommendationTier
 from app.polymarket.client import PolymarketClient
 from app.polymarket.markets import get_weather_markets
 from app.signals.engine import analyze_weather_market
@@ -11,6 +12,13 @@ from app.signals.generator import WeatherSignal
 class ScanResult:
     total_markets: int
     signals: list[WeatherSignal]
+
+
+_BET_TIERS = frozenset({
+    RecommendationTier.SMALL_BET.value,
+    RecommendationTier.NORMAL_BET.value,
+    RecommendationTier.STRONG_OPPORTUNITY.value,
+})
 
 
 def _passes_min_edge(signal: WeatherSignal, min_edge: float) -> bool:
@@ -47,7 +55,7 @@ def scan_polymarket_weather_markets(
             if signal is None:
                 continue
 
-            if signal.decision != "POSSIBLE VALUE":
+            if signal.decision not in _BET_TIERS:
                 continue
 
             if not _passes_min_edge(signal, min_edge):
