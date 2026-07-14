@@ -1,3 +1,5 @@
+import re
+
 from app.polymarket.client import PolymarketClient
 from app.polymarket.models import PolymarketEvent, PolymarketMarket
 from app.polymarket.parser import parse_event, parse_market
@@ -30,6 +32,8 @@ WEATHER_KEYWORDS = [
     "wunderground",
 ]
 
+DAILY_TEMPERATURE_TAG_ID = "103040"
+
 
 def _market_search_text(market: PolymarketMarket) -> str:
     return " ".join([
@@ -38,6 +42,14 @@ def _market_search_text(market: PolymarketMarket) -> str:
         market.rules or "",
         market.slug or "",
     ]).lower()
+
+
+def _contains_weather_keyword(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        re.search(rf"\b{re.escape(keyword)}\b", lowered)
+        for keyword in WEATHER_KEYWORDS
+    )
 
 
 def get_active_markets(
@@ -74,7 +86,7 @@ def get_weather_markets(
     for market in markets:
         text = _market_search_text(market)
 
-        if any(keyword in text for keyword in WEATHER_KEYWORDS):
+        if _contains_weather_keyword(text):
             weather_markets.append(market)
 
     return weather_markets
@@ -116,3 +128,48 @@ def get_market_by_slug(
             return parse_market(data)
 
     return None
+
+
+def get_weather_events(
+    client: PolymarketClient,
+    limit: int = 200,
+) -> list[PolymarketEvent]:
+    """Return active weather events, including their live sibling markets."""
+    items = []
+    for offset in range(0, limit, 100):
+        page_limit = min(100, limit - offset)
+        data = client.get_json(
+            "/events",
+            params={
+                "active": "true",
+                "closed": "false",
+                "limit": page_limit,
+                "offset": offset,
+                "order": "volume24hr",
+                "ascending": "false",
+                "tag_id": DAILY_TEMPERATURE_TAG_ID,
+            },
+        )
+        page = data if isinstance(data, list) else data.get("events", [])
+        items.extend(page)
+        if len(page) < page_limit:
+            break
+    events = [
+        parse_event(item)
+        for item in items
+        if isinstance(item, dict)
+    ]
+    return [
+        event
+        for event in events
+        if _contains_weather_keyword(
+            " ".join([
+                event.title or "",
+                event.description,
+                " ".join(
+                    _market_search_text(market)
+                    for market in event.markets
+                ),
+            ])
+        )
+    ]
