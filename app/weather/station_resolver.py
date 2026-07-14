@@ -45,12 +45,20 @@ def extract_station_code_from_text(text: str) -> str | None:
         if code:
             return code
 
-    # Direct ICAO code in text
-    match = re.search(r"\b[A-Z]{4}\b", upper)
+    # Explicit station wording is safer than accepting any four-letter word.
+    match = re.search(
+        r"(?:ICAO|STATION|AIRPORT)(?:\s+(?:CODE|ID))?\s*[:#-]?\s*([A-Z]{3,4})\b",
+        upper,
+    )
     if match:
-        code = _clean_code(match.group(0))
+        code = _clean_code(match.group(1))
         if code:
             return code
+
+    # US ICAO codes have an unambiguous K prefix.
+    match = re.search(r"\bK[A-Z]{3}\b", upper)
+    if match:
+        return match.group(0)
 
     match = re.search(r"\b([A-Z]{3})\s+(?:AIRPORT|STATION)\b", upper)
     if match:
@@ -104,6 +112,8 @@ def _fetch_station_from_aviationweather(code: str) -> WeatherStation | None:
         lat = item.get("lat") or item.get("latitude")
         lon = item.get("lon") or item.get("longitude")
         name = item.get("site") or item.get("name") or item.get("stationName") or code
+        elevation = item.get("elev") or item.get("elevation")
+        station_timezone = item.get("timezone") or item.get("tz")
 
         if lat is None or lon is None:
             return None
@@ -113,6 +123,8 @@ def _fetch_station_from_aviationweather(code: str) -> WeatherStation | None:
             name=str(name),
             latitude=float(lat),
             longitude=float(lon),
+            elevation_m=float(elevation) if elevation is not None else None,
+            timezone=str(station_timezone) if station_timezone else None,
         )
     except Exception:
         return None

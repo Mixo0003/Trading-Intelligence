@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-14
+
+- Added persistent, station-local temperature forecast snapshots.
+- Separated forecast-only results and watch items from validated betting opportunities.
+- Added cached Telegram Scan Now, Top Signals, and Today’s Forecast reporting.
+- Added live sibling-outcome mapping and Miami/Paris workflow regressions.
+
 ## 2026-07-02
 
 - Created clean GitHub repository.

@@ -5,6 +5,10 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📡 Scan Now", callback_data="scan_now"),
+            InlineKeyboardButton("📈 Top Signals", callback_data="top_signals"),
+        ],
+        [
+            InlineKeyboardButton("📅 Today’s Forecast", callback_data="today_forecast"),
             InlineKeyboardButton("📊 Status", callback_data="status"),
         ],
         [
