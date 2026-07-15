@@ -23,13 +23,13 @@ from app.polymarket.sibling_outcomes import (
     parse_sibling_outcomes,
 )
 from app.signals.bucket_probability import (
-    DEFAULT_FORECAST_SIGMA_C,
     OutcomeProbability,
-    compute_sibling_probabilities,
     default_sigma,
     expected_range,
 )
+from app.signals.probability_distribution import DistributionContext, distribute_market_probabilities
 from app.signals.confidence import calculate_basic_confidence, confidence_label
+from app.signals.live_triggers import build_live_triggers
 from app.signals.forecast_display import (
     compute_display_status,
     forecast_confidence_level,
@@ -88,7 +88,9 @@ def _ensemble_confidence_score(
     if forecast_stats is None:
         return base_score * 0.5
     score = base_score
-    if forecast_stats.ensemble_provider_count < 2:
+    if forecast_stats.ensemble_provider_count < 3:
+        score -= 0.35
+    elif forecast_stats.ensemble_provider_count < 2:
         score -= 0.25
     if forecast_stats.provider_spread_c > MATERIAL_SPREAD_C:
         score -= 0.30
@@ -282,6 +284,8 @@ def _cap_tier(
     forecast_stats: DailyForecastStats | None,
 ) -> str:
     if forecast_stats is not None:
+        if forecast_stats.ensemble_provider_count < 3:
+            return "WATCH" if tier != "SKIP" else "SKIP"
         if forecast_stats.ensemble_provider_count < 2:
             return "WATCH" if tier != "SKIP" else "SKIP"
         if forecast_stats.provider_spread_c > MATERIAL_SPREAD_C:
@@ -319,21 +323,19 @@ def _format_forecast_diagnostics(
         return format_temperature(native, unit)
 
     divergence_display = _delta_display(
-        forecast_stats.open_meteo_divergence_c,
+        forecast_stats.reference_divergence_c,
         unit,
     )
+    providers = forecast_stats.forecast_provider_label or forecast_stats.provider
 
     return (
         f"Station coords: {forecast_stats.station_latitude:.5f}, "
         f"{forecast_stats.station_longitude:.5f} "
         f"(elev {forecast_stats.station_elevation_m or 0:.0f}m)\n"
-        f"Open-Meteo grid: {forecast_stats.open_meteo_grid_latitude}, "
-        f"{forecast_stats.open_meteo_grid_longitude} "
-        f"(distance {forecast_stats.grid_distance_km or 0:.2f} km)\n"
-        f"GFS forecast low: {_temp_c(forecast_stats.gfs_forecast_c)}\n"
-        f"ECMWF forecast low: {_temp_c(forecast_stats.ecmwf_forecast_c)}\n"
-        f"Reference forecast low: {_temp_c(forecast_stats.reference_value_c)}\n"
-        f"Open-Meteo divergence: {divergence_display}"
+        f"Independent sources: {providers}\n"
+        f"Reference ({forecast_stats.reference_provider or 'n/a'}): "
+        f"{_temp_c(forecast_stats.reference_value_c)}\n"
+        f"Max source divergence: {divergence_display}"
     )
 
 
@@ -388,11 +390,18 @@ def analyze_temperature_event(
         forecast_stats.provider_spread_c if forecast_stats else 0.0,
         market_unit,
     )
+    spread_native = _spread_native(
+        forecast_stats.provider_spread_c if forecast_stats else 0.0,
+        market_unit,
+    )
     sibling_probs = (
-        compute_sibling_probabilities(
+        distribute_market_probabilities(
             sibling_outcomes,
-            forecast_native,
-            unit=market_unit,
+            DistributionContext(
+                consensus_native=forecast_native,
+                spread_native=spread_native,
+                unit=market_unit,
+            ),
             sigma=sigma_native,
         )
         if forecast_native is not None
@@ -601,6 +610,38 @@ def analyze_temperature_event(
         unit=market_unit,
     )
 
+    def _build_band_rows() -> tuple[tuple[str, float, float, float | None], ...]:
+        if not sibling_probs:
+            return ()
+        ranked = sorted(sibling_probs, key=lambda item: item.probability, reverse=True)
+        rows: list[tuple[str, float, float, float | None]] = []
+        for item in ranked[:3]:
+            market_p = item.outcome.yes_price
+            if market_p is None:
+                continue
+            edge_val = item.probability - market_p
+            rows.append((item.outcome.label, item.probability, market_p, edge_val))
+        return tuple(rows)
+
+    forecast_sources_line = ""
+    if forecast_stats and forecast_stats.provider_names:
+        parts = []
+        for name in forecast_stats.provider_names:
+            parts.append(name)
+        forecast_sources_line = ", ".join(parts)
+
+    live_trigger_list: tuple[str, ...] = ()
+    if station and station.verified and forecast_native is not None:
+        live_trigger_list = tuple(
+            build_live_triggers(
+                station,
+                event_type_label=type_label,
+                consensus_native=forecast_native,
+                unit=market_unit,
+                target_date_local=resolution.target_date,
+            )
+        )
+
     return MarketAnalysis(
         market_title=event_title or context_market.question or "Unknown event",
         market_url=market_polymarket_url(context_market),
@@ -679,4 +720,7 @@ def analyze_temperature_event(
             else None
         ),
         display_reason=display_reason,
+        band_rows=_build_band_rows(),
+        live_triggers=live_trigger_list,
+        forecast_sources_line=forecast_sources_line,
     )

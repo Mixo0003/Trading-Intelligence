@@ -115,7 +115,7 @@ class TestForecastFirstWorkflow:
 
         final_text = _edited_text(update)
         assert "Forecasts available: 1" in final_text
-        assert "Status: FORECAST ONLY" in final_text
+        assert "Decision: FORECAST ONLY" in final_text
         assert "Validated opportunities: 0" in final_text
 
     @pytest.mark.asyncio
@@ -145,7 +145,7 @@ class TestForecastFirstWorkflow:
         scan_mock.assert_not_called()
         final_text = _edited_text(update)
         assert "ALL REGIONS FORECASTS" in final_text
-        assert "Status: FORECAST ONLY" in final_text
+        assert "Decision: FORECAST ONLY" in final_text
 
     @pytest.mark.asyncio
     async def test_forecast_empty_cache_message(self, db_settings):
@@ -174,5 +174,5 @@ class TestForecastFirstWorkflow:
         )
         await forecast_command(update, context)
         final_text = _edited_text(update)
-        assert "Forecast: 31°C" in final_text
-        assert "Status: FORECAST ONLY" in final_text
+        assert "consensus 31°C" in final_text
+        assert "Decision: FORECAST ONLY" in final_text

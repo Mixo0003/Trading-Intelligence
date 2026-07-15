@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.polymarket.market_type import NormalizedTemperatureType, TemperatureMarketType
+from app.signals.forecast_display import DISPLAY_VALIDATED
 from app.signals.market_analysis import MarketAnalysis, ScanProgress
 from app.region.types import ScanRegion
 from app.telegram.buttons import BTN_TOP_SIGNALS
@@ -42,12 +43,12 @@ def _analysis(**kwargs) -> MarketAnalysis:
         confidence="MEDIUM",
         recommendation_tier="NORMAL BET",
         reason="test",
-        display_status="VALIDATED OPPORTUNITY",
+        display_status=DISPLAY_VALIDATED,
         forecast_confidence="HIGH",
         display_reason="Passed conservative betting validation.",
-        forecast_gateway="Open-Meteo",
-        forecast_models="GFS",
-        data_sources=["open_meteo"],
+        forecast_gateway="NWS, Weather.com, MET Norway",
+        forecast_models="NWS",
+        data_sources=["NWS", "Weather.com", "MET Norway"],
         analyzed_at=datetime.now(timezone.utc).isoformat(),
         message="",
         confidence_score=0.8,
@@ -212,7 +213,7 @@ class TestTopSignalsCache:
 
         assert "ALL REGIONS TOP SIGNALS" in text
         assert "PARIS" in text
-        assert "NORMAL BET" in text or "VALIDATED OPPORTUNITY" in text
+        assert "NORMAL BET" in text or "ACTION" in text
 
     @pytest.mark.asyncio
     async def test_no_previous_scan_message(self, db_settings):

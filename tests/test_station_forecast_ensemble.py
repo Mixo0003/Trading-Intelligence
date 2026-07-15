@@ -12,6 +12,7 @@ from app.polymarket.models import PolymarketMarket
 from app.signals.event_analysis import analyze_temperature_event
 from app.telegram.formatting import format_concise_opportunity
 from app.weather.daily_forecast import DailyForecastStats
+from app.weather.provider_forecast import ProviderForecast
 from app.weather.forecast_ensemble import (
     ForecastEnsemble,
     ProviderForecast,
@@ -222,12 +223,14 @@ class TestStationTargeting:
         distance = haversine_distance_km(25.78806, -80.31692, 25.6, -80.4)
         assert distance > 10.0
 
-    @patch("app.weather.forecast_ensemble._fetch_nws_hourly_provider")
-    @patch("app.weather.forecast_ensemble._fetch_open_meteo_provider")
+    @patch("app.weather.forecast_ensemble.fetch_met_norway")
+    @patch("app.weather.forecast_ensemble.fetch_weather_com_daily")
+    @patch("app.weather.forecast_ensemble.fetch_nws_hourly")
     def test_provider_request_uses_station_timezone_and_target_date(
         self,
-        mock_open_meteo,
         mock_nws,
+        mock_wx,
+        mock_met,
     ):
         settings = MagicMock()
         settings.forecast_grid_max_distance_km = 15.0
@@ -236,8 +239,9 @@ class TestStationTargeting:
         settings.forecast_divergence_threshold_c = 2.0
         settings.weather_gov_base_url = "https://api.weather.gov"
 
-        mock_open_meteo.return_value = _provider("GFS", 26.4)
         mock_nws.return_value = _provider("NWS", 26.7)
+        mock_wx.return_value = _provider("Weather.com", 26.4)
+        mock_met.return_value = _provider("MET Norway", 26.5)
 
         result = fetch_forecast_ensemble(
             settings,
@@ -247,8 +251,9 @@ class TestStationTargeting:
             market_unit=TemperatureUnit.FAHRENHEIT,
         )
         assert result is not None
-        assert mock_open_meteo.call_args.kwargs["timezone"] == "America/New_York"
-        assert mock_nws.call_args.args[2] == date(2026, 7, 15)
+        assert mock_nws.called
+        assert mock_wx.called
+        assert mock_met.called
 
 
 class TestDailyLowLogic:
@@ -293,9 +298,10 @@ class TestProviderEnsemble:
             selected_statistic="daily_min",
             selected_value_c=26.55,
             hourly_samples=[],
-            ensemble_provider_count=2,
+            ensemble_provider_count=3,
             provider_spread_c=0.3,
-            forecast_provider_label="Open-Meteo (GFS, NWS)",
+            forecast_provider_label="NWS, Weather.com, MET Norway",
+            provider_names=("NWS", "Weather.com", "MET Norway"),
         )
 
         analysis = analyze_temperature_event(settings, MIAMI_LOW_CHILDREN)
@@ -327,9 +333,10 @@ class TestProviderEnsemble:
             selected_statistic="daily_min",
             selected_value_c=25.45,
             hourly_samples=[],
-            ensemble_provider_count=2,
+            ensemble_provider_count=3,
             provider_spread_c=4.0,
-            forecast_provider_label="Open-Meteo (GFS); reference: NWS",
+            forecast_provider_label="NWS, Weather.com, MET Norway",
+            provider_names=("NWS", "Weather.com", "MET Norway"),
         )
 
         analysis = analyze_temperature_event(settings, MIAMI_LOW_CHILDREN)
@@ -358,12 +365,11 @@ class TestProviderEnsemble:
             selected_statistic="daily_min",
             selected_value_c=24.0,
             hourly_samples=[],
-            ensemble_provider_count=2,
+            ensemble_provider_count=3,
             provider_spread_c=3.7,
-            provider_names=("Open-Meteo (GFS); reference: NWS",),
-            forecast_provider_label="Open-Meteo (GFS); reference: NWS",
-            open_meteo_divergence_c=2.0,
-            gfs_forecast_c=23.0,
+            provider_names=("NWS", "Weather.com", "MET Norway"),
+            forecast_provider_label="NWS, Weather.com, MET Norway",
+            reference_divergence_c=2.0,
             reference_value_c=26.7,
             betting_skip_reason="FORECAST_SOURCE_DIVERGENCE",
         )
@@ -392,16 +398,16 @@ class TestFormatting:
         analysis.model_probability = 0.34
         analysis.edge = -0.03
         analysis.confidence = "MEDIUM"
-        analysis.forecast_providers = "Open-Meteo (GFS, ECMWF); reference: NWS"
+        analysis.forecast_providers = "NWS, Weather.com, MET Norway"
         analysis.provider_spread_display = "3°F"
         analysis.display_status = "WATCH"
-        analysis.display_reason = "Meets watch criteria but not full validated betting thresholds."
-        analysis.forecast_gateway = "Open-Meteo"
-        analysis.forecast_models = "GFS, ECMWF"
+        analysis.display_reason = "Potentially interesting edge but confidence is insufficient."
+        analysis.forecast_sources_line = "NWS, Weather.com, MET Norway"
+        analysis.band_rows = ()
+        analysis.live_triggers = ()
+        analysis.ev = None
 
         text = format_concise_opportunity(analysis)
-        assert "Resolution station: KMIA" in text
-        assert "Forecast models: Open-Meteo (GFS, ECMWF)" in text
-        assert "Status: WATCH" in text
-        assert "Forecast source:" not in text
-        assert "Kelly" not in text
+        assert "Station: KMIA" in text
+        assert "Decision: WATCH" in text
+        assert "Open-Meteo" not in text

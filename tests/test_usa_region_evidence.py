@@ -324,4 +324,4 @@ async def test_production_telegram_usa_scan_reaches_analysis(monkeypatch):
     assert "Child markets analyzed: 3" in final_text
     assert "Forecasts available: 1" in final_text
     assert "SEATTLE" in final_text
-    assert "Status: WATCH" in final_text
+    assert "Decision: WATCH" in final_text

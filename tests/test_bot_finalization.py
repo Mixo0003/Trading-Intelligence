@@ -78,7 +78,7 @@ class TestConciseFormatting:
             comparison_text="Forecast is closest to the 32°C bracket.",
         )
         text = format_concise_opportunity(item)
-        assert "🌤 MUNICH" in text
+        assert "🌡 MUNICH" in text
         assert "Market: Daily high temperature" in text
         assert "32°C" in text
 

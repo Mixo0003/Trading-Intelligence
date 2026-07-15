@@ -38,7 +38,7 @@ def _analysis(**kwargs) -> MarketAnalysis:
         confidence="MEDIUM",
         recommendation_tier="WATCH",
         reason="test",
-        data_sources=["open_meteo"],
+        data_sources=["NWS", "Weather.com", "MET Norway"],
         analyzed_at=datetime.now(timezone.utc).isoformat(),
         message="",
         confidence_score=0.8,
@@ -54,11 +54,12 @@ def _analysis(**kwargs) -> MarketAnalysis:
         raw_yes_price=0.25,
         price_valid=True,
         expected_range_display="29–32°C",
-        forecast_source="open_meteo",
+        forecast_source="ensemble",
         selected_statistic="daily_max",
         resolution_station="LFPB",
-        forecast_gateway="Open-Meteo",
-        forecast_models="GFS, ECMWF",
+        forecast_gateway="NWS, Weather.com, MET Norway",
+        forecast_models="NWS, Weather.com, MET Norway",
+        forecast_sources_line="NWS, Weather.com, MET Norway",
         display_status=DISPLAY_WATCH,
         forecast_confidence="MEDIUM",
         display_reason="Meets watch criteria but not full validated betting thresholds.",
@@ -83,12 +84,9 @@ class TestReportFormatting:
     def test_concise_valid_report_format(self):
         text = format_concise_opportunity(_analysis())
         assert "Market: Daily high temperature" in text
-        assert "Forecast: 31°C" in text
-        assert "Expected range: 29–32°C" in text
-        assert "Most likely outcome: 31°C" in text
-        assert "Resolution station: LFPB" in text
-        assert "Forecast models: Open-Meteo (GFS, ECMWF)" in text
-        assert "Status: WATCH" in text
+        assert "consensus 31°C" in text
+        assert "Station: LFPB" in text
+        assert "Decision: WATCH" in text
         assert "Kelly" not in text
 
     def test_forecast_only_shows_forecast_not_betting_block(self):
@@ -100,16 +98,14 @@ class TestReportFormatting:
                 display_reason="Only one forecast model available; betting requires broader agreement.",
             )
         )
-        assert "Forecast: 31°C" in text
-        assert "Status: FORECAST ONLY" in text
-        assert "Model probability: not validated" in text
+        assert "consensus 31°C" in text
+        assert "Decision: FORECAST ONLY" in text
         assert "Analysis unavailable" not in text
 
     def test_london_celsius_not_fahrenheit(self):
         text = format_concise_opportunity(_analysis(forecast_display="31°C"))
         assert "°C" in text
-        forecast_line = [line for line in text.splitlines() if line.startswith("Forecast:")][0]
-        assert "°F" not in forecast_line
+        assert "°F" not in text.split("consensus")[1].splitlines()[0]
 
     def test_bundle_no_duplicate_footer(self):
         bundle = format_opportunities_bundle([_analysis(), _analysis(city_location="London")])
@@ -157,7 +153,7 @@ class TestReportFormatting:
         )
         text = format_scan_report(progress)
         assert "Results:" in text
-        assert "Status: FORECAST ONLY" in text
+        assert "Decision: FORECAST ONLY" in text
 
     def test_today_forecast_uses_regional_header(self):
         progress = ScanProgress(
@@ -173,7 +169,7 @@ class TestReportFormatting:
         )
         text = format_today_forecast_report(progress)
         assert "USA FORECASTS" in text
-        assert "Status: FORECAST ONLY" in text
+        assert "Decision: FORECAST ONLY" in text
 
     def test_forecast_not_model_probability(self):
         text = format_concise_opportunity(
@@ -181,10 +177,11 @@ class TestReportFormatting:
                 forecast_display="31°C",
                 model_probability=0.34,
                 display_status=DISPLAY_WATCH,
+                band_rows=(("31°C", 0.34, 0.25, 0.09),),
             )
         )
-        assert "Model probability: 34%" in text
-        assert "Model probability: 31%" not in text
+        assert "34%" in text
+        assert "Band | Model | Market | Edge" in text
 
     def test_top_opportunities_concise(self):
         progress = ScanProgress(

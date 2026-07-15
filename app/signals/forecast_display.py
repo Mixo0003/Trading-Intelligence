@@ -6,24 +6,14 @@ from app.signals.bucket_probability import OutcomeProbability
 from app.weather.daily_forecast import DailyForecastStats
 from app.weather.temperature_units import TemperatureUnit, unit_symbol
 
-DISPLAY_VALIDATED = "VALIDATED OPPORTUNITY"
+DISPLAY_VALIDATED = "ACTION"
 DISPLAY_WATCH = "WATCH"
 DISPLAY_FORECAST_ONLY = "FORECAST ONLY"
-DISPLAY_SKIP_INSUFFICIENT = "SKIP — INSUFFICIENT DATA"
+DISPLAY_SKIP_INSUFFICIENT = "SKIP"
 DISPLAY_SKIP_MAPPING = "SKIP — MARKET_OUTCOME_MAPPING_FAILED"
 
 MATERIAL_SPREAD_C = 2.0
-
-
-def _open_meteo_model_count(forecast_stats: DailyForecastStats | None) -> int:
-    if forecast_stats is None:
-        return 0
-    count = 0
-    if forecast_stats.gfs_forecast_c is not None:
-        count += 1
-    if forecast_stats.ecmwf_forecast_c is not None:
-        count += 1
-    return count
+INDEPENDENT_MIN_PROVIDERS = 3
 
 
 def forecast_confidence_level(
@@ -33,38 +23,26 @@ def forecast_confidence_level(
 ) -> str:
     if forecast_stats is None:
         return "LOW"
-    model_count = _open_meteo_model_count(forecast_stats)
-    has_reference = forecast_stats.reference_value_c is not None
-    divergence = forecast_stats.open_meteo_divergence_c
+    count = forecast_stats.ensemble_provider_count
+    divergence = forecast_stats.reference_divergence_c
 
     if (
-        has_reference
-        and model_count >= 1
+        count >= INDEPENDENT_MIN_PROVIDERS
         and (divergence is None or divergence <= 1.0)
         and not betting_skip_reason
     ):
         return "HIGH"
-    if model_count >= 2 and forecast_stats.provider_spread_c <= MATERIAL_SPREAD_C:
+    if count >= 2 and forecast_stats.provider_spread_c <= MATERIAL_SPREAD_C:
         return "MEDIUM"
-    if model_count >= 1:
-        return "LOW"
     return "LOW"
 
 
 def format_forecast_gateway_models(forecast_stats: DailyForecastStats | None) -> tuple[str, str]:
     if forecast_stats is None:
         return "n/a", "n/a"
-    models: list[str] = []
-    if forecast_stats.gfs_forecast_c is not None:
-        models.append("GFS")
-    if forecast_stats.ecmwf_forecast_c is not None:
-        models.append("ECMWF")
-    if not models and forecast_stats.forecast_provider_label:
-        if "GFS" in forecast_stats.forecast_provider_label:
-            models.append("GFS")
-        if "ECMWF" in forecast_stats.forecast_provider_label:
-            models.append("ECMWF")
-    return "Open-Meteo", ", ".join(models) if models else "n/a"
+    label = forecast_stats.forecast_provider_label or forecast_stats.provider or "n/a"
+    names = ", ".join(forecast_stats.provider_names) if forecast_stats.provider_names else label
+    return label, names
 
 
 def format_source_divergence(
@@ -72,9 +50,9 @@ def format_source_divergence(
     *,
     unit: TemperatureUnit,
 ) -> str | None:
-    if forecast_stats is None or forecast_stats.open_meteo_divergence_c is None:
+    if forecast_stats is None or forecast_stats.reference_divergence_c is None:
         return None
-    delta = forecast_stats.open_meteo_divergence_c
+    delta = forecast_stats.reference_divergence_c
     if unit == TemperatureUnit.FAHRENHEIT:
         return f"{delta * 9.0 / 5.0:.1f}{unit_symbol(unit)}"
     return f"{delta:.1f}{unit_symbol(unit)}"
@@ -95,22 +73,24 @@ def short_display_reason(
     betting_skip_reason: str | None,
     station_error: str | None,
 ) -> str:
+    if station_error == "STATION_UNRESOLVED" or station_error == "STATION_NOT_VERIFIED":
+        return "Resolution station could not be verified from market rules."
     if display_status == DISPLAY_SKIP_INSUFFICIENT:
         if station_error:
             return "Exact resolution station could not be verified."
         if validation_error == "FORECAST_UNAVAILABLE":
-            return "No usable forecast model returned data."
+            return "No usable independent forecast sources returned data."
         return "Insufficient station or forecast data."
     if display_status == DISPLAY_SKIP_MAPPING:
         return "Forecast available but live outcome mapping failed."
     if betting_skip_reason == "FORECAST_SOURCE_DIVERGENCE":
-        return "Open-Meteo and reference forecasts disagree beyond betting threshold."
+        return "Independent forecast sources disagree beyond betting threshold."
     if betting_skip_reason == "INSUFFICIENT_PROVIDERS":
-        return "Only one forecast model available; betting requires broader agreement."
+        return "Fewer than three independent forecast sources available."
     if display_status == DISPLAY_WATCH:
-        return "Meets watch criteria but not full validated betting thresholds."
+        return "Potentially interesting edge but confidence or agreement is insufficient."
     if display_status == DISPLAY_VALIDATED:
-        return "Passed conservative betting validation."
+        return "Passed conservative betting validation with multi-source agreement."
     if validation_error:
         return validation_error.replace("_", " ").lower().capitalize() + "."
     return "Forecast shown for information only; no betting signal."
@@ -127,6 +107,8 @@ def compute_display_status(
     betting_valid: bool,
     recommendation_tier: str,
 ) -> str:
+    if station_error in {"STATION_UNRESOLVED", "STATION_NOT_VERIFIED"}:
+        return DISPLAY_SKIP_INSUFFICIENT
     if station_error or not station_verified or forecast_stats is None or forecast_native is None:
         return DISPLAY_SKIP_INSUFFICIENT
     if forecast_stats.skip_reason:
@@ -140,6 +122,8 @@ def compute_display_status(
             return DISPLAY_WATCH
     if recommendation_tier == "WATCH":
         return DISPLAY_WATCH
+    if forecast_stats.betting_skip_reason:
+        return DISPLAY_FORECAST_ONLY
     return DISPLAY_FORECAST_ONLY
 
 

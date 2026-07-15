@@ -106,6 +106,9 @@ class MarketAnalysis:
     station_timezone: str | None = None
     target_date_local: str | None = None
     display_reason: str = ""
+    band_rows: tuple[tuple[str, float, float, float | None], ...] = ()
+    live_triggers: tuple[str, ...] = ()
+    forecast_sources_line: str = ""
 
 
 @dataclass

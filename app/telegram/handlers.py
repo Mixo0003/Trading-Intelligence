@@ -218,7 +218,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "📊 Status\n\n"
         "Bot: online\n"
         f"Polymarket API: {polymarket_status}\n"
-        "Weather provider: open_meteo\n"
+        "Weather providers: NWS, Weather.com, MET Norway\n"
         "EV engine: ok\n"
         f"Selected region: {region.display_label}\n"
         f"Scheduler: {scheduler_status}\n"

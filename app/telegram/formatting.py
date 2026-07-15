@@ -84,50 +84,71 @@ def _matches_station_local_today(analysis: MarketAnalysis) -> bool:
     return False
 
 
-def format_market_result_card(analysis: MarketAnalysis) -> str:
+def format_actionable_weather_card(analysis: MarketAnalysis) -> str:
     city = (analysis.city_location or "Unknown").upper()
     date = (analysis.target_date or "N/A").upper()
     station = analysis.resolution_station or analysis.station_code or "N/A"
-    market_prob = format_market_price_display(analysis.implied_probability)
+    market_type = analysis.temperature_type_label or "Unknown"
+
     if analysis.display_status in {DISPLAY_SKIP_INSUFFICIENT} or not analysis.forecast_display:
         forecast_value = "unavailable"
     else:
         forecast_value = analysis.forecast_display
-    model_prob = (
-        format_model_probability_display(analysis.model_probability)
-        if analysis.display_status in {DISPLAY_VALIDATED, DISPLAY_WATCH}
-        and analysis.model_probability
-        else "not validated"
-    )
-    if analysis.implied_probability is None:
-        market_prob = "unavailable"
 
-    models_line = "n/a"
-    if analysis.forecast_gateway and analysis.forecast_models:
-        models_line = f"{analysis.forecast_gateway} ({analysis.forecast_models})"
-    elif analysis.forecast_providers:
-        models_line = analysis.forecast_providers
+    spread = analysis.provider_spread_display or "n/a"
+    sources = analysis.forecast_sources_line or analysis.forecast_providers or "n/a"
 
     lines = [
-        f"🌤 {city} — {date}",
+        f"🌡 {city} — {date}",
+        f"Station: {station}",
+        f"Market: {market_type}",
         "",
-        f"Market: {analysis.temperature_type_label or 'Unknown'}",
-        f"Resolution station: {station}",
-        f"Forecast: {forecast_value}",
+        f"Forecasts: {sources} → consensus {forecast_value}",
+        f"Spread: {spread}",
     ]
-    if analysis.expected_range_display:
-        lines.append(f"Expected range: {analysis.expected_range_display}")
+
+    if analysis.band_rows:
+        lines.extend(["", "Band | Model | Market | Edge"])
+        for label, model_p, market_p, edge_val in analysis.band_rows:
+            edge_display = (
+                format_signed_percent_display(edge_val)
+                if edge_val is not None
+                else "n/a"
+            )
+            lines.append(
+                f"{label} | {format_model_probability_display(model_p)} | "
+                f"{format_market_price_display(market_p)} | {edge_display}"
+            )
+
+    decision = analysis.display_status
+    if decision == DISPLAY_VALIDATED:
+        decision = "ACTION"
+    best_price = format_market_price_display(analysis.implied_probability)
+    ev_display = f"{analysis.ev:+.3f}" if analysis.ev is not None else "n/a"
+
     lines.extend([
-        f"Most likely outcome: {analysis.best_outcome}",
-        f"Market price: {market_prob}",
-        f"Model probability: {model_prob}",
-        f"Status: {analysis.display_status}",
+        "",
+        f"Decision: {decision}",
+        f"Best: {analysis.best_outcome} @ {best_price}",
+        f"EV: {ev_display}",
         f"Reason: {analysis.display_reason or analysis.reason}",
-        f"Forecast models: {models_line}",
     ])
-    if analysis.source_divergence_display:
-        lines.append(f"Source divergence: {analysis.source_divergence_display}")
+
+    if analysis.live_triggers:
+        lines.append("")
+        lines.append("Live:")
+        for trigger in analysis.live_triggers:
+            lines.append(f"• {trigger}")
+
     return "\n".join(lines)
+
+
+def format_concise_opportunity(analysis: MarketAnalysis) -> str:
+    return format_actionable_weather_card(analysis)
+
+
+def format_market_result_card(analysis: MarketAnalysis) -> str:
+    return format_actionable_weather_card(analysis)
 
 
 def format_scan_completed_summary(progress: ScanProgress) -> str:
@@ -161,10 +182,6 @@ def format_scan_completed_summary(progress: ScanProgress) -> str:
         for reason, count in sorted(progress.skip_reasons.items(), key=lambda item: -item[1]):
             lines.append(f"• {reason}: {count}")
     return "\n".join(lines)
-
-
-def format_concise_opportunity(analysis: MarketAnalysis) -> str:
-    return format_market_result_card(analysis)
 
 
 def format_empty_report(analyzed_count: int, progress: ScanProgress | None = None) -> str:
@@ -282,18 +299,7 @@ def format_scan_report(progress: ScanProgress) -> str:
 
 
 def format_today_forecast_card(analysis: MarketAnalysis) -> str:
-    city = (analysis.city_location or "Unknown").upper()
-    date = (analysis.target_date or "N/A").upper()
-    station = analysis.resolution_station or analysis.station_code or "N/A"
-    lines = [
-        f"🌤 {city} — {date}",
-        f"Market: {analysis.temperature_type_label or 'Unknown'}",
-        f"Station: {station}",
-        f"Forecast: {analysis.forecast_display or 'unavailable'}",
-        f"Most likely outcome: {analysis.best_outcome}",
-        f"Status: {analysis.display_status}",
-    ]
-    return "\n".join(lines)
+    return format_actionable_weather_card(analysis)
 
 
 def format_today_forecast_report(progress: ScanProgress, region: ScanRegion | None = None) -> str:

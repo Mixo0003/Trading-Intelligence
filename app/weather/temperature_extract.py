@@ -42,20 +42,7 @@ def extract_forecast_temperature_f(
         return None
 
     if forecast.source == "open_meteo":
-        daily = forecast.raw.get("daily", {}) or {}
-        dates = daily.get("time", []) or []
-        idx = _index_for_date(target, dates)
-        if idx is None:
-            return None
-        if market_type in {
-            TemperatureMarketType.MAXIMUM_TEMPERATURE,
-            TemperatureMarketType.ABOVE_THRESHOLD,
-        } or direction == ThresholdDirection.ABOVE:
-            values = daily.get("temperature_2m_max", []) or []
-        else:
-            values = daily.get("temperature_2m_min", []) or []
-        if idx < len(values) and values[idx] is not None:
-            return float(values[idx])
+        return None
 
     periods = forecast.raw.get("properties", {}).get("periods", [])
     target_label = target.strftime("%A").lower()
