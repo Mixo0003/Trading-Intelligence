@@ -20,6 +20,7 @@ class WeatherSignal:
     recommendation_tier: str | None
     market_probability: float | None
     message: str
+    forecast_temperature_f: float | None = None
 
 
 def format_percent(value: float) -> str:
@@ -125,4 +126,5 @@ Station must come from the market description/rules, not from city center.
         recommendation_tier=recommendation_tier,
         market_probability=market_probability,
         message=message,
+        forecast_temperature_f=forecast_temperature_f,
     )

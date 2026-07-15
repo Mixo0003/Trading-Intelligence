@@ -1,0 +1,18 @@
+{
+  "id": "2874606",
+  "slug": "will-nflx-reach-80-by-july-13-2026",
+  "question": "Will Netflix, Inc. (NFLX) hit (HIGH) $80 Week of July 13 2026?",
+  "description": "This market will resolve to \"Yes\" if, at any point during the week of July 13 2026, any 1-minute candle for Netflix, Inc. (NFLX) has a final \"High\" price equal to or above the listed price.\n\nThe resolution source for this market is Pyth.",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "outcomePrices": "[\"0.32\", \"0.68\"]",
+  "active": true,
+  "closed": false,
+  "endDate": "2026-07-17T20:00:00Z",
+  "events": [
+    {
+      "id": "689375",
+      "slug": "will-nflx-reach-80-by-july-13-2026",
+      "title": "Will Netflix, Inc. (NFLX) hit (HIGH) $80 Week of July 13 2026?"
+    }
+  ]
+}

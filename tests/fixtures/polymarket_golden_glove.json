@@ -1,0 +1,19 @@
+{
+  "id": "2437524",
+  "slug": "will-matt-freese-win-the-golden-glove-at-the-2026-fifa-world-cup-20260603195307488",
+  "question": "Will Matt Freese win the Golden Glove at the 2026 FIFA World Cup?",
+  "description": "This market will resolve to the player who wins the Golden Glove award for the 2026 FIFA World Cup.\n\nIf the 2026 FIFA World Cup is cancelled, postponed after August 2, 2026, 11:59 PM ET, this market will resolve to \"Other\".",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "outcomePrices": "[\"0.0005\", \"0.9995\"]",
+  "active": true,
+  "closed": false,
+  "endDate": "2026-07-20T03:59:00Z",
+  "events": [
+    {
+      "id": "559302",
+      "slug": "world-cup-golden-glove-winner-20260603195306910",
+      "title": "World Cup: Golden Glove Winner",
+      "description": "This market will resolve to the player who wins the Golden Glove award for the 2026 FIFA World Cup."
+    }
+  ]
+}

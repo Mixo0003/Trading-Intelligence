@@ -1,10 +1,7 @@
 from dataclasses import dataclass
 
 from app.config.settings import Settings
-from app.ev.types import RecommendationTier
-from app.polymarket.client import PolymarketClient
-from app.polymarket.markets import get_weather_markets
-from app.signals.engine import analyze_weather_market
+from app.signals.scan_service import scan_weather_markets
 from app.signals.generator import WeatherSignal
 
 
@@ -15,17 +12,10 @@ class ScanResult:
 
 
 _BET_TIERS = frozenset({
-    RecommendationTier.SMALL_BET.value,
-    RecommendationTier.NORMAL_BET.value,
-    RecommendationTier.STRONG_OPPORTUNITY.value,
+    "SMALL BET",
+    "NORMAL BET",
+    "STRONG OPPORTUNITY",
 })
-
-
-def _passes_min_edge(signal: WeatherSignal, min_edge: float) -> bool:
-    if signal.edge is None:
-        return False
-
-    return signal.edge >= min_edge
 
 
 def scan_polymarket_weather_markets(
@@ -33,41 +23,25 @@ def scan_polymarket_weather_markets(
     limit: int = 100,
     min_edge: float = 0.05,
 ) -> ScanResult:
-
-    client = PolymarketClient(settings)
-
-    markets = get_weather_markets(
-        client=client,
-        limit=limit,
-    )
-
+    progress = scan_weather_markets(settings, limit=limit)
     signals: list[WeatherSignal] = []
-
-    for market in markets:
-
-        try:
-            signal = analyze_weather_market(
-                settings=settings,
-                market=market,
-            )
-
-            # Skip markets that cannot be fully resolved
-            if signal is None:
-                continue
-
-            if signal.decision not in _BET_TIERS:
-                continue
-
-            if not _passes_min_edge(signal, min_edge):
-                continue
-
-            signals.append(signal)
-
-        except Exception:
-            # Never stop scanning because of one broken market
+    for item in progress.results:
+        if item.recommendation_tier not in _BET_TIERS:
             continue
-
-    return ScanResult(
-        total_markets=len(markets),
-        signals=signals,
-    )
+        if item.edge is None or item.edge < min_edge:
+            continue
+        signals.append(
+            WeatherSignal(
+                decision=item.recommendation_tier,
+                probability=item.model_probability,
+                confidence_score=item.confidence_score,
+                confidence_label=item.confidence,
+                edge=item.edge,
+                ev=item.ev,
+                kelly_fraction=item.kelly_fraction,
+                recommendation_tier=item.recommendation_tier,
+                market_probability=item.implied_probability,
+                message=item.message,
+            )
+        )
+    return ScanResult(total_markets=progress.discovered, signals=signals)

@@ -1,0 +1,315 @@
+import pytest
+
+from app.polymarket.discovery import SkipReason, evaluate_market_eligibility
+from app.polymarket.market_type import (
+    TemperatureMarketType,
+    ThresholdDirection,
+    classify_temperature_market,
+)
+from app.polymarket.models import PolymarketMarket
+from app.polymarket.pricing import extract_yes_price
+from app.signals.scan_service import scan_weather_markets
+from app.region.types import ScanRegion
+from app.telegram.buttons import (
+    BTN_BACK,
+    BTN_BEST_OPPORTUNITIES,
+    BTN_CHANGE_REGION,
+    BTN_FORECAST,
+    BTN_HELP,
+    BTN_RECENT,
+    BTN_STATUS,
+    BTN_TOP_SIGNALS,
+    BTN_USA,
+    BTN_WEATHER,
+    ALL_NAV_BUTTONS,
+)
+from app.config.settings import Settings
+
+
+def _market(
+    *,
+    question: str,
+    description: str = "",
+    rules: str = "",
+    slug: str = "test-market",
+    prices: list | None = None,
+    closed: bool = False,
+    market_id: str = "1",
+) -> PolymarketMarket:
+    outcome_prices = [0.45, 0.55] if prices is None else prices
+    return PolymarketMarket(
+        id=market_id,
+        slug=slug,
+        question=question,
+        description=description,
+        rules=rules,
+        outcomes=["Yes", "No"],
+        outcome_prices=outcome_prices,
+        volume=1000.0,
+        liquidity=500.0,
+        end_date="2099-01-01T00:00:00Z",
+        raw={"closed": closed},
+    )
+
+
+class TestMarketTypeClassification:
+    def test_maximum_temperature(self):
+        mtype, direction = classify_temperature_market(
+            "Will the daily high temperature at KORD exceed 90°F on July 15, 2026?"
+        )
+        assert mtype == TemperatureMarketType.MAXIMUM_TEMPERATURE
+        assert direction == ThresholdDirection.ABOVE
+
+    def test_minimum_temperature(self):
+        mtype, direction = classify_temperature_market(
+            "Will the daily low temperature at KJFK be below 32°F on January 10, 2026?"
+        )
+        assert mtype == TemperatureMarketType.MINIMUM_TEMPERATURE
+        assert direction == ThresholdDirection.BELOW
+
+    def test_above_threshold(self):
+        mtype, _ = classify_temperature_market(
+            "Will temperature at KLAX be above 100°F on August 1, 2026?"
+        )
+        assert mtype == TemperatureMarketType.ABOVE_THRESHOLD
+
+    def test_below_threshold(self):
+        mtype, direction = classify_temperature_market(
+            "Will temperature at KORD be below 20°F on February 2, 2026?"
+        )
+        assert mtype == TemperatureMarketType.BELOW_THRESHOLD
+        assert direction == ThresholdDirection.BELOW
+
+
+class TestDiscoveryFiltering:
+    def _valid_market(self) -> PolymarketMarket:
+        return _market(
+            question="Will the daily high temperature at KORD exceed 90°F on July 15, 2026?",
+            description="Resolved using Weather Underground for station KORD.",
+            rules="Weather Underground KORD daily high temperature.",
+            slug="kord-high-july-15",
+        )
+
+    def test_accepts_valid_market(self):
+        seen: set[str] = set()
+        ok, reason, _ = evaluate_market_eligibility(self._valid_market(), seen)
+        assert ok is True
+        assert reason is None
+
+    def test_excludes_closed_market(self):
+        seen: set[str] = set()
+        market = self._valid_market()
+        market = PolymarketMarket(**{**market.__dict__, "raw": {"closed": True}})
+        ok, reason, _ = evaluate_market_eligibility(market, seen)
+        assert ok is False
+        assert reason == SkipReason.CLOSED
+
+    def test_excludes_missing_price(self):
+        seen: set[str] = set()
+        market = PolymarketMarket(**{**self._valid_market().__dict__, "outcome_prices": []})
+        ok, reason, _ = evaluate_market_eligibility(market, seen)
+        assert ok is False
+        assert reason == SkipReason.MISSING_PRICE
+
+    def test_excludes_duplicate(self):
+        seen: set[str] = set()
+        market = self._valid_market()
+        assert evaluate_market_eligibility(market, seen)[0] is True
+        ok, reason, _ = evaluate_market_eligibility(market, seen)
+        assert ok is False
+        assert reason == SkipReason.DUPLICATE
+
+    def test_excludes_non_temperature(self):
+        seen: set[str] = set()
+        market = _market(question="Will it rain in Chicago tomorrow?")
+        ok, reason, _ = evaluate_market_eligibility(market, seen)
+        assert ok is False
+        assert reason == SkipReason.NOT_WEATHER
+
+
+class TestPricing:
+    def test_extract_yes_price(self):
+        assert extract_yes_price(_market(question="x", prices=[0.42, 0.58])) == pytest.approx(0.42)
+
+    def test_missing_price(self):
+        assert extract_yes_price(_market(question="x", prices=[])) is None
+
+
+class TestReplyKeyboardRouting:
+    @pytest.mark.parametrize(
+        "button",
+        [
+            ScanRegion.USA.scan_button,
+            BTN_TOP_SIGNALS,
+            BTN_RECENT,
+            BTN_STATUS,
+            BTN_HELP,
+            BTN_WEATHER,
+            BTN_BACK,
+            BTN_FORECAST,
+            BTN_BEST_OPPORTUNITIES,
+            BTN_CHANGE_REGION,
+            BTN_USA,
+        ],
+    )
+    def test_nav_button_constants_defined(self, button):
+        assert button in ALL_NAV_BUTTONS
+
+
+class TestScanOrdering:
+    def test_scan_result_sorting_and_limit(self, monkeypatch):
+        settings = Settings(
+            project_name="TI",
+            project_version="0.1.0",
+            telegram_token="token",
+            anthropic_api_key="",
+            admin_ids=[1],
+            guest_ids=[],
+            default_language="en",
+            database_path=":memory:",
+            log_level="INFO",
+            polymarket_gamma_base_url="https://gamma-api.polymarket.com",
+            polymarket_clob_base_url="https://clob.polymarket.com",
+            weather_gov_base_url="https://api.weather.gov",
+            report_timezone="",
+            report_times=[],
+            max_markets_per_scan=50,
+            max_results_per_report=2,
+            auto_reports_enabled=False,
+            priority_weather_cities=["Chicago"],
+            anthropic_rule_fallback_enabled=False,
+            forecast_divergence_threshold_f=3.0,
+            forecast_divergence_threshold_c=2.0,
+            forecast_grid_max_distance_km=15.0,
+            forecast_min_providers=2,
+            auto_report_regions=[ScanRegion.USA],
+        )
+
+        class FakeAnalysis:
+            def __init__(self, ev, confidence_score, title):
+                self.ev = ev
+                self.confidence_score = confidence_score
+                self.market_title = title
+                self.recommendation_tier = "WATCH"
+                self.market_url = f"https://polymarket.com/market/{title}"
+                self.edge = ev
+                self.confidence_label = "MEDIUM"
+
+        def fake_get_weather_markets(client, limit=100, priority_cities=None):
+            return [_market(question="m1"), _market(question="m2", market_id="2")], 2, 0
+
+        def fake_analyze(settings, market):
+            from app.signals.market_analysis import MarketAnalysis
+            from app.polymarket.market_type import TemperatureMarketType
+            from datetime import datetime, timezone
+            ev = 0.10 if market.id == "1" else 0.05
+            return MarketAnalysis(
+                market_title=market.question or "",
+                market_url="https://polymarket.com/market/x",
+                city_location="KORD",
+                station_code="KORD",
+                resolution_source="weather_gov",
+                target_date="July 15, 2026",
+                market_type=TemperatureMarketType.ABOVE_THRESHOLD,
+                threshold_f=90.0,
+                threshold_unit="°F",
+                yes_price=0.5,
+                implied_probability=0.5,
+                model_probability=0.6,
+                edge=ev,
+                ev=ev,
+                kelly_fraction=0.02,
+                kelly_cap=0.02,
+                confidence="MEDIUM",
+                recommendation_tier="WATCH",
+                reason="test",
+                data_sources=["test"],
+                analyzed_at=datetime.now(timezone.utc).isoformat(),
+                message="msg",
+                confidence_score=0.8 if market.id == "1" else 0.6,
+            )
+
+        monkeypatch.setattr("app.signals.scan_service.get_weather_markets", fake_get_weather_markets)
+        monkeypatch.setattr("app.signals.scan_service.analyze_market", fake_analyze)
+        monkeypatch.setattr(
+            "app.signals.scan_service.evaluate_market_eligibility",
+            lambda market, seen: (True, None, ""),
+        )
+
+        progress = scan_weather_markets(settings)
+        assert len(progress.results) == 2
+        assert progress.results[0].ev == pytest.approx(0.10)
+
+
+class TestScheduledReportConfig:
+    def test_not_configured_without_timezone(self):
+        settings = Settings(
+            project_name="TI",
+            project_version="0.1.0",
+            telegram_token="token",
+            anthropic_api_key="",
+            admin_ids=[1],
+            guest_ids=[],
+            default_language="en",
+            database_path=":memory:",
+            log_level="INFO",
+            polymarket_gamma_base_url="https://gamma-api.polymarket.com",
+            polymarket_clob_base_url="https://clob.polymarket.com",
+            weather_gov_base_url="https://api.weather.gov",
+            report_timezone="",
+            report_times=["08:00"],
+            max_markets_per_scan=50,
+            max_results_per_report=10,
+            auto_reports_enabled=True,
+            priority_weather_cities=["Chicago"],
+            anthropic_rule_fallback_enabled=False,
+            forecast_divergence_threshold_f=3.0,
+            forecast_divergence_threshold_c=2.0,
+            forecast_grid_max_distance_km=15.0,
+            forecast_min_providers=2,
+            auto_report_regions=[],
+        )
+        assert settings.scheduled_reports_configured is False
+
+    def test_configured_when_complete(self):
+        settings = Settings(
+            project_name="TI",
+            project_version="0.1.0",
+            telegram_token="token",
+            anthropic_api_key="",
+            admin_ids=[1],
+            guest_ids=[],
+            default_language="en",
+            database_path=":memory:",
+            log_level="INFO",
+            polymarket_gamma_base_url="https://gamma-api.polymarket.com",
+            polymarket_clob_base_url="https://clob.polymarket.com",
+            weather_gov_base_url="https://api.weather.gov",
+            report_timezone="America/Chicago",
+            report_times=["08:00", "12:00", "20:00"],
+            max_markets_per_scan=50,
+            max_results_per_report=5,
+            auto_reports_enabled=True,
+            priority_weather_cities=["Chicago"],
+            anthropic_rule_fallback_enabled=False,
+            forecast_divergence_threshold_f=3.0,
+            forecast_divergence_threshold_c=2.0,
+            forecast_grid_max_distance_km=15.0,
+            forecast_min_providers=2,
+            auto_report_regions=[ScanRegion.USA, ScanRegion.EUROPE],
+        )
+        assert settings.scheduled_reports_configured is True
+
+
+class TestNoExecutionCapability:
+    def test_repository_has_no_order_execution_symbols(self):
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        forbidden = ["place_order", "sign_transaction", "private_key", "wallet.sign"]
+        hits = []
+        for path in root.glob("app/**/*.py"):
+            text = path.read_text(encoding="utf-8")
+            for token in forbidden:
+                if token in text:
+                    hits.append(f"{path.name}:{token}")
+        assert hits == []

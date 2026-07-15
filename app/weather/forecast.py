@@ -4,7 +4,14 @@ from typing import Any
 import requests
 
 from app.config.settings import Settings
+from app.metrics.scan_metrics import active_scan_metrics
 from app.weather.stations import WeatherStation
+
+
+def _track_weather_request() -> None:
+    metrics = active_scan_metrics()
+    if metrics is not None:
+        metrics.weather_requests += 1
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,7 @@ def _fetch_open_meteo_forecast(station: WeatherStation) -> WeatherForecast:
     }
 
     response = requests.get(url, params=params, timeout=20)
+    _track_weather_request()
     response.raise_for_status()
     data = response.json()
 
@@ -78,11 +86,13 @@ def fetch_weather_gov_forecast(
     try:
         points_url = f"{settings.weather_gov_base_url}/points/{station.latitude},{station.longitude}"
         points_response = requests.get(points_url, headers=headers, timeout=20)
+        _track_weather_request()
         points_response.raise_for_status()
         points_data = points_response.json()
 
         forecast_url = points_data["properties"]["forecast"]
         forecast_response = requests.get(forecast_url, headers=headers, timeout=20)
+        _track_weather_request()
         forecast_response.raise_for_status()
         forecast_data = forecast_response.json()
 
@@ -104,9 +114,16 @@ def fetch_weather_gov_forecast(
         status = exc.response.status_code if exc.response is not None else None
 
         if status == 404:
-            return _fetch_open_meteo_forecast(station)
+            return _safe_open_meteo(station)
 
         raise
 
     except requests.RequestException:
+        return _safe_open_meteo(station)
+
+
+def _safe_open_meteo(station: WeatherStation) -> WeatherForecast | None:
+    try:
         return _fetch_open_meteo_forecast(station)
+    except Exception:
+        return None

@@ -5,7 +5,9 @@ import pytest
 from app.ev.types import RecommendationTier
 from app.signals.comparator import WeatherComparisonInput, compare_weather_market
 from app.signals.generator import WeatherSignal, generate_weather_signal_message
-from app.signals.scanner import _BET_TIERS, _passes_min_edge, scan_polymarket_weather_markets
+from app.signals.scanner import _BET_TIERS, scan_polymarket_weather_markets
+from app.signals.market_analysis import MarketAnalysis, ScanProgress
+from app.polymarket.market_type import TemperatureMarketType
 from app.weather.forecast import WeatherForecast
 from app.weather.resolution import ResolutionDetails
 
@@ -162,51 +164,52 @@ class TestScannerIntegration:
 
     def test_scanner_accepts_small_bet_label(self):
         settings = MagicMock()
-        market = MagicMock()
-        bet_signal = _make_signal(
-            decision=RecommendationTier.SMALL_BET.value,
+        bet_analysis = MagicMock(
+            recommendation_tier=RecommendationTier.SMALL_BET.value,
             edge=0.06,
+            model_probability=0.6,
+            confidence_score=0.8,
+            confidence="HIGH",
+            ev=0.06,
+            kelly_fraction=0.02,
+            implied_probability=0.5,
+            message="test",
         )
-        watch_signal = _make_signal(
-            decision=RecommendationTier.WATCH.value,
+        watch_analysis = MagicMock(
+            recommendation_tier=RecommendationTier.WATCH.value,
             edge=0.06,
+            model_probability=0.6,
+            confidence_score=0.8,
+            confidence="HIGH",
+            ev=0.06,
+            kelly_fraction=0.02,
+            implied_probability=0.5,
+            message="test",
         )
+        progress = ScanProgress(discovered=2, accepted=2, skipped=0, results=[bet_analysis, watch_analysis])
 
-        with (
-            patch("app.signals.scanner.PolymarketClient"),
-            patch("app.signals.scanner.get_weather_markets", return_value=[market, market]),
-            patch(
-                "app.signals.scanner.analyze_weather_market",
-                side_effect=[bet_signal, watch_signal],
-            ),
-        ):
-            result = scan_polymarket_weather_markets(
-                settings=settings,
-                limit=2,
-                min_edge=0.05,
-            )
+        with patch("app.signals.scanner.scan_weather_markets", return_value=progress):
+            result = scan_polymarket_weather_markets(settings=settings, limit=2, min_edge=0.05)
 
         assert len(result.signals) == 1
         assert result.signals[0].decision == RecommendationTier.SMALL_BET.value
 
     def test_scanner_rejects_watch_label(self):
         settings = MagicMock()
-        market = MagicMock()
-        watch_signal = _make_signal(
-            decision=RecommendationTier.WATCH.value,
+        watch_analysis = MagicMock(
+            recommendation_tier=RecommendationTier.WATCH.value,
             edge=0.10,
+            model_probability=0.6,
+            confidence_score=0.8,
+            confidence="HIGH",
+            ev=0.10,
+            kelly_fraction=0.02,
+            implied_probability=0.5,
+            message="test",
         )
+        progress = ScanProgress(discovered=1, accepted=1, skipped=0, results=[watch_analysis])
 
-        with (
-            patch("app.signals.scanner.PolymarketClient"),
-            patch("app.signals.scanner.get_weather_markets", return_value=[market]),
-            patch("app.signals.scanner.analyze_weather_market", return_value=watch_signal),
-        ):
-            result = scan_polymarket_weather_markets(
-                settings=settings,
-                limit=1,
-                min_edge=0.05,
-            )
+        with patch("app.signals.scanner.scan_weather_markets", return_value=progress):
+            result = scan_polymarket_weather_markets(settings=settings, limit=1, min_edge=0.05)
 
         assert len(result.signals) == 0
-        assert _passes_min_edge(watch_signal, min_edge=0.05)

@@ -16,22 +16,9 @@ def extract_station_code(text: str) -> str | None:
     if not text:
         return None
 
-    upper = text.upper()
+    from app.weather.station_resolver import extract_station_code_from_text
 
-    # Prefer explicit airport/weather station codes: KORD, KJFK, KLAX, KDFW, KPHX
-    matches = re.findall(r"\bK[A-Z]{3}\b", upper)
-    if matches:
-        return matches[0]
-
-    # Fallback only if text explicitly says station
-    match = re.search(r"(?:STATION|WEATHER STATION|AIRPORT)\s+([A-Z]{3,4})\b", upper)
-    if match:
-        code = match.group(1)
-        if len(code) == 3:
-            return "K" + code
-        return code
-
-    return None
+    return extract_station_code_from_text(text)
 
 
 def extract_resolution_source(text: str) -> str | None:
@@ -64,10 +51,16 @@ def extract_metric(text: str) -> str | None:
     if any(w in lower for w in ["wind", "wind speed", "gust"]):
         return "wind"
 
-    if any(w in lower for w in ["high temperature", "daily high", "maximum temperature", "max temperature"]):
+    if any(w in lower for w in ["high temperature", "daily high temperature", "maximum temperature", "max temperature", "highest temperature"]):
         return "max_temperature_f"
 
-    if any(w in lower for w in ["low temperature", "daily low", "minimum temperature", "min temperature"]):
+    if any(w in lower for w in ["low temperature", "daily low temperature", "minimum temperature", "min temperature", "lowest temperature"]):
+        return "min_temperature_f"
+
+    if "daily high" in lower and "temperature" in lower:
+        return "max_temperature_f"
+
+    if "daily low" in lower and "temperature" in lower:
         return "min_temperature_f"
 
     if "temperature" in lower:
@@ -76,11 +69,30 @@ def extract_metric(text: str) -> str | None:
     return None
 
 
+def _celsius_to_fahrenheit(celsius: float) -> float:
+    return celsius * 9.0 / 5.0 + 32.0
+
+
 def extract_threshold_f(text: str) -> float | None:
     if not text:
         return None
 
-    patterns = [
+    lower = text.lower()
+
+    celsius_patterns = [
+        r"\bbe\s+(\d{1,3}(?:\.\d+)?)\s*°?\s*c\b",
+        r"(\d{1,3}(?:\.\d+)?)\s*°\s*c\b",
+        r"(\d{1,3}(?:\.\d+)?)\s*c\b",
+    ]
+    for pattern in celsius_patterns:
+        match = re.search(pattern, lower)
+        if match:
+            try:
+                return _celsius_to_fahrenheit(float(match.group(1)))
+            except ValueError:
+                return None
+
+    fahrenheit_patterns = [
         r"over\s+(\d{2,3}(?:\.\d+)?)\s*°?\s*f",
         r"above\s+(\d{2,3}(?:\.\d+)?)\s*°?\s*f",
         r"exceed(?:s|ed)?\s+(\d{2,3}(?:\.\d+)?)\s*°?\s*f",
@@ -90,9 +102,7 @@ def extract_threshold_f(text: str) -> float | None:
         r"(\d{2,3}(?:\.\d+)?)\s*f\b",
     ]
 
-    lower = text.lower()
-
-    for pattern in patterns:
+    for pattern in fahrenheit_patterns:
         match = re.search(pattern, lower)
         if match:
             try:
@@ -112,12 +122,21 @@ def extract_date_text(text: str) -> str | None:
         "september|october|november|december"
     )
 
+    lower = text.lower()
+
     match = re.search(
         rf"\b({month_names})\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,\s*\d{{4}})?\b",
-        text.lower(),
+        lower,
     )
     if match:
         return match.group(0)
+
+    abbr_match = re.search(
+        rf"\b(\d{{1,2}})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.?\s+'?\d{{2}}\b",
+        lower,
+    )
+    if abbr_match:
+        return abbr_match.group(0)
 
     iso_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
     if iso_match:

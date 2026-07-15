@@ -1,3 +1,5 @@
+"""Deprecated legacy callback router — not registered by build_telegram_application."""
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -15,6 +17,7 @@ def _format_scan_result(total_markets: int, signals_count: int) -> str:
 
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Legacy inline-callback handler. Use ReplyKeyboard navigation in handlers.py."""
     query = update.callback_query
 
     if query is None:
@@ -65,34 +68,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=main_menu_keyboard(),
         )
 
-    elif data == "filters":
+    elif data in {"filters", "notifications", "support"}:
         await query.edit_message_text(
-            "⚙️ Filters\n\n"
-            "MVP settings:\n"
-            "- Market source: Polymarket\n"
-            "- Category: Weather\n"
-            "- Min edge: 5%\n"
-            "- Scan limit: 50\n"
-            "- Notifications: ON",
-            reply_markup=main_menu_keyboard(),
-        )
-
-    elif data == "notifications":
-        await query.edit_message_text(
-            "🔔 Notifications\n\n"
-            "MVP: notifications enabled for admin.",
-            reply_markup=main_menu_keyboard(),
-        )
-
-    elif data == "support":
-        await query.edit_message_text(
-            "🆘 Support\n\n"
-            "Contact admin or return to the main menu.",
+            "This menu is obsolete. Use the bottom keyboard or /menu.",
             reply_markup=main_menu_keyboard(),
         )
 
     else:
         await query.edit_message_text(
-            "Unknown option.",
+            "Unknown option. Use /menu for the current keyboard.",
             reply_markup=main_menu_keyboard(),
         )

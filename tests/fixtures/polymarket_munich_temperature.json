@@ -1,0 +1,24 @@
+{
+  "id": "2917029",
+  "slug": "highest-temperature-in-munich-on-july-16-2026-32c",
+  "question": "Will the highest temperature in Munich be 32°C on July 16?",
+  "description": "This market will resolve to the temperature range that contains the highest temperature recorded at the Munich Airport Station in degrees Celsius on 16 Jul '26.\n\nThe resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day for the Munich Airport Station, available here: https://www.wunderground.com/history/daily/de/munich/EDDM.",
+  "rules": "",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "outcomePrices": "[\"0.0575\", \"0.9425\"]",
+  "active": true,
+  "closed": false,
+  "endDate": "2026-07-16T12:00:00Z",
+  "groupItemTitle": "32°C",
+  "groupItemThreshold": "8",
+  "resolutionSource": "https://www.wunderground.com/history/daily/de/munich/EDDM",
+  "events": [
+    {
+      "id": "701552",
+      "slug": "highest-temperature-in-munich-on-july-16-2026",
+      "title": "Highest temperature in Munich on July 16?",
+      "description": "This market will resolve to the temperature range that contains the highest temperature recorded at the Munich Airport Station in degrees Celsius on 16 Jul '26.\n\nThe resolution source for this market will be information from Wunderground, specifically the highest temperature recorded for all times on this day for the Munich Airport Station, available here: https://www.wunderground.com/history/daily/de/munich/EDDM.",
+      "resolutionSource": "https://www.wunderground.com/history/daily/de/munich/EDDM"
+    }
+  ]
+}

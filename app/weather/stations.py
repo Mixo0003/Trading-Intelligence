@@ -7,6 +7,10 @@ class WeatherStation:
     name: str
     latitude: float
     longitude: float
+    elevation_m: float | None = None
+    timezone: str | None = None
+    verified: bool = False
+    resolution_url: str | None = None
 
 
 KNOWN_STATIONS: dict[str, WeatherStation] = {
