@@ -151,6 +151,7 @@ def format_scan_completed_summary(progress: ScanProgress) -> str:
             "Child markets loaded for analysis: "
             f"{progress.child_markets_loaded_for_analysis}"
         ),
+        f"Child markets analyzed: {progress.child_markets_analyzed}",
         f"Parent event analyses completed: {analyzed_parent_events}",
         f"Forecasts available: {len(forecasts)}",
         f"Validated opportunities: {len(validated)}",

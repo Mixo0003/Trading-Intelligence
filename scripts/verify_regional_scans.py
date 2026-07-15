@@ -39,6 +39,7 @@ def _summarize(region: ScanRegion) -> dict:
         "child_markets_loaded_for_analysis": (
             progress.child_markets_loaded_for_analysis
         ),
+        "child_markets_analyzed": progress.child_markets_analyzed,
         "parent_events_analyzed": progress.parent_events_analyzed,
         "forecasts_produced": len(forecasts),
         "watchlist_results": len(watchlist),

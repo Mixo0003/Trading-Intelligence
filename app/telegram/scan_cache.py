@@ -231,6 +231,7 @@ def _progress_to_dict(progress: ScanProgress) -> dict[str, Any]:
         "child_markets_discovered": progress.child_markets_discovered,
         "parent_events_in_region": progress.parent_events_in_region,
         "child_markets_loaded_for_analysis": progress.child_markets_loaded_for_analysis,
+        "child_markets_analyzed": progress.child_markets_analyzed,
         "parent_events_analyzed": progress.parent_events_analyzed,
         "scan_region": progress.scan_region,
         "scan_duration_seconds": progress.scan_duration_seconds,
@@ -257,6 +258,10 @@ def _progress_from_dict(data: dict[str, Any]) -> ScanProgress:
         parent_events_in_region=data.get("parent_events_in_region", 0),
         child_markets_loaded_for_analysis=data.get(
             "child_markets_loaded_for_analysis", 0
+        ),
+        child_markets_analyzed=data.get(
+            "child_markets_analyzed",
+            data.get("child_markets_loaded_for_analysis", 0),
         ),
         parent_events_analyzed=data.get("parent_events_analyzed", 0),
         scan_region=data.get("scan_region", ScanRegion.ALL.value),

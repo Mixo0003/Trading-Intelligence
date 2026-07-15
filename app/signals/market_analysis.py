@@ -124,6 +124,7 @@ class ScanProgress:
     child_markets_discovered: int = 0
     parent_events_in_region: int = 0
     child_markets_loaded_for_analysis: int = 0
+    child_markets_analyzed: int = 0
     parent_events_analyzed: int = 0
     scan_region: str = "ALL"
     scan_duration_seconds: float = 0.0

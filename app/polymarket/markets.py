@@ -111,6 +111,39 @@ def _dedupe_markets(markets: list[PolymarketMarket]) -> list[PolymarketMarket]:
     return result
 
 
+def _parent_event_key(market: PolymarketMarket) -> str:
+    events = market.raw.get("events")
+    if isinstance(events, list) and events and isinstance(events[0], dict):
+        event = events[0]
+        event_id = event.get("id")
+        if event_id is not None:
+            return f"id:{event_id}"
+        event_slug = event.get("slug")
+        if event_slug:
+            return f"slug:{event_slug}"
+    event_id = market.raw.get("eventId") or market.raw.get("event_id")
+    if event_id is not None:
+        return f"id:{event_id}"
+    return f"market:{market.id or market.slug or id(market)}"
+
+
+def _limit_parent_events(
+    markets: list[PolymarketMarket],
+    parent_limit: int,
+) -> list[PolymarketMarket]:
+    """Keep complete child sets for at most parent_limit discovered events."""
+    selected_keys: set[str] = set()
+    result: list[PolymarketMarket] = []
+    for market in markets:
+        key = _parent_event_key(market)
+        if key not in selected_keys:
+            if len(selected_keys) >= parent_limit:
+                continue
+            selected_keys.add(key)
+        result.append(market)
+    return result
+
+
 def _filter_priority_city_markets(
     markets: list[PolymarketMarket],
     priority_cities: list[str],
@@ -159,7 +192,10 @@ def get_weather_markets(
                 existing_keys.add(key)
                 priority_added += 1
 
-    core = merged[:limit]
+    # `limit` bounds parent events, not child brackets. Slicing the child list
+    # previously let five 11-bracket events exhaust a limit of 50 and omit
+    # lower-volume USA parent events before regional classification.
+    core = _limit_parent_events(merged, limit)
     final = _dedupe_markets(supplement_discovered_markets(client, core))
     return final, direct_market_count, priority_added
 

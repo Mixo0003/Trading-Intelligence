@@ -8,12 +8,22 @@ from app.polymarket.discovery import SkipReason, evaluate_market_eligibility
 from app.polymarket.event_expansion import expand_group_children
 from app.polymarket.market_text import build_market_context_text
 from app.polymarket.markets import get_weather_markets
-from app.region.classifier import event_matches_scan_region
+from app.region.classifier import (
+    RegionClassification,
+    classify_market_region,
+    event_matches_scan_region,
+)
+from app.region.registry import country_code_to_region, station_to_country
 from app.region.types import ScanRegion
 from app.signals.event_analysis import analyze_temperature_event
 from app.signals.market_analysis import MarketAnalysis, ScanProgress, analyze_market
 from app.signals.ranking import sort_analyses
 from app.diagnostics.scan_runtime import log_scan_runtime_diagnostics
+from app.weather.station_resolver import (
+    extract_station_code_from_text,
+    resolve_verified_station_from_text,
+)
+from app.weather.stations import get_station
 
 logger = logging.getLogger(__name__)
 
@@ -45,28 +55,38 @@ def _group_markets_by_event(markets) -> tuple[dict[str, list], list]:
     return grouped, standalone
 
 
-def _count_regional_events(
-    grouped: dict[str, list],
-    standalone: list,
-    scan_region: ScanRegion,
-) -> int:
-    if scan_region is ScanRegion.ALL:
-        return len(grouped) + len(standalone)
+def _event_metadata(market) -> dict:
+    events = market.raw.get("events")
+    if isinstance(events, list) and events and isinstance(events[0], dict):
+        return events[0]
+    return {}
 
-    count = 0
-    for children in grouped.values():
-        if not children:
-            continue
-        text = build_market_context_text(children[0])
-        matches, _ = event_matches_scan_region(text, scan_region)
-        if matches:
-            count += 1
-    for market in standalone:
-        text = build_market_context_text(market)
-        matches, _ = event_matches_scan_region(text, scan_region)
-        if matches:
-            count += 1
-    return count
+
+def _resolve_parent_station(context_text: str):
+    """Resolve coordinates for possible USA/unknown stations before filtering."""
+    station_code = extract_station_code_from_text(context_text)
+    known = get_station(station_code)
+    if known is not None:
+        return known
+
+    station_country = station_to_country(station_code)
+    station_region = country_code_to_region(station_country, station_code)
+    if station_region is ScanRegion.USA or station_country is None:
+        station, _ = resolve_verified_station_from_text(context_text)
+        return station
+    return None
+
+
+def _classify_parent_event(children: list) -> RegionClassification:
+    market = children[0]
+    context_text = build_market_context_text(market)
+    station = _resolve_parent_station(context_text)
+    return classify_market_region(
+        context_text,
+        station_code=station.code if station else None,
+        station=station,
+        event_metadata=_event_metadata(market),
+    )
 
 
 def scan_weather_markets(
@@ -105,8 +125,22 @@ def scan_weather_markets(
     metrics.priority_us_discovered = priority_added
 
     grouped, standalone = _group_markets_by_event(markets)
-    parent_events_discovered = len(grouped) + len(standalone)
-    parent_events_in_region = _count_regional_events(grouped, standalone, region)
+    parent_groups = list(grouped.values()) + [[market] for market in standalone]
+    classified_groups = [
+        (children, _classify_parent_event(children))
+        for children in parent_groups
+        if children
+    ]
+    parent_events_discovered = len(classified_groups)
+    parent_events_in_region = sum(
+        1
+        for children, classification in classified_groups
+        if event_matches_scan_region(
+            build_market_context_text(children[0]),
+            region,
+            classification=classification,
+        )[0]
+    )
     progress.parent_events_discovered = parent_events_discovered
     progress.child_markets_discovered = len(markets)
     progress.parent_events_in_region = parent_events_in_region
@@ -117,7 +151,10 @@ def scan_weather_markets(
     analyzed_events: set[str] = set()
     analyzed: list[MarketAnalysis] = []
 
-    def _analyze_group(children: list) -> None:
+    def _analyze_group(
+        children: list,
+        classification: RegionClassification,
+    ) -> None:
         if not children:
             return
         eid = _event_id(children[0])
@@ -125,7 +162,11 @@ def scan_weather_markets(
             return
 
         context_text = build_market_context_text(children[0])
-        matches_region, region_skip = event_matches_scan_region(context_text, region)
+        matches_region, region_skip = event_matches_scan_region(
+            context_text,
+            region,
+            classification=classification,
+        )
         if not matches_region:
             _record_skip(progress, region_skip or "REGION_UNRESOLVED")
             metrics.markets_excluded_before_weather += 1
@@ -148,6 +189,8 @@ def scan_weather_markets(
             analysis_children = expand_group_children(client, eligible_children)
             progress.child_markets_loaded_for_analysis += len(analysis_children)
             metrics.child_markets_loaded_for_analysis += len(analysis_children)
+            progress.child_markets_analyzed += len(analysis_children)
+            metrics.child_markets_analyzed += len(analysis_children)
             if len(analysis_children) > 1:
                 analysis = analyze_temperature_event(settings, analysis_children)
             else:
@@ -168,10 +211,8 @@ def scan_weather_markets(
                 progress.skip_reasons.get("analysis error", 0) + 1
             )
 
-    for children in grouped.values():
-        _analyze_group(children)
-    for market in standalone:
-        _analyze_group([market])
+    for children, classification in classified_groups:
+        _analyze_group(children, classification)
 
     metrics.markets_skipped = progress.skipped
     analyzed = sort_analyses(analyzed)

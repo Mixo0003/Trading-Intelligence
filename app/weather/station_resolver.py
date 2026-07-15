@@ -19,6 +19,7 @@ _STATION_WORD_BLOCKLIST = frozenset({
     "MORE", "MOST", "SOME", "SUCH", "UPON", "THEM", "THEN", "DAILY", "JULY",
     "JUNE", "AUGU", "SEPT", "OCTO", "NOVE", "DECE", "JANU", "MOND", "TUES",
     "WEDN", "THUR", "FRID", "SATU", "SUND", "YES", "NO",
+    "KONG",
 })
 
 _EXPLICIT_STATION_PATTERNS = (
@@ -81,8 +82,6 @@ def extract_station_code_from_text(text: str) -> str | None:
             return code
         from app.region.registry import STATION_COUNTRY
         if code in STATION_COUNTRY:
-            return code
-        if code[0] in {"K", "E", "L", "R", "V", "Z", "W", "O", "U", "C", "P", "T"}:
             return code
 
     match = re.search(r"\b([A-Z]{3})\s+(?:AIRPORT|STATION)\b", upper)

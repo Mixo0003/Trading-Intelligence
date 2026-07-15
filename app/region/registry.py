@@ -31,6 +31,7 @@ STATION_COUNTRY: dict[str, str] = {
     "KSEA": "US", "KLAX": "US", "KDFW": "US", "KPHX": "US", "KLAS": "US",
     "KBOS": "US", "KDCA": "US", "KIAD": "US", "KSFO": "US", "KDEN": "US",
     "KIAH": "US", "KMSP": "US", "KPDX": "US", "KSLC": "US", "KPHL": "US",
+    "KAUS": "US", "KHOU": "US", "KSEA": "US", "KLGA": "US",
     "TJSJ": "PR", "PHNL": "US",
     # Europe
     "EGLL": "GB", "EGKK": "GB", "EGSS": "GB", "EGPH": "GB",
@@ -44,28 +45,36 @@ STATION_COUNTRY: dict[str, str] = {
     # Asia
     "VHHH": "HK", "RCTP": "TW", "RJTT": "JP", "RJAA": "JP", "RKSI": "KR",
     "ZGGG": "CN", "ZHHH": "CN", "ZSPD": "CN", "ZSSS": "CN", "ZBAA": "CN",
-    "WSSS": "SG", "VTBS": "TH", "VIDP": "IN", "RKSS": "KR",
+    "WSSS": "SG", "VTBS": "TH", "VIDP": "IN", "VILK": "IN", "RKSS": "KR",
+    "RKPK": "KR", "OEJN": "SA", "MPMG": "PA",
 }
 
 CITY_COUNTRY: dict[str, str] = {
     "Chicago": "US", "New York City": "US", "Miami": "US", "Atlanta": "US",
     "Seattle": "US", "Los Angeles": "US", "Boston": "US", "Washington": "US",
+    "Austin": "US", "Houston": "US",
     "London": "GB", "Paris": "FR", "Munich": "DE", "Madrid": "ES", "Rome": "IT",
     "Berlin": "DE", "Amsterdam": "NL", "Brussels": "BE", "Zurich": "CH",
+    "Helsinki": "FI",
     "Hong Kong": "HK", "Taipei": "TW", "Wuhan": "CN", "Tokyo": "JP", "Seoul": "KR",
     "Singapore": "SG", "Bangkok": "TH", "Mumbai": "IN", "Delhi": "IN",
+    "Busan": "KR", "Guangzhou": "CN", "Jeddah": "SA", "Lucknow": "IN",
+    "Panama City": "PA",
 }
 
 # ICAO prefix (1-2 chars) -> country when unambiguous.
 ICAO_PREFIX_COUNTRY: dict[str, str] = {
-    "K": "US",
+    "K": "US", "PA": "US", "PF": "US", "PO": "US", "PH": "US",
     "C": "CA",
     "EG": "GB", "EI": "IE", "LF": "FR", "ED": "DE", "LE": "ES", "LI": "IT",
     "EH": "NL", "EB": "BE", "LS": "CH", "LO": "AT", "EK": "DK", "EN": "NO",
     "ES": "SE", "EF": "FI", "EP": "PL", "LK": "CZ", "LH": "HU", "LG": "GR",
     "LP": "PT", "LT": "TR",
-    "RJ": "JP", "RK": "KR", "RC": "TW", "VH": "HK", "Z": "CN", "V": "IN",
-    "W": "ID", "O": "AE",
+    "RJ": "JP", "RK": "KR", "RC": "TW", "VH": "HK", "Z": "CN",
+    "VA": "IN", "VE": "IN", "VI": "IN", "VO": "IN",
+    "W": "ID",
+    "OE": "SA", "OM": "AE", "OJ": "JO", "OT": "QA", "OK": "KW",
+    "OB": "BH", "OO": "OM", "OL": "LB", "LL": "IL",
 }
 
 

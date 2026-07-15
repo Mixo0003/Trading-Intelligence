@@ -1,5 +1,6 @@
 from app.polymarket.market_type import NormalizedTemperatureType
 from app.polymarket.models import PolymarketMarket
+from app.polymarket.pricing import market_polymarket_url
 from app.signals.comparison import build_comparison_text
 from app.signals.outcome_labels import build_best_outcome_label
 from app.weather.temperature_units import TemperatureUnit
@@ -23,6 +24,16 @@ def _market(**kwargs) -> PolymarketMarket:
 
 
 class TestOutcomeMapping:
+    def test_parent_event_url_comes_from_attached_event_metadata(self):
+        market = _market(
+            slug="child-market",
+            raw={"events": [{"slug": "highest-temperature-in-austin-on-july-15-2026"}]},
+        )
+        assert market_polymarket_url(market) == (
+            "https://polymarket.com/event/"
+            "highest-temperature-in-austin-on-july-15-2026"
+        )
+
     def test_selected_bracket_displayed_not_yes(self):
         market = _market(
             question="Will the highest temperature in London be between 16-18°C?",

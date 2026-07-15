@@ -19,4 +19,9 @@ def market_polymarket_url(market: PolymarketMarket) -> str:
     slug = market.slug or market.id or "unknown"
     if market.raw.get("eventSlug"):
         return f"https://polymarket.com/event/{market.raw['eventSlug']}"
+    events = market.raw.get("events")
+    if isinstance(events, list) and events and isinstance(events[0], dict):
+        event_slug = events[0].get("slug")
+        if event_slug:
+            return f"https://polymarket.com/event/{event_slug}"
     return f"https://polymarket.com/market/{slug}"
