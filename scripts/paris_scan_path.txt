@@ -1,0 +1,23 @@
+market_title=Will the lowest temperature in Paris be 24°C on July 16?
+temperature_type=NormalizedTemperatureType.DAILY_LOW
+temperature_type_label=Daily low temperature
+forecast_display=19.9°C
+best_outcome=24°C
+model_probability=0.85
+raw_yes_price=0.003
+recommendation_tier=STRONG OPPORTUNITY
+validation_error=None
+selected_statistic=None
+market_id=2917412
+---telegram---
+🌤 PARIS — JULY 16
+
+Market: Daily low temperature
+Forecast low: 19.9°C
+Best outcome: 24°C
+Market price: 0.3%
+Model probability: 85%
+Edge: +85%
+Confidence: HIGH
+Signal: STRONG OPPORTUNITY
+Station: LFPB

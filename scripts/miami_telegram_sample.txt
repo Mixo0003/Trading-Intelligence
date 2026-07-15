@@ -1,0 +1,13 @@
+🌤 MIAMI — JULY 15
+
+Market: Daily high temperature
+Forecast high: 92.7°F
+Expected range: 89–97°F
+Best outcome: 90-91°F
+Market price: 4.0%
+Model probability: 18%
+Edge: +14%
+Confidence: HIGH
+Signal: NORMAL BET
+Station: KMIA
+Forecast source: open_meteo
