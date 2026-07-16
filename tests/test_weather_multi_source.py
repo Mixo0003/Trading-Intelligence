@@ -68,6 +68,8 @@ class TestOpenMeteoRemoval:
             patch("app.weather.forecast_ensemble.fetch_nws_hourly") as mock_nws,
             patch("app.weather.forecast_ensemble.fetch_weather_com_daily") as mock_wx,
             patch("app.weather.forecast_ensemble.fetch_met_norway") as mock_met,
+            patch("app.weather.forecast_ensemble.fetch_ecmwf_ifs") as mock_ecmwf,
+            patch("app.weather.forecast_ensemble.fetch_dwd_icon_global") as mock_icon,
         ):
             from app.weather.provider_forecast import ProviderForecast
 
@@ -99,6 +101,8 @@ class TestOpenMeteoRemoval:
             mock_nws.return_value = _prov("NWS", 29.0)
             mock_wx.return_value = _prov("Weather.com", 30.0)
             mock_met.return_value = _prov("MET Norway", 28.5)
+            mock_ecmwf.return_value = None
+            mock_icon.return_value = None
 
             result = fetch_forecast_ensemble(
                 settings,
@@ -110,6 +114,8 @@ class TestOpenMeteoRemoval:
             assert result.betting_skip_reason is None
             assert len(result.provider_names) == 3
             assert "Open-Meteo" not in result.forecast_provider_label
+            assert "ECMWF IFS" not in result.provider_names
+            assert "DWD ICON Global" not in result.provider_names
 
 
 class TestProbabilityDistribution:

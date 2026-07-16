@@ -39,6 +39,10 @@ _ALLOWED_REASONS = frozenset({
     "No clear edge.",
     "Conflicting forecasts.",
     "Market price too high.",
+    "Station unresolved.",
+    "Morning storms may cap the high.",
+    "Models disagree by 4°F.",
+    "Clear sky supports full heating.",
 })
 
 _LONG_REASON_MAP = {
@@ -87,6 +91,9 @@ def _short_reason_display(reason: str | None) -> str:
     text = reason.strip()
     if text in _ALLOWED_REASONS:
         return text
+    # Allow dynamic station-bias phrasing: "Station runs ~1°F above city forecasts."
+    if text.startswith("Station runs ~") and text.endswith("."):
+        return text
     key = text.lower()
     if not key.endswith("."):
         key = f"{key}."
@@ -94,7 +101,7 @@ def _short_reason_display(reason: str | None) -> str:
     if mapped:
         return mapped
     words = text.rstrip(".").split()
-    if len(words) <= 4 and text.endswith("."):
+    if len(words) <= 8 and text.endswith("."):
         return text
     return "Limited confidence."
 

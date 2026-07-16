@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -53,6 +55,11 @@ def _market(
     )
 
 
+def _horizon_target_date_str(*, days_ahead: int = 2) -> str:
+    """Target date within the default 7-day forecast eligibility window."""
+    return (date.today() + timedelta(days=days_ahead)).strftime("%B %d, %Y")
+
+
 class TestMarketTypeClassification:
     def test_maximum_temperature(self):
         mtype, direction = classify_temperature_market(
@@ -84,11 +91,12 @@ class TestMarketTypeClassification:
 
 class TestDiscoveryFiltering:
     def _valid_market(self) -> PolymarketMarket:
+        target = _horizon_target_date_str()
         return _market(
-            question="Will the daily high temperature at KORD exceed 90°F on July 15, 2026?",
+            question=f"Will the daily high temperature at KORD exceed 90°F on {target}?",
             description="Resolved using Weather Underground for station KORD.",
             rules="Weather Underground KORD daily high temperature.",
-            slug="kord-high-july-15",
+            slug="kord-high-horizon",
         )
 
     def test_accepts_valid_market(self):

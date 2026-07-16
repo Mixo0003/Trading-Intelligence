@@ -109,6 +109,17 @@ class MarketAnalysis:
     band_rows: tuple[tuple[str, float, float, float | None], ...] = ()
     live_triggers: tuple[str, ...] = ()
     forecast_sources_line: str = ""
+    # Station-first evidence (internal; not dumped into Telegram cards).
+    station_bias_f: float | None = None
+    station_bias_days: int = 0
+    evidence_short_reason: str | None = None
+    observed_high_f: float | None = None
+    observed_low_f: float | None = None
+    observed_rounded_f: int | None = None
+    wunderground_history_url: str | None = None
+    metar_stale: bool = False
+    nws_discussion_office: str | None = None
+    local_tv_accepted: bool = False
 
 
 @dataclass

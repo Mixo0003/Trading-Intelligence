@@ -4,6 +4,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 
+# On Windows (and some slim images), IANA zones require the tzdata package.
+# Importing it registers the zoneinfo database for ZoneInfo lookups.
+try:
+    import tzdata  # noqa: F401
+except ImportError:  # pragma: no cover - optional OS-provided tzdb
+    tzdata = None  # type: ignore[assignment]
+
 
 def load_timezone(name: str | None) -> tzinfo:
     """Load an IANA timezone, falling back to UTC without crashing handlers."""

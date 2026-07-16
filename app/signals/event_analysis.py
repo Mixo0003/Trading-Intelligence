@@ -41,8 +41,14 @@ from app.signals.forecast_display import (
 from app.signals.market_analysis import MarketAnalysis
 from app.signals.price_validation import validate_actionable_price
 from app.weather.daily_forecast import DailyForecastStats, fetch_daily_forecast_stats
+from app.weather.evidence import gather_station_evidence
+from app.weather.evidence.types import StationEvidence
 from app.weather.resolution import parse_resolution_details
-from app.weather.station_resolver import resolve_verified_station_from_text
+from app.weather.sources.common import parse_target_date
+from app.weather.station_resolver import (
+    extract_resolution_url_from_text,
+    resolve_verified_station_from_text,
+)
 from app.weather.temperature_units import (
     TemperatureUnit,
     celsius_to_fahrenheit,
@@ -379,6 +385,26 @@ def analyze_temperature_event(
     elif station_error:
         forecast_stats = None
 
+    station_evidence: StationEvidence | None = None
+    if station is not None and station.verified and station_error is None:
+        try:
+            station_evidence = gather_station_evidence(
+                settings,
+                station,
+                target=parse_target_date(resolution.target_date),
+                event_type=event_type,
+                resolution_url=extract_resolution_url_from_text(context_text)
+                or station.resolution_url,
+                forecast_stats=forecast_stats,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Station evidence gather failed for %s: %s",
+                station.code,
+                type(exc).__name__,
+            )
+            station_evidence = None
+
     forecast_c = forecast_stats.selected_value_c if forecast_stats else None
     forecast_native = (
         convert_temperature(forecast_c, TemperatureUnit.CELSIUS, market_unit)
@@ -479,6 +505,11 @@ def analyze_temperature_event(
         ),
         forecast_stats,
     )
+    if station_evidence is not None and station_evidence.confidence_delta:
+        confidence_score = max(
+            0.0,
+            min(1.0, confidence_score + station_evidence.confidence_delta),
+        )
     confidence = confidence_label(confidence_score)
 
     mapping_ok, mapping_error = _validate_child_market_mapping(
@@ -604,6 +635,9 @@ def analyze_temperature_event(
         validation_error=skip_reason,
         betting_skip_reason=betting_skip_reason,
         station_error=station_error,
+        evidence_reason=(
+            station_evidence.short_reason if station_evidence is not None else None
+        ),
     )
     source_divergence_display = format_source_divergence(
         forecast_stats,
@@ -723,4 +757,49 @@ def analyze_temperature_event(
         band_rows=_build_band_rows(),
         live_triggers=live_trigger_list,
         forecast_sources_line=forecast_sources_line,
+        station_bias_f=(
+            station_evidence.station_bias_f if station_evidence is not None else None
+        ),
+        station_bias_days=(
+            station_evidence.station_bias_days if station_evidence is not None else 0
+        ),
+        evidence_short_reason=(
+            station_evidence.short_reason if station_evidence is not None else None
+        ),
+        observed_high_f=(
+            station_evidence.wunderground.raw_high_f
+            if station_evidence and station_evidence.wunderground
+            else None
+        ),
+        observed_low_f=(
+            station_evidence.wunderground.raw_low_f
+            if station_evidence and station_evidence.wunderground
+            else None
+        ),
+        observed_rounded_f=(
+            (
+                station_evidence.wunderground.rounded_high_f
+                if event_type == NormalizedTemperatureType.DAILY_HIGH
+                else station_evidence.wunderground.rounded_low_f
+            )
+            if station_evidence and station_evidence.wunderground
+            else None
+        ),
+        wunderground_history_url=(
+            station_evidence.wunderground.history_url
+            if station_evidence and station_evidence.wunderground
+            else None
+        ),
+        metar_stale=bool(
+            station_evidence and station_evidence.metar and station_evidence.metar.stale
+        ),
+        nws_discussion_office=(
+            station_evidence.nws_discussion.office_id
+            if station_evidence and station_evidence.nws_discussion
+            else None
+        ),
+        local_tv_accepted=bool(
+            station_evidence
+            and any(item.accepted for item in station_evidence.local_tv)
+        ),
     )

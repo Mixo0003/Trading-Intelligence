@@ -223,6 +223,8 @@ class TestStationTargeting:
         distance = haversine_distance_km(25.78806, -80.31692, 25.6, -80.4)
         assert distance > 10.0
 
+    @patch("app.weather.forecast_ensemble.fetch_dwd_icon_global")
+    @patch("app.weather.forecast_ensemble.fetch_ecmwf_ifs")
     @patch("app.weather.forecast_ensemble.fetch_met_norway")
     @patch("app.weather.forecast_ensemble.fetch_weather_com_daily")
     @patch("app.weather.forecast_ensemble.fetch_nws_hourly")
@@ -231,6 +233,8 @@ class TestStationTargeting:
         mock_nws,
         mock_wx,
         mock_met,
+        mock_ecmwf,
+        mock_icon,
     ):
         settings = MagicMock()
         settings.forecast_grid_max_distance_km = 15.0
@@ -242,6 +246,8 @@ class TestStationTargeting:
         mock_nws.return_value = _provider("NWS", 26.7)
         mock_wx.return_value = _provider("Weather.com", 26.4)
         mock_met.return_value = _provider("MET Norway", 26.5)
+        mock_ecmwf.return_value = None
+        mock_icon.return_value = None
 
         result = fetch_forecast_ensemble(
             settings,
@@ -254,6 +260,8 @@ class TestStationTargeting:
         assert mock_nws.called
         assert mock_wx.called
         assert mock_met.called
+        assert mock_ecmwf.called
+        assert mock_icon.called
 
 
 class TestDailyLowLogic:

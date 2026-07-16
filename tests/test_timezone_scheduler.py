@@ -17,9 +17,15 @@ def _scheduled_settings():
 def test_america_chicago_and_utc_load():
     chicago = load_timezone("America/Chicago")
     utc = load_timezone("UTC")
+    # DST: mid-summer CDT (UTC-5), mid-winter CST (UTC-6).
     assert datetime(2026, 7, 15, 12, tzinfo=chicago).utcoffset() == timedelta(hours=-5)
     assert datetime(2026, 1, 15, 12, tzinfo=chicago).utcoffset() == timedelta(hours=-6)
     assert datetime(2026, 7, 15, 12, tzinfo=utc).utcoffset() == timedelta(0)
+    # Aware conversion near local midnight must not raise naive/aware errors.
+    local = datetime(2026, 7, 15, 0, 30, tzinfo=chicago)
+    as_utc = local.astimezone(timezone.utc)
+    assert as_utc.tzinfo is not None
+    assert as_utc == datetime(2026, 7, 15, 5, 30, tzinfo=timezone.utc)
 
 
 def test_invalid_timezone_logs_and_falls_back(caplog):

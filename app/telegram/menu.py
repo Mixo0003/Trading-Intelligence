@@ -19,14 +19,22 @@ from app.telegram.handlers import (
 )
 
 
+def _build_application(token: str) -> Application:
+    """Build Application with JobQueue when the optional job-queue extra is installed."""
+    builder = Application.builder().token(token)
+    try:
+        from telegram.ext import JobQueue
+
+        # Explicit JobQueue so scheduled reports work when apscheduler extra is present.
+        return builder.job_queue(JobQueue()).build()
+    except Exception:
+        return builder.build()
+
+
 def build_telegram_application(settings: Settings) -> Application:
     initialize_database(settings)
 
-    app = (
-        Application.builder()
-        .token(settings.telegram_token)
-        .build()
-    )
+    app = _build_application(settings.telegram_token)
     app.bot_data["settings"] = settings
 
     app.add_handler(CommandHandler("start", start_command))

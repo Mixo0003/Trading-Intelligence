@@ -66,14 +66,25 @@ def pick_display_outcome(
     return max(sibling_probs, key=lambda item: item.probability)
 
 
+_EVIDENCE_REASONS = frozenset({
+    "Morning storms may cap the high",
+    "Station runs ~1°F above city forecasts",
+    "Models disagree by 4°F",
+    "Clear sky supports full heating",
+})
+
+
 def short_display_reason(
     *,
     display_status: str,
     validation_error: str | None,
     betting_skip_reason: str | None,
     station_error: str | None,
+    evidence_reason: str | None = None,
 ) -> str:
     """Return a short Telegram-facing reason (max 4 words after Reason:)."""
+    if station_error in {"STATION_UNRESOLVED", "STATION_NOT_VERIFIED"}:
+        return "Station unresolved."
     if betting_skip_reason == "FORECAST_SOURCE_DIVERGENCE" or validation_error == "FORECAST_SOURCE_DIVERGENCE":
         return "Conflicting forecasts."
     if betting_skip_reason == "INSUFFICIENT_PROVIDERS" or validation_error == "INSUFFICIENT_PROVIDERS":
@@ -84,6 +95,16 @@ def short_display_reason(
         return "Insufficient sources."
     if display_status == DISPLAY_SKIP_MAPPING:
         return "No clear edge."
+    # Prefer a concise evidence phrase on actionable/watch cards only.
+    if (
+        evidence_reason
+        and display_status in {DISPLAY_VALIDATED, DISPLAY_WATCH, DISPLAY_FORECAST_ONLY}
+    ):
+        cleaned = evidence_reason.strip().rstrip(".")
+        if cleaned in _EVIDENCE_REASONS or cleaned.startswith("Station runs ~"):
+            return cleaned if cleaned.endswith(".") else f"{cleaned}."
+        if cleaned == "Models disagree by 4°F":
+            return "Models disagree by 4°F."
     if display_status == DISPLAY_WATCH:
         return "Potential value."
     if display_status == DISPLAY_VALIDATED:

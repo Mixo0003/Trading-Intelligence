@@ -24,6 +24,7 @@ KNOWN_STATIONS: dict[str, WeatherStation] = {
     "KAUS": WeatherStation("KAUS", "Austin-Bergstrom International Airport", 30.1975, -97.6664),
     "KHOU": WeatherStation("KHOU", "William P. Hobby Airport", 29.6454, -95.2789),
     "KDFW": WeatherStation("KDFW", "Dallas/Fort Worth International Airport", 32.8998, -97.0403),
+    "KDAL": WeatherStation("KDAL", "Dallas Love Field", 32.8471, -96.8518),
     "KPHX": WeatherStation("KPHX", "Phoenix Sky Harbor International Airport", 33.4352, -112.0101),
     "KLAS": WeatherStation("KLAS", "Harry Reid International Airport", 36.0840, -115.1537),
     "PHNL": WeatherStation("PHNL", "Daniel K. Inouye International Airport", 21.3187, -157.9225),

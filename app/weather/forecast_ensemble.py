@@ -1,4 +1,8 @@
-"""Multi-provider station-specific forecast ensemble without Open-Meteo."""
+"""Multi-provider station-specific forecast ensemble.
+
+Open-Meteo may be used only as a transport for dedicated ECMWF IFS and DWD ICON
+Global model endpoints. Blended Open-Meteo Best Match is never a provider.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,10 @@ from app.polymarket.market_type import NormalizedTemperatureType
 from app.weather.provider_forecast import ProviderForecast
 from app.weather.sources.met_norway import fetch_met_norway
 from app.weather.sources.nws import fetch_nws_hourly
+from app.weather.sources.open_meteo_models import (
+    fetch_dwd_icon_global,
+    fetch_ecmwf_ifs,
+)
 from app.weather.sources.weather_com import fetch_weather_com_daily
 from app.weather.sources.common import parse_target_date
 from app.weather.stations import WeatherStation
@@ -106,6 +114,16 @@ def _collect_independent_providers(
     if met is not None and "MET Norway" not in seen_vendors:
         providers.append(met)
         seen_vendors.add("MET Norway")
+
+    ecmwf = fetch_ecmwf_ifs(station, target, event_type, timezone)
+    if ecmwf is not None and "ECMWF IFS" not in seen_vendors:
+        providers.append(ecmwf)
+        seen_vendors.add("ECMWF IFS")
+
+    icon = fetch_dwd_icon_global(station, target, event_type, timezone)
+    if icon is not None and "DWD ICON Global" not in seen_vendors:
+        providers.append(icon)
+        seen_vendors.add("DWD ICON Global")
 
     return providers
 
@@ -268,7 +286,10 @@ def fetch_forecast_ensemble(
         open_meteo_ensemble_value_c=None,
         open_meteo_divergence_c=max_divergence,
         gfs_forecast_c=None,
-        ecmwf_forecast_c=None,
+        ecmwf_forecast_c=next(
+            (item.selected_value_c for item in active if item.provider_name == "ECMWF IFS"),
+            None,
+        ),
         station_latitude=station.latitude,
         station_longitude=station.longitude,
         station_elevation_m=station.elevation_m,
@@ -313,7 +334,7 @@ def ensemble_to_daily_stats(ensemble: ForecastEnsemble) -> "DailyForecastStats":
         open_meteo_ensemble_value_c=None,
         open_meteo_divergence_c=ensemble.reference_divergence_c,
         gfs_forecast_c=None,
-        ecmwf_forecast_c=None,
+        ecmwf_forecast_c=ensemble.ecmwf_forecast_c,
         reference_value_c=ensemble.reference_value_c,
         station_latitude=ensemble.station_latitude,
         station_longitude=ensemble.station_longitude,
