@@ -1,11 +1,23 @@
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
 from app.config.settings import Settings
+from app.copy_intel.scheduler import schedule_copy_intel_jobs
 from app.database.storage import initialize_database
-from app.telegram.buttons import ALL_NAV_BUTTONS
+from app.telegram.callback_handler import inline_callback_handler
+from app.telegram.copy_intel.handlers import (
+    copy_add_command,
+    copy_alerts_command,
+    copy_command,
+    copy_discover_command,
+    copy_list_command,
+    copy_paper_command,
+    copy_remove_command,
+    copy_settings_command,
+    copy_status_command,
+    copy_toggle_command,
+)
 from app.telegram.handlers import (
     analyze_command,
-    button_message_handler,
     error_handler,
     help_command,
     menu_command,
@@ -25,7 +37,6 @@ def _build_application(token: str) -> Application:
     try:
         from telegram.ext import JobQueue
 
-        # Explicit JobQueue so scheduled reports work when apscheduler extra is present.
         return builder.job_queue(JobQueue()).build()
     except Exception:
         return builder.build()
@@ -46,8 +57,20 @@ def build_telegram_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("recent", recent_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.Text(ALL_NAV_BUTTONS), button_message_handler))
+    app.add_handler(CommandHandler("copy", copy_command))
+    app.add_handler(CommandHandler("copy_list", copy_list_command))
+    app.add_handler(CommandHandler("copy_add", copy_add_command))
+    app.add_handler(CommandHandler("copy_remove", copy_remove_command))
+    app.add_handler(CommandHandler("copy_toggle", copy_toggle_command))
+    app.add_handler(CommandHandler("copy_status", copy_status_command))
+    app.add_handler(CommandHandler("copy_alerts", copy_alerts_command))
+    app.add_handler(CommandHandler("copy_paper", copy_paper_command))
+    app.add_handler(CommandHandler("copy_discover", copy_discover_command))
+    app.add_handler(CommandHandler("copy_settings", copy_settings_command))
+    # Single callback router — avoids duplicate/conflicting callback handlers.
+    app.add_handler(CallbackQueryHandler(inline_callback_handler))
     app.add_error_handler(error_handler)
 
     schedule_report_jobs(app, settings)
+    schedule_copy_intel_jobs(app, settings)
     return app

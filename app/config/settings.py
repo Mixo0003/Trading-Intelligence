@@ -9,6 +9,7 @@ from app.config.constants import (
     DEFAULT_LANGUAGE,
     DEFAULT_LOG_LEVEL,
     POLYMARKET_CLOB_BASE_URL,
+    POLYMARKET_DATA_BASE_URL,
     POLYMARKET_GAMMA_BASE_URL,
     PROJECT_NAME,
     PROJECT_VERSION,
@@ -87,8 +88,18 @@ class Settings:
     log_level: str
 
     polymarket_gamma_base_url: str
+    polymarket_data_base_url: str
     polymarket_clob_base_url: str
     weather_gov_base_url: str
+
+    copy_intel_enabled: bool
+    copy_intel_read_only: bool
+    copy_paper_bankroll_usd: float
+    copy_poll_interval_seconds: int
+    copy_max_trade_age_min: int
+    copy_min_resolved_trades: int
+    copy_min_liquidity_usd: float
+    copy_max_slippage_pct: float
 
     report_timezone: str
     report_times: list[str]
@@ -146,6 +157,10 @@ def load_settings() -> Settings:
             "POLYMARKET_GAMMA_BASE_URL",
             POLYMARKET_GAMMA_BASE_URL,
         ),
+        polymarket_data_base_url=os.getenv(
+            "POLYMARKET_DATA_BASE_URL",
+            POLYMARKET_DATA_BASE_URL,
+        ),
         polymarket_clob_base_url=os.getenv(
             "POLYMARKET_CLOB_BASE_URL",
             POLYMARKET_CLOB_BASE_URL,
@@ -185,4 +200,12 @@ def load_settings() -> Settings:
         weather_scan_deadline_seconds=max(
             30, int(os.getenv("WEATHER_SCAN_DEADLINE_SECONDS", "600"))
         ),
+        copy_intel_enabled=_parse_bool(os.getenv("COPY_INTEL_ENABLED", "false")),
+        copy_intel_read_only=_parse_bool(os.getenv("COPY_INTEL_READ_ONLY", "true"), default=True),
+        copy_paper_bankroll_usd=float(os.getenv("COPY_PAPER_BANKROLL_USD", "10000")),
+        copy_poll_interval_seconds=max(60, int(os.getenv("COPY_POLL_INTERVAL_SECONDS", "120"))),
+        copy_max_trade_age_min=max(1, int(os.getenv("COPY_MAX_TRADE_AGE_MIN", "30"))),
+        copy_min_resolved_trades=max(1, int(os.getenv("COPY_MIN_RESOLVED_TRADES", "20"))),
+        copy_min_liquidity_usd=float(os.getenv("COPY_MIN_LIQUIDITY_USD", "500")),
+        copy_max_slippage_pct=float(os.getenv("COPY_MAX_SLIPPAGE_PCT", "0.02")),
     )

@@ -9,7 +9,7 @@ from app.polymarket.market_type import NormalizedTemperatureType, TemperatureMar
 from app.region.types import ScanRegion
 from app.signals.market_analysis import MarketAnalysis, ScanProgress
 from app.telegram.buttons import BTN_FORECAST, BTN_TOP_SIGNALS
-from app.telegram.handlers import _load_top_signals_response, button_message_handler
+from app.telegram.handlers import _load_top_signals_response
 from app.telegram.scan_cache import (
     load_latest_scan_snapshot,
     save_scan_snapshot,

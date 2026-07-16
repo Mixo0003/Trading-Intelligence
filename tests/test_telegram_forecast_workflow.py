@@ -11,8 +11,7 @@ from app.polymarket.market_type import NormalizedTemperatureType, TemperatureMar
 from app.region.types import ScanRegion
 from app.signals.forecast_display import DISPLAY_FORECAST_ONLY, DISPLAY_VALIDATED
 from app.signals.market_analysis import MarketAnalysis, ScanProgress
-from app.telegram.buttons import BTN_FORECAST
-from app.telegram.handlers import button_message_handler, forecast_command, scan_command
+from app.telegram.handlers import forecast_command, scan_command
 from app.telegram.scan_cache import save_scan_snapshot
 from tests.conftest import make_test_settings
 
@@ -132,7 +131,7 @@ class TestForecastFirstWorkflow:
 
     @pytest.mark.asyncio
     async def test_forecasts_reads_cache_without_scan(self, db_settings):
-        update = _update(text=BTN_FORECAST)
+        update = _update()
         context = _context(db_settings)
         progress = ScanProgress(
             discovered=10,
@@ -152,7 +151,7 @@ class TestForecastFirstWorkflow:
             "app.telegram.handlers._run_scan",
             new=AsyncMock(),
         ):
-            await button_message_handler(update, context)
+            await forecast_command(update, context)
 
         scan_mock.assert_not_called()
         final_text = _edited_text(update)

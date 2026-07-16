@@ -13,12 +13,12 @@ from app.polymarket.market_type import NormalizedTemperatureType, TemperatureMar
 from app.signals.forecast_display import DISPLAY_VALIDATED
 from app.signals.market_analysis import MarketAnalysis, ScanProgress
 from app.region.types import ScanRegion
-from app.telegram.buttons import BTN_TOP_SIGNALS
 from app.telegram.handlers import (
     _load_top_signals_response,
-    button_message_handler,
+    _reply_top_signals,
     scan_command,
 )
+from app.telegram.inline_menus import weather_inline_keyboard
 from app.telegram.scan_cache import CachedScanSnapshot, load_latest_scan_snapshot, save_scan_snapshot
 from tests.conftest import make_test_settings
 
@@ -110,7 +110,7 @@ def db_settings(tmp_path):
 class TestTopSignalsCache:
     @pytest.mark.asyncio
     async def test_top_signals_does_not_call_scan_weather_markets(self, db_settings):
-        update = _update_with_message(text=BTN_TOP_SIGNALS)
+        update = _update_with_message()
         context = _context(db_settings)
         save_scan_snapshot(
             db_settings,
@@ -124,7 +124,13 @@ class TestTopSignalsCache:
             "app.telegram.handlers._run_scan",
             new=AsyncMock(),
         ) as run_scan_mock:
-            await button_message_handler(update, context)
+            await _reply_top_signals(
+                update.message,
+                context,
+                telegram_id=42,
+                region=ScanRegion.ALL,
+                reply_markup=weather_inline_keyboard(),
+            )
 
         scan_mock.assert_not_called()
         run_scan_mock.assert_not_called()
@@ -133,7 +139,7 @@ class TestTopSignalsCache:
 
     @pytest.mark.asyncio
     async def test_top_signals_makes_zero_external_network_calls(self, db_settings):
-        update = _update_with_message(text=BTN_TOP_SIGNALS)
+        update = _update_with_message()
         context = _context(db_settings)
         save_scan_snapshot(
             db_settings,
@@ -148,7 +154,13 @@ class TestTopSignalsCache:
         ) as client_cls, patch(
             "app.telegram.handlers.scan_weather_markets"
         ) as scan_mock:
-            await button_message_handler(update, context)
+            await _reply_top_signals(
+                update.message,
+                context,
+                telegram_id=42,
+                region=ScanRegion.ALL,
+                reply_markup=weather_inline_keyboard(),
+            )
 
         requests_get.assert_not_called()
         client_cls.assert_not_called()
@@ -229,14 +241,20 @@ class TestTopSignalsCache:
 
     @pytest.mark.asyncio
     async def test_loading_message_replaced_on_error(self, db_settings):
-        update = _update_with_message(text=BTN_TOP_SIGNALS)
+        update = _update_with_message()
         context = _context(db_settings)
 
         with patch(
             "app.telegram.handlers.load_latest_scan_snapshot",
             side_effect=RuntimeError("db read failed"),
         ):
-            await button_message_handler(update, context)
+            await _reply_top_signals(
+                update.message,
+                context,
+                telegram_id=42,
+                region=ScanRegion.ALL,
+                reply_markup=weather_inline_keyboard(),
+            )
 
         assert update.message.reply_text.await_count == 1
         loading_message = update.message.reply_text.return_value
