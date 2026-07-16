@@ -9,29 +9,20 @@ from app.config.settings import Settings
 from app.config.timezones import load_timezone
 from app.database.storage import get_recent_analyses, upsert_user
 from app.polymarket.client import PolymarketClient
-from app.region.session import get_user_scan_region, set_user_scan_region
+from app.region.session import get_user_scan_region
 from app.region.types import ScanRegion
 from app.signals.scan_service import (
     analyze_market_by_url,
-    scan_weather_markets,
+    scan_weather_markets,  # noqa: F401 — re-exported for test patches
     scan_weather_markets_async,
 )
-from app.telegram.buttons import (
-    BTN_BACK,
-    BTN_BEST_OPPORTUNITIES,
-    BTN_CHANGE_REGION,
-    BTN_FORECAST,
-    BTN_HELP,
-    BTN_RECENT,
-    BTN_STATUS,
-    BTN_TOP_SIGNALS,
-    BTN_WEATHER,
-    REGION_BUTTON_TO_SCAN_REGION,
-    is_regional_action_button,
-    main_menu_keyboard,
-    region_menu_keyboard,
-    regional_action_keyboard,
+from app.telegram.inline_menus import (
+    WEATHER_MENU_TEXT,
+    main_inline_keyboard,
+    remove_reply_keyboard,
+    weather_inline_keyboard,
 )
+from app.telegram.nav import edit_or_reply, open_main_menu
 from app.telegram.formatting import (
     format_concise_opportunity,
     format_opportunities_bundle,
@@ -46,7 +37,7 @@ from app.telegram.formatting import (
 )
 from app.telegram.scan_cache import load_latest_scan_snapshot, save_scan_snapshot
 from app.telegram.scan_tasks import try_start_scoped_task
-from app.telegram.messages import HELP_TEXT, START_TEXT, WEATHER_REGION_TEXT
+from app.telegram.messages import HELP_TEXT, START_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +74,7 @@ async def _track_user(update: Update, settings: Settings) -> None:
 
 
 def _reply_markup_for_region(region: ScanRegion):
-    return regional_action_keyboard(region)
+    return weather_inline_keyboard()
 
 
 async def _replace_loading_message(
@@ -95,9 +86,7 @@ async def _replace_loading_message(
 ) -> None:
     """Replace a progress message, deleting and replying only if editing fails."""
     try:
-        # Telegram cannot attach a ReplyKeyboardMarkup to an edited message.
-        # The persistent keyboard sent with the loading message remains active.
-        await loading_message.edit_text(final_text)
+        await loading_message.edit_text(final_text, reply_markup=reply_markup)
         return
     except Exception as exc:
         logger.warning("Could not edit Telegram loading message: %s", exc)
@@ -181,29 +170,29 @@ async def _reply_top_signals(
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings = _settings(context)
     await _track_user(update, settings)
-    if update.message:
-        await update.message.reply_text(START_TEXT, reply_markup=main_menu_keyboard())
+    message = update.message
+    if message is None:
+        return
+    from app.telegram.inline_menus import MAIN_MENU_TEXT
+
+    await message.reply_text(START_TEXT, reply_markup=remove_reply_keyboard())
+    await message.reply_text(MAIN_MENU_TEXT, reply_markup=main_inline_keyboard())
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message:
-        await update.message.reply_text(
-            "Main menu restored.",
-            reply_markup=main_menu_keyboard(),
-        )
+    await open_main_menu(update, from_command=True)
 
 
 async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message:
-        await update.message.reply_text(
-            WEATHER_REGION_TEXT,
-            reply_markup=region_menu_keyboard(),
-        )
+    message = update.message or update.effective_message
+    if message is None:
+        return
+    await message.reply_text(WEATHER_MENU_TEXT, reply_markup=weather_inline_keyboard())
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(HELP_TEXT, reply_markup=main_menu_keyboard())
+        await update.message.reply_text(HELP_TEXT, reply_markup=main_inline_keyboard())
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -231,17 +220,20 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "Mode: ANALYSIS ONLY"
     )
     if update.message:
-        await update.message.reply_text(text, reply_markup=main_menu_keyboard())
+        await update.message.reply_text(text, reply_markup=main_inline_keyboard())
 
 
-async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _start_region_scan(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    region: ScanRegion,
+) -> None:
     settings = _settings(context)
-    region = get_user_scan_region(context)
     await _track_user(update, settings)
-    message = update.message or update.effective_message
+    message = update.effective_message
     if message is None:
         return
-    reply_markup = _reply_markup_for_region(region)
+    reply_markup = weather_inline_keyboard()
     scope = region.value
 
     user = update.effective_user
@@ -261,11 +253,12 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     bot_data=bot_data,
                     region=region,
                 )
-            for chunk in format_scan_delivery_messages(progress):
+            chunks = format_scan_delivery_messages(progress)
+            for i, chunk in enumerate(chunks):
                 await bot.send_message(
                     chat_id=chat_id,
                     text=chunk,
-                    reply_markup=reply_markup,
+                    reply_markup=reply_markup if i == len(chunks) - 1 else None,
                 )
         except Exception as exc:
             logger.exception("Background scan failed for %s: %s", scope, type(exc).__name__)
@@ -277,10 +270,46 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     started, _task = await try_start_scoped_task(scope, _background_scan)
     if not started:
-        await message.reply_text(SCAN_ALREADY_RUNNING_MESSAGE, reply_markup=reply_markup)
+        if update.callback_query is not None:
+            await edit_or_reply(update, SCAN_ALREADY_RUNNING_MESSAGE, reply_markup=reply_markup)
+        else:
+            await message.reply_text(SCAN_ALREADY_RUNNING_MESSAGE, reply_markup=reply_markup)
         return
 
-    await message.reply_text(SCAN_STARTED_MESSAGE, reply_markup=reply_markup)
+    if update.callback_query is not None:
+        await edit_or_reply(
+            update,
+            f"{SCAN_STARTED_MESSAGE}\nRegion: {region.display_label}",
+            reply_markup=reply_markup,
+        )
+    else:
+        await message.reply_text(
+            f"{SCAN_STARTED_MESSAGE}\nRegion: {region.display_label}",
+            reply_markup=reply_markup,
+        )
+
+
+async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    region = get_user_scan_region(context)
+    await _start_region_scan(update, context, region)
+
+
+async def scan_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    region = get_user_scan_region(context)
+    await _start_region_scan(update, context, region)
+
+
+async def _load_top_text(context: ContextTypes.DEFAULT_TYPE, telegram_id: int, region: ScanRegion) -> str:
+    settings = _settings(context)
+    snapshot = load_latest_scan_snapshot(
+        settings,
+        telegram_id,
+        bot_data=_bot_data(context),
+        region=region,
+    )
+    if snapshot is None:
+        return format_top_signals_unavailable(region)
+    return format_top_opportunities(snapshot.progress)
 
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -289,23 +318,12 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     region = get_user_scan_region(context)
     telegram_id = update.effective_user.id if update.effective_user else message.chat.id
-    reply_markup = main_menu_keyboard()
+    reply_markup = main_inline_keyboard()
     loading_message = await message.reply_text(
         f"📊 Loading {region.display_label} opportunities...",
-        reply_markup=reply_markup,
     )
     try:
-        settings = _settings(context)
-        snapshot = load_latest_scan_snapshot(
-            settings,
-            telegram_id,
-            bot_data=_bot_data(context),
-            region=region,
-        )
-        if snapshot is None:
-            text = format_top_signals_unavailable(region)
-        else:
-            text = format_top_opportunities(snapshot.progress)
+        text = await _load_top_text(context, telegram_id, region)
         await _replace_loading_message(
             loading_message,
             message,
@@ -317,9 +335,63 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _replace_loading_message(
             loading_message,
             message,
-            f"❌ Could not load opportunities. Use {region.scan_button} first.",
+            "❌ Could not load opportunities. Run a regional scan first.",
             reply_markup=reply_markup,
         )
+
+
+async def top_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    region = get_user_scan_region(context)
+    telegram_id = update.effective_user.id if update.effective_user else 0
+    try:
+        text = await _load_top_text(context, telegram_id, region)
+    except Exception:
+        text = "❌ Could not load opportunities."
+    await edit_or_reply(update, text, reply_markup=main_inline_keyboard())
+
+
+async def top_signals_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    region = get_user_scan_region(context)
+    telegram_id = update.effective_user.id if update.effective_user else 0
+    message = update.effective_message
+    if message is None:
+        return
+    text = await _load_top_signals_response(
+        _settings(context),
+        context,
+        telegram_id=telegram_id,
+        region=region,
+    )
+    await edit_or_reply(update, text, reply_markup=weather_inline_keyboard())
+
+
+async def forecast_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings = _settings(context)
+    region = get_user_scan_region(context)
+    telegram_id = update.effective_user.id if update.effective_user else 0
+
+    def _load_forecast_text() -> str:
+        snapshot = load_latest_scan_snapshot(
+            settings,
+            telegram_id,
+            bot_data=_bot_data(context),
+            region=region,
+        )
+        if snapshot is None:
+            return format_top_signals_unavailable(region).replace(
+                "No completed",
+                f"📅 {region.display_label.upper()} FORECASTS\n\nNo completed",
+            )
+        return format_today_forecast_from_snapshot(snapshot)
+
+    try:
+        text = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(None, _load_forecast_text),
+            timeout=FORECAST_VIEW_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        text = f"📅 {region.display_label.upper()} FORECASTS\n\nCould not load cached forecasts."
+    await edit_or_reply(update, text, reply_markup=weather_inline_keyboard())
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -330,11 +402,11 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not context.args:
         await message.reply_text(
             "Usage: /analyze https://polymarket.com/event/...\n\nOptional manual fallback only.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=main_inline_keyboard(),
         )
         return
     url = context.args[0]
-    reply_markup = main_menu_keyboard()
+    reply_markup = main_inline_keyboard()
     loading_message = await message.reply_text(
         "Analyzing URL (manual fallback)...",
         reply_markup=reply_markup,
@@ -371,7 +443,7 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"• {row['decision']} | EV {ev_text} | {row['market_title']}")
         text = "\n".join(lines)
     if update.message:
-        await update.message.reply_text(text, reply_markup=main_menu_keyboard())
+        await update.message.reply_text(text, reply_markup=main_inline_keyboard())
 
 
 async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -433,64 +505,8 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def button_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = update.message
-    if message is None or not message.text:
-        return
-
-    text = message.text.strip()
-    region = get_user_scan_region(context)
-
-    if text == BTN_WEATHER:
-        await weather_command(update, context)
-    elif text == BTN_BACK:
-        await menu_command(update, context)
-    elif text == BTN_CHANGE_REGION:
-        await weather_command(update, context)
-    elif text in REGION_BUTTON_TO_SCAN_REGION:
-        selected = REGION_BUTTON_TO_SCAN_REGION[text]
-        set_user_scan_region(context, selected)
-        if message:
-            await message.reply_text(
-                f"Region set to {selected.display_label}.",
-                reply_markup=regional_action_keyboard(selected),
-            )
-    elif text == region.scan_button:
-        await scan_command(update, context)
-    elif text == BTN_TOP_SIGNALS:
-        user = update.effective_user
-        await _reply_top_signals(
-            message,
-            context,
-            telegram_id=user.id if user else None,
-            region=region,
-            reply_markup=_reply_markup_for_region(region),
-        )
-    elif text == BTN_FORECAST:
-        await forecast_command(update, context)
-    elif text == BTN_BEST_OPPORTUNITIES:
-        await top_command(update, context)
-    elif text == BTN_RECENT:
-        await recent_command(update, context)
-    elif text == BTN_STATUS:
-        await status_command(update, context)
-    elif text == BTN_HELP:
-        await help_command(update, context)
-    elif is_regional_action_button(text, region):
-        if text == region.scan_button:
-            await scan_command(update, context)
-        elif text == BTN_TOP_SIGNALS:
-            user = update.effective_user
-            await _reply_top_signals(
-                message,
-                context,
-                telegram_id=user.id if user else None,
-                region=region,
-                reply_markup=_reply_markup_for_region(region),
-            )
-        elif text == BTN_FORECAST:
-            await forecast_command(update, context)
-        elif text == BTN_CHANGE_REGION:
-            await weather_command(update, context)
+    """No-op: persistent reply keyboards are removed; navigation is inline-only."""
+    return
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

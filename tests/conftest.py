@@ -17,6 +17,7 @@ def make_test_settings(**overrides) -> Settings:
         database_path=":memory:",
         log_level="INFO",
         polymarket_gamma_base_url="https://gamma-api.polymarket.com",
+        polymarket_data_base_url="https://data-api.polymarket.com",
         polymarket_clob_base_url="https://clob.polymarket.com",
         weather_gov_base_url="https://api.weather.gov",
         report_timezone="America/Chicago",
@@ -41,6 +42,14 @@ def make_test_settings(**overrides) -> Settings:
         weather_discovery_cache_ttl_seconds=300,
         weather_scan_concurrency=6,
         weather_scan_deadline_seconds=600,
+        copy_intel_enabled=False,
+        copy_intel_read_only=True,
+        copy_paper_bankroll_usd=10000.0,
+        copy_poll_interval_seconds=120,
+        copy_max_trade_age_min=30,
+        copy_min_resolved_trades=20,
+        copy_min_liquidity_usd=500.0,
+        copy_max_slippage_pct=0.02,
     )
     base.update(overrides)
     return Settings(**base)

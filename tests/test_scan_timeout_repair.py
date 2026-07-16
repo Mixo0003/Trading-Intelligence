@@ -122,7 +122,7 @@ async def test_handler_acknowledges_immediately_and_runs_background():
         "app.telegram.handlers.save_scan_snapshot"
     ):
         await scan_command(update, context)
-        assert update.message.reply_text.await_args.args[0] == SCAN_STARTED_MESSAGE
+        assert update.message.reply_text.await_args.args[0].startswith(SCAN_STARTED_MESSAGE)
         assert not finished.is_set()
         await asyncio.wait_for(finished.wait(), timeout=1.0)
         assert started.is_set()

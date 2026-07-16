@@ -13,20 +13,8 @@ from app.polymarket.models import PolymarketMarket
 from app.polymarket.pricing import extract_yes_price
 from app.signals.scan_service import scan_weather_markets
 from app.region.types import ScanRegion
-from app.telegram.buttons import (
-    BTN_BACK,
-    BTN_BEST_OPPORTUNITIES,
-    BTN_CHANGE_REGION,
-    BTN_FORECAST,
-    BTN_HELP,
-    BTN_RECENT,
-    BTN_STATUS,
-    BTN_TOP_SIGNALS,
-    BTN_USA,
-    BTN_WEATHER,
-    ALL_NAV_BUTTONS,
-)
-from app.config.settings import Settings
+from app.telegram.buttons import ALL_NAV_BUTTONS
+from tests.conftest import make_test_settings
 
 
 def _market(
@@ -145,56 +133,17 @@ class TestPricing:
 
 
 class TestReplyKeyboardRouting:
-    @pytest.mark.parametrize(
-        "button",
-        [
-            ScanRegion.USA.scan_button,
-            BTN_TOP_SIGNALS,
-            BTN_RECENT,
-            BTN_STATUS,
-            BTN_HELP,
-            BTN_WEATHER,
-            BTN_BACK,
-            BTN_FORECAST,
-            BTN_BEST_OPPORTUNITIES,
-            BTN_CHANGE_REGION,
-            BTN_USA,
-        ],
-    )
-    def test_nav_button_constants_defined(self, button):
-        assert button in ALL_NAV_BUTTONS
+    def test_persistent_nav_removed(self):
+        assert ALL_NAV_BUTTONS == ()
 
 
 class TestScanOrdering:
     def test_scan_result_sorting_and_limit(self, monkeypatch):
-        settings = Settings(
-            project_name="TI",
-            project_version="0.1.0",
-            telegram_token="token",
-            anthropic_api_key="",
-            admin_ids=[1],
-            guest_ids=[],
-            default_language="en",
-            database_path=":memory:",
-            log_level="INFO",
-            polymarket_gamma_base_url="https://gamma-api.polymarket.com",
-            polymarket_clob_base_url="https://clob.polymarket.com",
-            weather_gov_base_url="https://api.weather.gov",
+        settings = make_test_settings(
+            max_results_per_report=2,
             report_timezone="",
             report_times=[],
-            max_markets_per_scan=50,
-            max_results_per_report=2,
-            auto_reports_enabled=False,
-            priority_weather_cities=["Chicago"],
-            anthropic_rule_fallback_enabled=False,
-            forecast_divergence_threshold_f=3.0,
-            forecast_divergence_threshold_c=2.0,
-            forecast_grid_max_distance_km=15.0,
-            forecast_min_providers=2,
             auto_report_regions=[ScanRegion.USA],
-            weather_discovery_cache_ttl_seconds=300,
-            weather_scan_concurrency=6,
-            weather_scan_deadline_seconds=600,
         )
 
         class FakeAnalysis:
@@ -267,66 +216,19 @@ class TestScanOrdering:
 
 class TestScheduledReportConfig:
     def test_not_configured_without_timezone(self):
-        settings = Settings(
-            project_name="TI",
-            project_version="0.1.0",
-            telegram_token="token",
-            anthropic_api_key="",
-            admin_ids=[1],
-            guest_ids=[],
-            default_language="en",
-            database_path=":memory:",
-            log_level="INFO",
-            polymarket_gamma_base_url="https://gamma-api.polymarket.com",
-            polymarket_clob_base_url="https://clob.polymarket.com",
-            weather_gov_base_url="https://api.weather.gov",
+        settings = make_test_settings(
             report_timezone="",
-            report_times=["08:00"],
-            max_markets_per_scan=50,
-            max_results_per_report=10,
             auto_reports_enabled=True,
-            priority_weather_cities=["Chicago"],
-            anthropic_rule_fallback_enabled=False,
-            forecast_divergence_threshold_f=3.0,
-            forecast_divergence_threshold_c=2.0,
-            forecast_grid_max_distance_km=15.0,
-            forecast_min_providers=2,
             auto_report_regions=[],
-            weather_discovery_cache_ttl_seconds=300,
-            weather_scan_concurrency=6,
-            weather_scan_deadline_seconds=600,
         )
         assert settings.scheduled_reports_configured is False
 
     def test_configured_when_complete(self):
-        settings = Settings(
-            project_name="TI",
-            project_version="0.1.0",
-            telegram_token="token",
-            anthropic_api_key="",
-            admin_ids=[1],
-            guest_ids=[],
-            default_language="en",
-            database_path=":memory:",
-            log_level="INFO",
-            polymarket_gamma_base_url="https://gamma-api.polymarket.com",
-            polymarket_clob_base_url="https://clob.polymarket.com",
-            weather_gov_base_url="https://api.weather.gov",
+        settings = make_test_settings(
             report_timezone="America/Chicago",
             report_times=["08:00", "12:00", "20:00"],
-            max_markets_per_scan=50,
-            max_results_per_report=5,
             auto_reports_enabled=True,
-            priority_weather_cities=["Chicago"],
-            anthropic_rule_fallback_enabled=False,
-            forecast_divergence_threshold_f=3.0,
-            forecast_divergence_threshold_c=2.0,
-            forecast_grid_max_distance_km=15.0,
-            forecast_min_providers=2,
             auto_report_regions=[ScanRegion.USA, ScanRegion.EUROPE],
-            weather_discovery_cache_ttl_seconds=300,
-            weather_scan_concurrency=6,
-            weather_scan_deadline_seconds=600,
         )
         assert settings.scheduled_reports_configured is True
 

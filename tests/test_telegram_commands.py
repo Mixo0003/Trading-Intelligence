@@ -45,8 +45,8 @@ async def test_start_command():
     context = _context()
     with patch("app.telegram.handlers.upsert_user"):
         await start_command(update, context)
-    update.message.reply_text.assert_called_once()
-    assert "ANALYSIS ONLY" in update.message.reply_text.call_args[0][0]
+    assert update.message.reply_text.await_count >= 2
+    assert "ANALYSIS ONLY" in update.message.reply_text.call_args_list[0].args[0]
 
 
 @pytest.mark.asyncio
@@ -55,7 +55,7 @@ async def test_menu_command():
     context = _context()
     with patch("app.telegram.handlers.upsert_user"):
         await menu_command(update, context)
-    update.message.reply_text.assert_called_once()
+    assert update.message.reply_text.await_count >= 1
 
 
 @pytest.mark.asyncio
@@ -70,8 +70,8 @@ async def test_help_command():
     update = _update_with_message()
     await help_command(update, _context())
     text = update.message.reply_text.call_args[0][0]
-    assert "/scan" in text
-    assert "/top" in text
+    assert "Weather" in text or "Menu" in text or "menu" in text.lower()
+    assert "/scan" not in text
 
 
 @pytest.mark.asyncio
