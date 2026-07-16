@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from datetime import datetime, time, timezone
-from functools import partial
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -12,7 +11,11 @@ from app.database.storage import get_recent_analyses, upsert_user
 from app.polymarket.client import PolymarketClient
 from app.region.session import get_user_scan_region, set_user_scan_region
 from app.region.types import ScanRegion
-from app.signals.scan_service import analyze_market_by_url, scan_weather_markets
+from app.signals.scan_service import (
+    analyze_market_by_url,
+    scan_weather_markets,
+    scan_weather_markets_async,
+)
 from app.telegram.buttons import (
     BTN_BACK,
     BTN_BEST_OPPORTUNITIES,
@@ -32,6 +35,7 @@ from app.telegram.buttons import (
 from app.telegram.formatting import (
     format_concise_opportunity,
     format_opportunities_bundle,
+    format_scan_delivery_messages,
     format_scan_report,
     format_scheduled_report,
     format_today_forecast_from_snapshot,
@@ -41,14 +45,16 @@ from app.telegram.formatting import (
     persist_scan_results,
 )
 from app.telegram.scan_cache import load_latest_scan_snapshot, save_scan_snapshot
+from app.telegram.scan_tasks import try_start_scoped_task
 from app.telegram.messages import HELP_TEXT, START_TEXT, WEATHER_REGION_TEXT
 
 logger = logging.getLogger(__name__)
 
 TOP_SIGNALS_TIMEOUT_SECONDS = 5
 FORECAST_VIEW_TIMEOUT_SECONDS = 5
-REGIONAL_SCAN_TIMEOUT_SECONDS = 180
 SCHEDULED_REPORTS_REGISTERED_KEY = "scheduled_reports_registered"
+SCAN_STARTED_MESSAGE = "🔍 Scan started…"
+SCAN_ALREADY_RUNNING_MESSAGE = "A scan for this region is already running."
 
 
 def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
@@ -60,9 +66,8 @@ def _bot_data(context: ContextTypes.DEFAULT_TYPE) -> dict:
 
 
 async def _run_scan(settings: Settings, region: ScanRegion):
-    loop = asyncio.get_running_loop()
-    fn = partial(scan_weather_markets, settings, region=region)
-    return await loop.run_in_executor(None, fn)
+    """Shared safe scan execution path for interactive and scheduled scans."""
+    return await scan_weather_markets_async(settings, region=region)
 
 
 async def _track_user(update: Update, settings: Settings) -> None:
@@ -237,47 +242,45 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is None:
         return
     reply_markup = _reply_markup_for_region(region)
-    loading_message = await message.reply_text(
-        f"🔍 Scanning {region.display_label} Polymarket weather markets...",
-        reply_markup=reply_markup,
-    )
-    try:
-        progress = await asyncio.wait_for(
-            _run_scan(settings, region),
-            timeout=REGIONAL_SCAN_TIMEOUT_SECONDS,
-        )
-        user = update.effective_user
-        if user:
-            persist_scan_results(settings, user.id, progress)
-            save_scan_snapshot(
-                settings,
-                user.id,
-                progress,
-                bot_data=_bot_data(context),
-                region=region,
+    scope = region.value
+
+    user = update.effective_user
+    chat_id = message.chat_id if hasattr(message, "chat_id") else message.chat.id
+    bot = context.bot
+    bot_data = _bot_data(context)
+
+    async def _background_scan():
+        try:
+            progress = await _run_scan(settings, region)
+            if user:
+                persist_scan_results(settings, user.id, progress)
+                save_scan_snapshot(
+                    settings,
+                    user.id,
+                    progress,
+                    bot_data=bot_data,
+                    region=region,
+                )
+            for chunk in format_scan_delivery_messages(progress):
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    reply_markup=reply_markup,
+                )
+        except Exception as exc:
+            logger.exception("Background scan failed for %s: %s", scope, type(exc).__name__)
+            await bot.send_message(
+                chat_id=chat_id,
+                text="❌ Scan failed due to a provider error. Please retry shortly.",
+                reply_markup=reply_markup,
             )
-        await _replace_loading_message(
-            loading_message,
-            message,
-            format_scan_report(progress),
-            reply_markup=reply_markup,
-        )
-    except asyncio.TimeoutError:
-        logger.warning("Regional scan timed out after %ss", REGIONAL_SCAN_TIMEOUT_SECONDS)
-        await _replace_loading_message(
-            loading_message,
-            message,
-            f"❌ {region.display_label} scan timed out. Partial results may be unavailable.",
-            reply_markup=reply_markup,
-        )
-    except Exception as exc:
-        logger.exception("Scan command failed: %s", exc)
-        await _replace_loading_message(
-            loading_message,
-            message,
-            "❌ Scan failed due to a provider error. Please retry shortly.",
-            reply_markup=reply_markup,
-        )
+
+    started, _task = await try_start_scoped_task(scope, _background_scan)
+    if not started:
+        await message.reply_text(SCAN_ALREADY_RUNNING_MESSAGE, reply_markup=reply_markup)
+        return
+
+    await message.reply_text(SCAN_STARTED_MESSAGE, reply_markup=reply_markup)
 
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -528,10 +531,8 @@ async def scheduled_report_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             if snapshot is not None and _snapshot_is_fresh(snapshot):
                 progress = snapshot.progress
             else:
-                progress = await asyncio.wait_for(
-                    _run_scan(settings, region),
-                    timeout=REGIONAL_SCAN_TIMEOUT_SECONDS,
-                )
+                # Same safe execution path as interactive scans (deadline inside scan).
+                progress = await _run_scan(settings, region)
                 save_scan_snapshot(
                     settings,
                     admin_id,

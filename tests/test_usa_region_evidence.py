@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import asyncio
 import pytest
 
 from app.polymarket.market_type import TemperatureMarketType
@@ -210,6 +211,49 @@ def test_conflicting_station_and_coordinates_are_explicit():
     ) == (False, "REGION_CONFLICT")
 
 
+def test_scan_all_regions_keeps_unknown_region_events():
+    result = classify_market_region("Temperature market with no location")
+    assert result.is_unknown
+    matches, reason = event_matches_scan_region(
+        "Temperature market with no location",
+        ScanRegion.ALL,
+        classification=result,
+    )
+    assert matches is True
+    assert reason is None
+
+
+def test_scan_all_regions_keeps_conflicting_region_events():
+    station = WeatherStation("KJFK", "Conflicting station", 48.8566, 2.3522, verified=True)
+    result = classify_market_region("Temperature at KJFK", station=station)
+    assert result.is_conflict
+    matches, reason = event_matches_scan_region(
+        "Temperature at KJFK",
+        ScanRegion.ALL,
+        classification=result,
+    )
+    assert matches is True
+    assert reason is None
+
+
+def test_regional_scan_excludes_confirmed_mismatch_but_all_keeps_it():
+    station = WeatherStation("EGLL", "London Heathrow", 51.47, -0.4543, verified=True)
+    result = classify_market_region(_event_text("London", "EGLL", "gb"), station=station)
+    assert result.region is ScanRegion.EUROPE
+    assert result.conflict is False
+    assert result.is_unknown is False
+
+    usa_matches, usa_reason = event_matches_scan_region(
+        "London temperature", ScanRegion.USA, classification=result
+    )
+    assert (usa_matches, usa_reason) == (False, "REGION_MISMATCH")
+
+    all_matches, all_reason = event_matches_scan_region(
+        "London temperature", ScanRegion.ALL, classification=result
+    )
+    assert (all_matches, all_reason) == (True, None)
+
+
 def test_parent_limit_keeps_complete_child_sets():
     children = [
         _market(
@@ -309,19 +353,27 @@ async def test_production_telegram_usa_scan_reaches_analysis(monkeypatch):
     context = MagicMock()
     context.application.bot_data = {"settings": settings}
     context.user_data = {"selected_scan_region": ScanRegion.USA}
+    context.bot = AsyncMock()
     update = MagicMock()
     update.effective_user = MagicMock(id=42, username="u", first_name="Test")
     update.message = AsyncMock()
     update.message.chat.id = 42
+    update.message.chat_id = 42
     update.effective_message = update.message
 
     await scan_command(update, context)
+    await asyncio.sleep(0.1)
 
-    loading = update.message.reply_text.return_value
-    loading.edit_text.assert_awaited_once()
-    final_text = loading.edit_text.await_args.args[0]
-    assert "Parent events retained in region: 1" in final_text
-    assert "Child markets analyzed: 3" in final_text
-    assert "Forecasts available: 1" in final_text
+    texts = [
+        str(c.kwargs.get("text", c.args[0] if c.args else ""))
+        for c in context.bot.send_message.await_args_list
+    ]
+    final_text = "\n\n".join(texts)
     assert "SEATTLE" in final_text
     assert "Decision: WATCH" in final_text
+    for forbidden in (
+        "Parent events retained in region",
+        "Child markets analyzed",
+        "Forecasts available",
+    ):
+        assert forbidden not in final_text

@@ -34,6 +34,34 @@ def _collect_markets_from_events(
     return markets
 
 
+def _collect_markets_from_gamma_discovery(client: PolymarketClient) -> list[PolymarketMarket]:
+    """Full worldwide discovery via `/events/keyset` (tag-seeded + closed=false fallback).
+
+    Unlike `_collect_markets_from_events`, this follows every page instead of
+    stopping after one fixed-size page, so events beyond the first ~100
+    site-wide (all-category) results are still reachable.
+
+    Uses the short-lived discovery cache so USA/Europe/Asia/All share one
+    worldwide fetch within the configured TTL.
+    """
+    from app.config.settings import load_settings
+    from app.polymarket.discovery_cache import get_cached_temperature_events
+
+    ttl = 300
+    try:
+        ttl = load_settings().weather_discovery_cache_ttl_seconds
+    except Exception:
+        pass
+
+    events, _stats, _hit = get_cached_temperature_events(client, ttl_seconds=ttl)
+    markets: list[PolymarketMarket] = []
+    for item in events:
+        event = parse_event(item)
+        for market in event.markets:
+            markets.append(_attach_event_context(market, event))
+    return markets
+
+
 def is_temperature_market_candidate_from_event(event: PolymarketEvent) -> bool:
     slug = (event.slug or "").lower()
     text = "\n".join([
@@ -177,6 +205,15 @@ def get_weather_markets(
     for market in _collect_markets_from_events(client, limit=limit):
         if is_temperature_market_candidate(market):
             weather_markets.append(market)
+
+    # Full worldwide discovery: follows every /events/keyset page instead of
+    # relying on a single fixed-size page, so events beyond the first ~100
+    # site-wide results are still found. `client` is only None in tests that
+    # stub out the legacy single-page collectors above.
+    if client is not None:
+        for market in _collect_markets_from_gamma_discovery(client):
+            if is_temperature_market_candidate(market):
+                weather_markets.append(market)
 
     merged = _dedupe_markets(weather_markets)
 

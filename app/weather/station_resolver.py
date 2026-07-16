@@ -188,9 +188,19 @@ def resolve_verified_station_from_text(
     settings: Settings | None = None,
 ) -> tuple[WeatherStation | None, str | None]:
     """Resolve the ICAO station from market rules and verify coordinates via AviationWeather."""
+    from app.signals.scan_runtime import active_scan_state
+
+    state = active_scan_state()
+    cache_key = (text or "").strip()
+    if state is not None and cache_key and cache_key in state.station_cache:
+        return state.station_cache[cache_key]
+
     code = extract_station_code_from_text(text)
     if not code:
-        return None, "STATION_NOT_VERIFIED"
+        result = (None, "STATION_NOT_VERIFIED")
+        if state is not None and cache_key:
+            state.station_cache[cache_key] = result
+        return result
 
     resolution_url = extract_resolution_url_from_text(text)
     station = _fetch_station_from_aviationweather(code)
@@ -198,30 +208,45 @@ def resolve_verified_station_from_text(
     if station is None:
         known = get_station(code)
         if known is None:
-            return None, "STATION_NOT_VERIFIED"
-        return WeatherStation(
-            code=known.code,
-            name=known.name,
-            latitude=known.latitude,
-            longitude=known.longitude,
-            resolution_url=resolution_url,
-            verified=False,
-        ), "STATION_NOT_VERIFIED"
+            result = (None, "STATION_NOT_VERIFIED")
+            if state is not None and cache_key:
+                state.station_cache[cache_key] = result
+            return result
+        result = (
+            WeatherStation(
+                code=known.code,
+                name=known.name,
+                latitude=known.latitude,
+                longitude=known.longitude,
+                resolution_url=resolution_url,
+                verified=False,
+            ),
+            "STATION_NOT_VERIFIED",
+        )
+        if state is not None and cache_key:
+            state.station_cache[cache_key] = result
+        return result
 
     timezone = station.timezone
     if timezone is None and settings is not None and code.startswith("K"):
         timezone = _fetch_nws_timezone(settings, station.latitude, station.longitude)
 
-    return WeatherStation(
-        code=station.code,
-        name=station.name,
-        latitude=station.latitude,
-        longitude=station.longitude,
-        elevation_m=station.elevation_m,
-        timezone=timezone,
-        verified=True,
-        resolution_url=resolution_url,
-    ), None
+    result = (
+        WeatherStation(
+            code=station.code,
+            name=station.name,
+            latitude=station.latitude,
+            longitude=station.longitude,
+            elevation_m=station.elevation_m,
+            timezone=timezone,
+            verified=True,
+            resolution_url=resolution_url,
+        ),
+        None,
+    )
+    if state is not None and cache_key:
+        state.station_cache[cache_key] = result
+    return result
 
 
 def resolve_station_from_text(text: str) -> WeatherStation | None:

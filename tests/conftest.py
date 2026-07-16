@@ -38,6 +38,9 @@ def make_test_settings(**overrides) -> Settings:
         forecast_grid_max_distance_km=15.0,
         forecast_min_providers=2,
         auto_report_regions=[ScanRegion.USA, ScanRegion.EUROPE, ScanRegion.ASIA],
+        weather_discovery_cache_ttl_seconds=300,
+        weather_scan_concurrency=6,
+        weather_scan_deadline_seconds=600,
     )
     base.update(overrides)
     return Settings(**base)

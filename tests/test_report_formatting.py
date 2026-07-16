@@ -83,11 +83,16 @@ class TestReportFormatting:
 
     def test_concise_valid_report_format(self):
         text = format_concise_opportunity(_analysis())
+        assert "🌡 PARIS — JULY 16" in text
         assert "Market: Daily high temperature" in text
-        assert "consensus 31°C" in text
-        assert "Station: LFPB" in text
+        assert "Forecast: 31°C" in text
+        assert "Expected: 29–32°C" in text
+        assert "Best result: 31°C" in text
+        assert "Price: 25%" in text
         assert "Decision: WATCH" in text
+        assert "Reason: Potential value." in text
         assert "Kelly" not in text
+        assert len(text.splitlines()) <= 8
 
     def test_forecast_only_shows_forecast_not_betting_block(self):
         text = format_concise_opportunity(
@@ -98,26 +103,88 @@ class TestReportFormatting:
                 display_reason="Only one forecast model available; betting requires broader agreement.",
             )
         )
-        assert "consensus 31°C" in text
+        assert "Forecast: 31°C" in text
         assert "Decision: FORECAST ONLY" in text
+        assert "Reason: Insufficient sources." in text
         assert "Analysis unavailable" not in text
+
+    def test_daily_high_market_type_from_event_classification(self):
+        text = format_concise_opportunity(
+            _analysis(
+                market_title="Highest temperature in Paris on July 16?",
+                temperature_type=NormalizedTemperatureType.DAILY_HIGH,
+                temperature_type_label="Daily high temperature",
+            )
+        )
+        assert "Market: Daily high temperature" in text
+
+    def test_daily_low_market_type_from_event_classification(self):
+        text = format_concise_opportunity(
+            _analysis(
+                market_title="Lowest temperature in Miami on July 16?",
+                city_location="Miami",
+                temperature_type=NormalizedTemperatureType.DAILY_LOW,
+                temperature_type_label="Daily low temperature",
+                forecast_display="80°F",
+                expected_range_display="78–82°F",
+                best_outcome="80-81°F",
+                implied_probability=0.37,
+            )
+        )
+        assert "Market: Daily low temperature" in text
+        assert "°F" in text
+        assert "Best result: 80-81°F" in text
+        assert "Price: 37%" in text
+
+    def test_unknown_type_shows_temperature_market(self):
+        text = format_concise_opportunity(
+            _analysis(
+                temperature_type=NormalizedTemperatureType.EXACT_TEMPERATURE,
+                temperature_type_label="Exact temperature",
+            )
+        )
+        assert "Market: Temperature market" in text
+        assert "Daily high" not in text
+        assert "Daily low" not in text
+
+    def test_long_reasons_map_to_short_labels(self):
+        text = format_concise_opportunity(
+            _analysis(
+                display_status=DISPLAY_WATCH,
+                display_reason="Potentially interesting edge, but insufficient confidence or agreement.",
+            )
+        )
+        assert "Reason: Potential value." in text
+        reason_line = [line for line in text.splitlines() if line.startswith("Reason:")][0]
+        assert len(reason_line.removeprefix("Reason: ").split()) <= 4
+
+    def test_card_max_eight_lines_no_diagnostics(self):
+        text = format_concise_opportunity(_analysis())
+        assert len(text.splitlines()) <= 8
+        for forbidden in (
+            "Station:",
+            "Band | Model",
+            "EV:",
+            "Skip reasons",
+            "discovered globally",
+            "Open-Meteo",
+        ):
+            assert forbidden not in text
 
     def test_london_celsius_not_fahrenheit(self):
         text = format_concise_opportunity(_analysis(forecast_display="31°C"))
         assert "°C" in text
-        assert "°F" not in text.split("consensus")[1].splitlines()[0]
+        assert "°F" not in text.splitlines()[1]
 
     def test_bundle_no_duplicate_footer(self):
         bundle = format_opportunities_bundle([_analysis(), _analysis(city_location="London")])
         assert "Kelly" not in bundle
 
-    def test_empty_report_includes_scan_summary(self):
+    def test_empty_report_shows_no_markets_message(self):
         text = format_empty_report(3)
-        assert "SCAN COMPLETED" in text
-        assert "Parent events discovered globally: 3" in text
-        assert "Child markets discovered globally: 3" in text
+        assert text == "No current temperature markets found."
 
-    def test_scan_completed_summary_counts(self):
+    def test_scan_completed_summary_has_no_counters_or_skip_reasons(self):
         progress = ScanProgress(
             discovered=12,
             worldwide_discovered=12,
@@ -127,6 +194,7 @@ class TestReportFormatting:
             parent_events_in_region=3,
             child_markets_loaded_for_analysis=9,
             parent_events_analyzed=3,
+            skip_reasons={"NOT_WEATHER": 5},
             scan_region="EUROPE",
             all_analyses=[
                 _analysis(display_status=DISPLAY_FORECAST_ONLY),
@@ -135,25 +203,36 @@ class TestReportFormatting:
             ],
         )
         text = format_scan_completed_summary(progress)
-        assert "EUROPE SCAN COMPLETED" in text
-        assert "Parent events discovered globally: 4" in text
-        assert "Child markets discovered globally: 12" in text
-        assert "Parent events retained in region: 3" in text
-        assert "Child markets loaded for analysis: 9" in text
-        assert "Parent event analyses completed: 3" in text
-        assert "Forecasts available: 3" in text
-        assert "Validated opportunities: 1" in text
+        assert text == "🌦 EUROPE SCAN COMPLETED"
+        for forbidden in (
+            "discovered globally",
+            "retained in region",
+            "loaded for analysis",
+            "analyses completed",
+            "Forecasts available",
+            "Validated opportunities",
+            "Skip reasons",
+            "NOT_WEATHER",
+        ):
+            assert forbidden not in text
 
-    def test_scan_report_includes_forecast_only_cards(self):
+    def test_scan_report_includes_forecast_only_cards_without_diagnostics(self):
         progress = ScanProgress(
             discovered=12,
+            skip_reasons={"NOT_WEATHER": 2},
             all_analyses=[
                 _analysis(display_status=DISPLAY_FORECAST_ONLY, recommendation_tier="SKIP"),
             ],
         )
         text = format_scan_report(progress)
-        assert "Results:" in text
         assert "Decision: FORECAST ONLY" in text
+        for forbidden in ("Results:", "Skip reasons", "Band | Model", "Station:", "EV:"):
+            assert forbidden not in text
+
+    def test_scan_report_empty_shows_no_markets_message(self):
+        progress = ScanProgress(discovered=0, all_analyses=[])
+        text = format_scan_report(progress)
+        assert text == "No current temperature markets found."
 
     def test_today_forecast_uses_regional_header(self):
         progress = ScanProgress(
@@ -171,17 +250,19 @@ class TestReportFormatting:
         assert "USA FORECASTS" in text
         assert "Decision: FORECAST ONLY" in text
 
-    def test_forecast_not_model_probability(self):
+    def test_card_uses_model_probability_band_not_market_price_band(self):
         text = format_concise_opportunity(
             _analysis(
                 forecast_display="31°C",
                 model_probability=0.34,
                 display_status=DISPLAY_WATCH,
+                best_outcome="31°C",
                 band_rows=(("31°C", 0.34, 0.25, 0.09),),
             )
         )
-        assert "34%" in text
-        assert "Band | Model | Market | Edge" in text
+        assert "Best result: 31°C" in text
+        assert "Price: 25%" in text
+        assert "Band | Model | Market | Edge" not in text
 
     def test_top_opportunities_concise(self):
         progress = ScanProgress(

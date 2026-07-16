@@ -73,27 +73,24 @@ def short_display_reason(
     betting_skip_reason: str | None,
     station_error: str | None,
 ) -> str:
-    if station_error == "STATION_UNRESOLVED" or station_error == "STATION_NOT_VERIFIED":
-        return "Resolution station could not be verified from market rules."
-    if display_status == DISPLAY_SKIP_INSUFFICIENT:
-        if station_error:
-            return "Exact resolution station could not be verified."
-        if validation_error == "FORECAST_UNAVAILABLE":
-            return "No usable independent forecast sources returned data."
-        return "Insufficient station or forecast data."
+    """Return a short Telegram-facing reason (max 4 words after Reason:)."""
+    if betting_skip_reason == "FORECAST_SOURCE_DIVERGENCE" or validation_error == "FORECAST_SOURCE_DIVERGENCE":
+        return "Conflicting forecasts."
+    if betting_skip_reason == "INSUFFICIENT_PROVIDERS" or validation_error == "INSUFFICIENT_PROVIDERS":
+        return "Insufficient sources."
+    if validation_error == "INVALID_PRICE":
+        return "Market price too high."
+    if station_error or display_status == DISPLAY_SKIP_INSUFFICIENT:
+        return "Insufficient sources."
     if display_status == DISPLAY_SKIP_MAPPING:
-        return "Forecast available but live outcome mapping failed."
-    if betting_skip_reason == "FORECAST_SOURCE_DIVERGENCE":
-        return "Independent forecast sources disagree beyond betting threshold."
-    if betting_skip_reason == "INSUFFICIENT_PROVIDERS":
-        return "Fewer than three independent forecast sources available."
+        return "No clear edge."
     if display_status == DISPLAY_WATCH:
-        return "Potentially interesting edge but confidence or agreement is insufficient."
+        return "Potential value."
     if display_status == DISPLAY_VALIDATED:
-        return "Passed conservative betting validation with multi-source agreement."
-    if validation_error:
-        return validation_error.replace("_", " ").lower().capitalize() + "."
-    return "Forecast shown for information only; no betting signal."
+        return "Strong value."
+    if display_status == DISPLAY_FORECAST_ONLY:
+        return "Limited confidence."
+    return "No clear edge."
 
 
 def compute_display_status(

@@ -408,6 +408,13 @@ class TestFormatting:
         analysis.ev = None
 
         text = format_concise_opportunity(analysis)
-        assert "Station: KMIA" in text
+        assert "🌡 MIAMI — JULY 15" in text
+        assert "Market: Daily low temperature" in text
+        assert "Forecast: 80°F" in text
+        assert "Expected: 78–82°F" in text
+        assert "Best result: 80-81°F" in text
         assert "Decision: WATCH" in text
-        assert "Open-Meteo" not in text
+        assert "Reason: Potential value." in text
+        for forbidden in ("Open-Meteo", "Station:", "Band | Model"):
+            assert forbidden not in text
+        assert len(text.splitlines()) <= 8

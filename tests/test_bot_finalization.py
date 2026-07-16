@@ -38,9 +38,7 @@ class TestBracketMarkets:
 class TestConciseFormatting:
     def test_empty_report(self):
         text = format_empty_report(5)
-        assert "SCAN COMPLETED" in text
-        assert "Parent events discovered globally: 5" in text
-        assert "Child markets discovered globally: 5" in text
+        assert text == "No current temperature markets found."
 
     def test_concise_opportunity_fields(self):
         from app.signals.market_analysis import MarketAnalysis
@@ -79,8 +77,10 @@ class TestConciseFormatting:
         )
         text = format_concise_opportunity(item)
         assert "🌡 MUNICH" in text
-        assert "Market: Daily high temperature" in text
-        assert "32°C" in text
+        assert "Best result: 32°C" in text
+        assert len(text.splitlines()) <= 8
+        for forbidden in ("Station:", "Band | Model", "Kelly", "Anthropic"):
+            assert forbidden not in text
 
 
 class TestSchedule:

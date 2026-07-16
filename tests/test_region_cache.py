@@ -110,7 +110,9 @@ class TestRegionalCacheIsolation:
             db_settings, context, telegram_id=42, region=ScanRegion.EUROPE
         )
         assert "EUROPE TOP SIGNALS" in text
-        assert "Forecasts available: 1" in text
+        assert "No validated opportunities" in text
+        assert "Forecasts available" not in text
+        assert "Watchlist items" not in text
 
     @pytest.mark.asyncio
     async def test_forecasts_does_not_live_scan(self, db_settings):

@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock
 
 from app.polymarket.discovery import SkipReason, evaluate_market_eligibility
 from app.polymarket.market_type import (
@@ -183,6 +184,9 @@ class TestScanOrdering:
             forecast_grid_max_distance_km=15.0,
             forecast_min_providers=2,
             auto_report_regions=[ScanRegion.USA],
+            weather_discovery_cache_ttl_seconds=300,
+            weather_scan_concurrency=6,
+            weather_scan_deadline_seconds=600,
         )
 
         class FakeAnalysis:
@@ -235,6 +239,18 @@ class TestScanOrdering:
             "app.signals.scan_service.evaluate_market_eligibility",
             lambda market, seen: (True, None, ""),
         )
+        monkeypatch.setattr(
+            "app.signals.scan_service.event_matches_scan_region",
+            lambda *args, **kwargs: (True, None),
+        )
+        monkeypatch.setattr(
+            "app.signals.scan_service._classify_parent_event",
+            lambda children: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "app.signals.scan_service.expand_group_children",
+            lambda client, children: children,
+        )
 
         progress = scan_weather_markets(settings)
         assert len(progress.results) == 2
@@ -268,6 +284,9 @@ class TestScheduledReportConfig:
             forecast_grid_max_distance_km=15.0,
             forecast_min_providers=2,
             auto_report_regions=[],
+            weather_discovery_cache_ttl_seconds=300,
+            weather_scan_concurrency=6,
+            weather_scan_deadline_seconds=600,
         )
         assert settings.scheduled_reports_configured is False
 
@@ -297,6 +316,9 @@ class TestScheduledReportConfig:
             forecast_grid_max_distance_km=15.0,
             forecast_min_providers=2,
             auto_report_regions=[ScanRegion.USA, ScanRegion.EUROPE],
+            weather_discovery_cache_ttl_seconds=300,
+            weather_scan_concurrency=6,
+            weather_scan_deadline_seconds=600,
         )
         assert settings.scheduled_reports_configured is True
 

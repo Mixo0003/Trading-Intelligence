@@ -84,14 +84,19 @@ def test_one_parent_multiple_children_regional_scan(monkeypatch):
 
 def test_one_parent_multiple_children_all_scan(monkeypatch):
     progress = _run(monkeypatch, ScanRegion.ALL)
+    # Internal-only counters (never shown in Telegram) still track discovery correctly.
     assert progress.parent_events_discovered == 1
     assert progress.child_markets_discovered == 3
     assert progress.parent_events_in_region == 1
     assert progress.parent_events_analyzed == 1
 
     text = format_scan_completed_summary(progress)
-    assert "Parent events discovered globally: 1" in text
-    assert "Child markets discovered globally: 3" in text
-    assert "Parent events retained in region: 1" in text
-    assert "Child markets loaded for analysis: 3" in text
-    assert "Parent event analyses completed: 1" in text
+    assert text == "🌦 ALL REGIONS SCAN COMPLETED"
+    for forbidden in (
+        "Parent events discovered globally",
+        "Child markets discovered globally",
+        "Parent events retained in region",
+        "Child markets loaded for analysis",
+        "Parent event analyses completed",
+    ):
+        assert forbidden not in text

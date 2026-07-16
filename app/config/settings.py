@@ -102,6 +102,9 @@ class Settings:
     forecast_grid_max_distance_km: float
     forecast_min_providers: int
     auto_report_regions: list
+    weather_discovery_cache_ttl_seconds: int
+    weather_scan_concurrency: int
+    weather_scan_deadline_seconds: int
 
     @property
     def scheduled_reports_configured(self) -> bool:
@@ -120,7 +123,10 @@ def load_settings() -> Settings:
     if not telegram_token:
         raise RuntimeError("Missing TELEGRAM_TOKEN in .env")
 
-    max_markets = int(os.getenv("MAX_MARKETS_PER_SCAN", "50"))
+    # Default raised from 50 to 200: worldwide keyset discovery now finds ~135
+    # active daily-temperature parent events, and the old cap silently
+    # truncated Scan All before region classification ever ran.
+    max_markets = int(os.getenv("MAX_MARKETS_PER_SCAN", "200"))
     max_results = int(os.getenv("MAX_RESULTS_PER_REPORT", "5"))
     priority_cities = _split_cities(os.getenv("PRIORITY_WEATHER_CITIES", ""))
     if not priority_cities:
@@ -169,5 +175,14 @@ def load_settings() -> Settings:
         forecast_min_providers=int(os.getenv("FORECAST_MIN_PROVIDERS", "2")),
         auto_report_regions=_split_regions(
             os.getenv("AUTO_REPORT_REGIONS", "USA,EUROPE,ASIA")
+        ),
+        weather_discovery_cache_ttl_seconds=int(
+            os.getenv("WEATHER_DISCOVERY_CACHE_TTL_SECONDS", "300")
+        ),
+        weather_scan_concurrency=max(
+            1, int(os.getenv("WEATHER_SCAN_CONCURRENCY", "6"))
+        ),
+        weather_scan_deadline_seconds=max(
+            30, int(os.getenv("WEATHER_SCAN_DEADLINE_SECONDS", "600"))
         ),
     )

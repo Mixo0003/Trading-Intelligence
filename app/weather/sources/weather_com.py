@@ -5,7 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timezone
 
+from app.http.retry import get_with_retry, is_permanent_status
 from app.polymarket.market_type import NormalizedTemperatureType
+from app.signals.scan_runtime import (
+    mark_weather_com_unauthorized,
+    note_weather_com_request,
+    weather_com_is_disabled,
+)
 from app.weather.provider_forecast import ProviderForecast
 from app.weather.sources.common import (
     build_provider_forecast,
@@ -15,8 +21,6 @@ from app.weather.sources.common import (
     track_weather_request,
 )
 from app.weather.stations import WeatherStation
-
-import requests
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +35,41 @@ def _api_key() -> str | None:
     return _API_KEY_CACHE
 
 
+def _handle_weather_com_response(response, station_code: str) -> dict | None:
+    track_weather_request()
+    if response.status_code == 401:
+        mark_weather_com_unauthorized()
+        logger.warning(
+            "Weather.com unavailable for this scan (HTTP 401); skipping further calls"
+        )
+        return None
+    if is_permanent_status(response.status_code):
+        logger.warning(
+            "Weather.com request failed for %s: HTTP %s",
+            station_code,
+            response.status_code,
+        )
+        return None
+    response.raise_for_status()
+    return response.json()
+
+
 def fetch_weather_com_daily(
     station: WeatherStation,
     target: date,
     event_type: NormalizedTemperatureType,
     tz_name: str,
 ) -> ProviderForecast | None:
+    if weather_com_is_disabled():
+        return None
+
     key = _api_key()
     if not key:
         return None
 
+    note_weather_com_request()
     try:
-        response = requests.get(
+        response = get_with_retry(
             "https://api.weather.com/v3/wx/forecast/daily/5day",
             params={
                 "icaoCode": station.code,
@@ -52,12 +79,17 @@ def fetch_weather_com_daily(
                 "apiKey": key,
             },
             timeout=20,
+            max_attempts=1,
         )
-        track_weather_request()
-        response.raise_for_status()
-        data = response.json()
+        data = _handle_weather_com_response(response, station.code)
+        if data is None:
+            return None
     except Exception as exc:
-        logger.warning("Weather.com daily failed for %s: %s", station.code, exc)
+        logger.warning(
+            "Weather.com daily failed for %s: %s",
+            station.code,
+            type(exc).__name__,
+        )
         return None
 
     valid = data.get("validTimeUtc") or []
@@ -114,12 +146,16 @@ def fetch_weather_com_hourly(
     event_type: NormalizedTemperatureType,
     tz_name: str,
 ) -> ProviderForecast | None:
+    if weather_com_is_disabled():
+        return None
+
     key = _api_key()
     if not key:
         return None
 
+    note_weather_com_request()
     try:
-        response = requests.get(
+        response = get_with_retry(
             "https://api.weather.com/v3/wx/forecast/hourly/2day",
             params={
                 "icaoCode": station.code,
@@ -129,12 +165,17 @@ def fetch_weather_com_hourly(
                 "apiKey": key,
             },
             timeout=20,
+            max_attempts=1,
         )
-        track_weather_request()
-        response.raise_for_status()
-        data = response.json()
+        data = _handle_weather_com_response(response, station.code)
+        if data is None:
+            return None
     except Exception as exc:
-        logger.warning("Weather.com hourly failed for %s: %s", station.code, exc)
+        logger.warning(
+            "Weather.com hourly failed for %s: %s",
+            station.code,
+            type(exc).__name__,
+        )
         return None
 
     times = data.get("validTimeLocal") or []

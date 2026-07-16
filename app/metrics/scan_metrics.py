@@ -26,6 +26,12 @@ class ScanMetrics:
     opportunities_returned: int = 0
     scan_region: str = "ALL"
     scan_duration_seconds: float = 0.0
+    # Internal-only Gamma /events/keyset discovery diagnostics (never shown in Telegram).
+    gamma_tag_id: str | None = None
+    gamma_tag_slug: str | None = None
+    gamma_pages_fetched: int = 0
+    gamma_active_events_inspected: int = 0
+    gamma_temperature_parents_retained: int = 0
 
 
 _active_metrics: ContextVar[ScanMetrics | None] = ContextVar("scan_metrics", default=None)

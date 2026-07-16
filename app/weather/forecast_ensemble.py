@@ -134,6 +134,13 @@ def fetch_forecast_ensemble(
     if target is None:
         return None
 
+    from app.signals.scan_runtime import active_scan_state
+
+    cache_key = (station.code, target.isoformat(), str(event_type), market_unit.value)
+    state = active_scan_state()
+    if state is not None and cache_key in state.forecast_cache:
+        return state.forecast_cache[cache_key]
+
     timezone = _resolve_timezone(settings, station)
     raw_providers = _collect_independent_providers(
         settings, station, target, event_type, timezone
@@ -155,7 +162,7 @@ def fetch_forecast_ensemble(
 
     active = [item for item in usable if item.usable]
     if not active:
-        return ForecastEnsemble(
+        ensemble = ForecastEnsemble(
             station_code=station.code,
             target_date_local=target,
             station_timezone=timezone,
@@ -191,6 +198,9 @@ def fetch_forecast_ensemble(
             provider_names=tuple(),
             skip_reason="FORECAST_GRID_TOO_FAR",
         )
+        if state is not None:
+            state.forecast_cache[cache_key] = ensemble
+        return ensemble
 
     selected_values = [item.selected_value_c for item in active]
     ensemble_value = statistics.median(selected_values)
@@ -237,7 +247,7 @@ def fetch_forecast_ensemble(
         betting_skip_reason,
     )
 
-    return ForecastEnsemble(
+    return_ensemble = ForecastEnsemble(
         station_code=station.code,
         target_date_local=target,
         station_timezone=timezone,
@@ -271,6 +281,9 @@ def fetch_forecast_ensemble(
         betting_skip_reason=betting_skip_reason,
         grid_distance_km=0.0,
     )
+    if state is not None:
+        state.forecast_cache[cache_key] = return_ensemble
+    return return_ensemble
 
 
 def ensemble_to_daily_stats(ensemble: ForecastEnsemble) -> "DailyForecastStats":

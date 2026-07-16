@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -84,6 +85,7 @@ def _context(settings, bot_data=None):
     context = MagicMock()
     context.application.bot_data = bot_data or {"settings": settings}
     context.user_data = {"selected_scan_region": ScanRegion.ALL}
+    context.bot = AsyncMock()
     return context
 
 
@@ -92,6 +94,7 @@ def _update_with_message(*, text: str | None = None, user_id: int = 42):
     update.effective_user = MagicMock(id=user_id, username="u", first_name="Test")
     message = AsyncMock()
     message.chat.id = user_id
+    message.chat_id = user_id
     if text is not None:
         message.text = text
     update.message = message
@@ -258,12 +261,14 @@ class TestTopSignalsCache:
             return_value=CachedScanSnapshot("now", progress),
         ) as save_mock:
             await scan_command(update, context)
+            await asyncio.sleep(0.05)
 
         run_scan_mock.assert_awaited_once()
         persist_mock.assert_called_once()
         save_mock.assert_called_once()
         assert update.message.reply_text.await_count == 1
-        update.message.reply_text.return_value.edit_text.assert_awaited_once()
+        assert "Scan started" in update.message.reply_text.await_args.args[0]
+        assert context.bot.send_message.await_count >= 1
 
 
 class TestScanSnapshotPersistence:

@@ -132,6 +132,12 @@ class ScanProgress:
     scan_region: str = "ALL"
     scan_duration_seconds: float = 0.0
     metrics: ScanMetrics | None = None
+    partial: bool = False
+    deadline_reached: bool = False
+    max_concurrency_observed: int = 0
+    weather_com_401_count: int = 0
+    polymarket_429_count: int = 0
+    incomplete_parent_events: int = 0
 
 
 def _build_reason(signal_tier: str, edge: float | None, confidence: str) -> str:

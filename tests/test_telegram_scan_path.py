@@ -102,6 +102,9 @@ class TestScanPathWiring:
         settings.max_markets_per_scan = 50
         settings.max_results_per_report = 5
         settings.priority_weather_cities = []
+        settings.weather_scan_concurrency = 6
+        settings.weather_scan_deadline_seconds = 600
+        settings.weather_discovery_cache_ttl_seconds = 300
 
         expanded = PARIS_HIGH_CHILDREN
 
@@ -111,6 +114,10 @@ class TestScanPathWiring:
             patch("app.signals.scan_service.expand_group_children", return_value=expanded) as expand_mock,
             patch("app.signals.scan_service.analyze_temperature_event") as event_analysis,
             patch("app.signals.scan_service.analyze_market") as legacy_analysis,
+            patch("app.signals.scan_service.event_matches_scan_region", return_value=(True, None)),
+            patch("app.signals.scan_service._classify_parent_event", return_value=MagicMock()),
+            patch("app.signals.scan_service.evaluate_market_eligibility", return_value=(True, None, None)),
+            patch("app.signals.scan_service.sort_analyses", side_effect=lambda items: items),
         ):
             event_analysis.return_value = MagicMock(
                 recommendation_tier="WATCH",
@@ -140,6 +147,9 @@ class TestScanPathWiring:
         settings.max_markets_per_scan = 50
         settings.max_results_per_report = 5
         settings.priority_weather_cities = []
+        settings.weather_scan_concurrency = 6
+        settings.weather_scan_deadline_seconds = 600
+        settings.weather_discovery_cache_ttl_seconds = 300
 
         with (
             patch("app.signals.scan_service.PolymarketClient"),
@@ -153,6 +163,10 @@ class TestScanPathWiring:
             ),
             patch("app.signals.scan_service.analyze_temperature_event") as event_analysis,
             patch("app.signals.scan_service.analyze_market") as legacy_analysis,
+            patch("app.signals.scan_service.event_matches_scan_region", return_value=(True, None)),
+            patch("app.signals.scan_service._classify_parent_event", return_value=MagicMock()),
+            patch("app.signals.scan_service.evaluate_market_eligibility", return_value=(True, None, None)),
+            patch("app.signals.scan_service.sort_analyses", side_effect=lambda items: items),
         ):
             event_analysis.return_value = MagicMock(
                 recommendation_tier="SKIP",
@@ -239,17 +253,19 @@ class TestParisTelegramScanIntegration:
             assert paris.forecast_display not in {"", "N/A"}
         text = format_concise_opportunity(paris)
         if not paris.validation_error:
-            assert "Market: Daily high temperature" in text
             assert "Forecast:" in text
+            assert "Decision:" in text
         assert "Minimum" not in text
         assert "Kelly" not in text
         assert "Anthropic" not in text
+        assert "Station:" not in text
+        assert "Band | Model" not in text
 
         bundle = format_scan_report(progress)
         assert len(progress.results) >= 1
         assert (
-            "Daily high temperature" in bundle
-            or "Analysis unavailable" in bundle
+            "Decision:" in bundle
+            or "No current temperature markets found." in bundle
             or paris.validation_error is not None
         )
 

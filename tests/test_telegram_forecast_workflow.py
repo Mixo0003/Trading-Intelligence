@@ -65,6 +65,7 @@ def _context(settings):
     context = MagicMock()
     context.application.bot_data = {"settings": settings}
     context.user_data = {"selected_scan_region": ScanRegion.ALL}
+    context.bot = AsyncMock()
     return context
 
 
@@ -73,6 +74,7 @@ def _update(*, text: str | None = None, user_id: int = 42):
     update.effective_user = MagicMock(id=user_id, username="u", first_name="Test")
     message = AsyncMock()
     message.chat.id = user_id
+    message.chat_id = user_id
     if text is not None:
         message.text = text
     update.message = message
@@ -86,6 +88,13 @@ def _edited_text(update) -> str:
     return loading_message.edit_text.await_args.args[0]
 
 
+def _scan_delivered_text(context) -> str:
+    texts = []
+    for call in context.bot.send_message.await_args_list:
+        texts.append(str(call.kwargs.get("text", call.args[0] if call.args else "")))
+    return "\n\n".join(texts)
+
+
 @pytest.fixture
 def db_settings(tmp_path):
     return make_test_settings(database_path=str(tmp_path / "workflow.db"))
@@ -94,6 +103,8 @@ def db_settings(tmp_path):
 class TestForecastFirstWorkflow:
     @pytest.mark.asyncio
     async def test_scan_now_saves_snapshot_and_shows_forecast_only(self, db_settings):
+        import asyncio
+
         update = _update()
         context = _context(db_settings)
         analyses = [_analysis()]
@@ -112,11 +123,12 @@ class TestForecastFirstWorkflow:
             new=AsyncMock(return_value=progress),
         ), patch("app.telegram.handlers.persist_scan_results"):
             await scan_command(update, context)
+            await asyncio.sleep(0.05)
 
-        final_text = _edited_text(update)
-        assert "Forecasts available: 1" in final_text
+        final_text = _scan_delivered_text(context)
         assert "Decision: FORECAST ONLY" in final_text
-        assert "Validated opportunities: 0" in final_text
+        assert "Forecasts available" not in final_text
+        assert "Validated opportunities" not in final_text
 
     @pytest.mark.asyncio
     async def test_forecasts_reads_cache_without_scan(self, db_settings):
@@ -174,5 +186,5 @@ class TestForecastFirstWorkflow:
         )
         await forecast_command(update, context)
         final_text = _edited_text(update)
-        assert "consensus 31°C" in final_text
+        assert "Forecast: 31°C" in final_text
         assert "Decision: FORECAST ONLY" in final_text

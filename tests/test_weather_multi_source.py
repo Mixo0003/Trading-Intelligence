@@ -172,7 +172,9 @@ class TestTelegramFormatting:
         analysis.resolution_station = "KORD"
         analysis.station_code = "KORD"
         analysis.temperature_type_label = "Daily high temperature"
+        analysis.temperature_type = NormalizedTemperatureType.DAILY_HIGH
         analysis.forecast_display = "84°F"
+        analysis.expected_range_display = "82–86°F"
         analysis.provider_spread_display = "2°F"
         analysis.forecast_sources_line = "NWS, Weather.com, MET Norway"
         analysis.forecast_providers = None
@@ -186,8 +188,13 @@ class TestTelegramFormatting:
         analysis.live_triggers = ("Temperature must reach 82°F by 13:00 local.",)
 
         text = format_actionable_weather_card(analysis)
-        assert "🌡 CHICAGO" in text
-        assert "Station: KORD" in text
-        assert "Band | Model | Market | Edge" in text
+        assert "🌡 CHICAGO — JULY 17" in text
+        assert "Forecast: 84°F" in text
+        assert "Best result: 84-85°F" in text
+        assert "Price: 18%" in text
         assert "Decision: FORECAST ONLY" in text
-        assert "Open-Meteo" not in text
+        assert len(text.splitlines()) <= 8
+        for forbidden in ("Open-Meteo", "Station:", "Band | Model", "EV:"):
+            assert forbidden not in text
+        assert "Market:" in text
+        assert "Reason: Insufficient sources." in text

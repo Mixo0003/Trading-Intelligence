@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -108,6 +110,8 @@ async def test_recent_command_empty():
 async def test_scan_command():
     update = _update_with_message()
     context = _context()
+    context.bot = AsyncMock()
+    update.message.chat_id = 42
     progress = ScanProgress(
         discovered=1,
         child_markets_discovered=1,
@@ -121,8 +125,10 @@ async def test_scan_command():
         "app.telegram.handlers.save_scan_snapshot"
     ):
         await scan_command(update, context)
+        await asyncio.sleep(0.05)
     assert update.message.reply_text.await_count == 1
-    update.message.reply_text.return_value.edit_text.assert_awaited_once()
+    assert "Scan started" in update.message.reply_text.await_args.args[0]
+    assert context.bot.send_message.await_count >= 1
 
 
 @pytest.mark.asyncio
