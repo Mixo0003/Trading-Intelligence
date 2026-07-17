@@ -53,11 +53,13 @@ async def copy_intel_poll_job(context) -> None:
                 ensure_monitor_state(settings, wallet)
                 if not baseline_is_complete(settings, wallet):
                     status = run_baseline(settings, wallet, client=client)
+                    copy_storage.touch_wallet_last_polled(settings, wallet)
                     if status != "COMPLETE":
                         last_error = f"baseline {status} for {wallet[:10]}"
                     continue
 
                 events = ingest_wallet(settings, wallet, client=client)
+                copy_storage.touch_wallet_last_polled(settings, wallet)
                 alertable = filter_alertable_events(settings, wallet, events)
                 stale_rejects += max(0, len(events) - len(alertable))
                 for event in alertable:

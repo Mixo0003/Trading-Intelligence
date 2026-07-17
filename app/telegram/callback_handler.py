@@ -34,6 +34,9 @@ from app.telegram.inline_menus import (
     CB_SETTINGS,
     CB_TOP,
     CB_WEATHER,
+    CB_WL_BACK,
+    CB_WL_NEXT,
+    CB_WL_PREV,
     CB_WX_FORECAST,
     CB_WX_SCAN_ALL,
     CB_WX_SCAN_ASIA,
@@ -123,6 +126,16 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         from app.telegram.copy_intel.handlers import show_watchlist
 
         await show_watchlist(update, context, edit=True)
+        return
+    if data in {CB_WL_PREV, CB_WL_NEXT, CB_WL_BACK}:
+        from app.telegram.copy_intel.handlers import watchlist_nav
+
+        await watchlist_nav(update, context, data)
+        return
+    if data.startswith("copy:wl:"):
+        from app.telegram.copy_intel.handlers import watchlist_action
+
+        await watchlist_action(update, context, data)
         return
     if data == CB_COPY_STATUS:
         from app.telegram.copy_intel.handlers import show_copy_status

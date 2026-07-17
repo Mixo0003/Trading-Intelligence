@@ -161,9 +161,11 @@ def initialize_copy_schema(settings: Settings) -> None:
                 newest_event_ts INTEGER,
                 newest_event_uid TEXT,
                 monitoring_enabled INTEGER NOT NULL DEFAULT 1,
+                last_polled_at TEXT,
                 updated_at TEXT NOT NULL
             )
         """)
+        _ensure_copy_column(connection, "wallet_monitor_state", "last_polled_at", "TEXT")
         connection.execute("""
             CREATE TABLE IF NOT EXISTS wallet_event_watermarks (
                 wallet TEXT PRIMARY KEY,
@@ -203,6 +205,15 @@ def initialize_copy_schema(settings: Settings) -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_copy_column(
+    connection: sqlite3.Connection, table: str, column: str, col_type: str
+) -> None:
+    rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
+    names = {row[1] for row in rows}
+    if column not in names:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
 def add_watchlist_wallet(
@@ -249,6 +260,21 @@ def toggle_watchlist_wallet(settings: Settings, wallet: str) -> bool | None:
             (new_val, _now_iso(), wallet.lower()),
         )
     return bool(new_val)
+
+
+def set_watchlist_enabled(settings: Settings, wallet: str, *, enabled: bool) -> bool | None:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            "SELECT enabled FROM copy_watchlist WHERE wallet = ?",
+            (wallet.lower(),),
+        ).fetchone()
+        if row is None:
+            return None
+        connection.execute(
+            "UPDATE copy_watchlist SET enabled = ?, updated_at = ? WHERE wallet = ?",
+            (1 if enabled else 0, _now_iso(), wallet.lower()),
+        )
+    return enabled
 
 
 def list_watchlist(settings: Settings) -> list[WatchlistEntry]:
@@ -706,6 +732,7 @@ class WalletMonitorState:
     newest_event_uid: str | None
     monitoring_enabled: bool
     updated_at: str
+    last_polled_at: str | None = None
 
 
 def get_watchlist_entry(settings: Settings, wallet: str) -> WatchlistEntry | None:
@@ -790,6 +817,7 @@ def update_wallet_monitor_fields(
         "newest_event_ts",
         "newest_event_uid",
         "monitoring_enabled",
+        "last_polled_at",
     }
     cols = []
     values: list[object] = []
@@ -819,6 +847,7 @@ def get_wallet_monitor_state(settings: Settings, wallet: str) -> WalletMonitorSt
         ).fetchone()
     if row is None:
         return None
+    keys = row.keys()
     return WalletMonitorState(
         wallet=row["wallet"],
         subscription_started_at=row["subscription_started_at"],
@@ -829,6 +858,7 @@ def get_wallet_monitor_state(settings: Settings, wallet: str) -> WalletMonitorSt
         newest_event_uid=row["newest_event_uid"],
         monitoring_enabled=bool(row["monitoring_enabled"]),
         updated_at=row["updated_at"],
+        last_polled_at=row["last_polled_at"] if "last_polled_at" in keys else None,
     )
 
 
@@ -961,6 +991,28 @@ def count_baseline_failures(settings: Settings, wallet: str, *, limit: int = 10)
             (wallet.lower(), limit),
         ).fetchall()
     return sum(1 for row in rows if row["status"] == "FAILED")
+
+
+def get_latest_alertable_event_at(settings: Settings, wallet: str) -> str | None:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT created_at FROM processed_copy_events
+            WHERE wallet = ? AND alertable = 1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (wallet.lower(),),
+        ).fetchone()
+    return row["created_at"] if row else None
+
+
+def touch_wallet_last_polled(settings: Settings, wallet: str) -> None:
+    now = _now_iso()
+    state = get_wallet_monitor_state(settings, wallet)
+    if state is None:
+        return
+    update_wallet_monitor_fields(settings, wallet, last_polled_at=now)
 
 
 def prune_processed_copy_events(settings: Settings, *, keep_days: int = 30) -> int:
