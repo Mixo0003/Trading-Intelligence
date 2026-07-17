@@ -12,6 +12,7 @@ event's markets silently replace the correct ones and flow, unvalidated, into
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.polymarket.event_expansion import expand_group_children
@@ -24,13 +25,19 @@ PARIS_RULES = (
     "https://www.wunderground.com/history/daily/fr/paris/LFPB"
 )
 
+# Discovery cache freshness uses UTC calendar day; keep fixture endDate in the
+# future so this guard test does not fail solely because wall-clock UTC rolled.
+_FRESH_END = (
+    datetime.now(timezone.utc).date() + timedelta(days=2)
+).isoformat() + "T12:00:00Z"
+
 ORIGINAL_EVENT = {
     "id": "701548",
     "slug": "highest-temperature-in-paris-on-july-16-2026",
     "title": "Highest temperature in Paris on July 16?",
     "closed": False,
     "active": True,
-    "endDate": "2026-07-16T12:00:00Z",
+    "endDate": _FRESH_END,
 }
 
 

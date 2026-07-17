@@ -10,6 +10,7 @@ CB_WEATHER = "nav:weather"
 CB_COPY = "nav:copy"
 CB_TOP = "nav:top"
 CB_SETTINGS = "nav:settings"
+CB_HEALTH = "nav:health"
 
 CB_WX_SCAN_USA = "wx:scan:usa"
 CB_WX_SCAN_EUROPE = "wx:scan:europe"
@@ -24,6 +25,12 @@ CB_COPY_STATUS = "copy:status"
 CB_COPY_ALERTS = "copy:alerts"
 CB_COPY_PAPER = "copy:paper"
 CB_COPY_SETTINGS = "copy:settings"
+
+CB_WL_PREV = "copy:wl:prev"
+CB_WL_NEXT = "copy:wl:next"
+CB_WL_BACK = "copy:wl:back"
+# Dynamic: copy:wl:pause:<wallet>, copy:wl:resume:<wallet>,
+# copy:wl:rmq:<wallet>, copy:wl:rmy:<wallet>, copy:wl:rmn:<wallet>
 
 CB_DISC_TOP = "disc:top"
 CB_DISC_FIND = "disc:find"
@@ -48,15 +55,19 @@ def remove_reply_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
-def main_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
-            [InlineKeyboardButton("📋 Copy Trading Intelligence", callback_data=CB_COPY)],
-            [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_TOP)],
-            [InlineKeyboardButton("⚙️ Settings", callback_data=CB_SETTINGS)],
-        ]
-    )
+def main_inline_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
+        [InlineKeyboardButton("📋 Copy Trading Intelligence", callback_data=CB_COPY)],
+        [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_TOP)],
+        [InlineKeyboardButton("⚙️ Settings", callback_data=CB_SETTINGS)],
+    ]
+    if is_admin:
+        rows.insert(
+            -1,
+            [InlineKeyboardButton("🩺 System Health", callback_data=CB_HEALTH)],
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 def weather_inline_keyboard() -> InlineKeyboardMarkup:
@@ -133,6 +144,69 @@ def copy_settings_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Alerts: FOLLOW+WATCH", callback_data=CB_SET_ALERT_BOTH),
             ],
             [InlineKeyboardButton("⬅️ Copy Menu", callback_data=CB_COPY)],
+        ]
+    )
+
+
+def empty_watchlist_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🏆 Trader Discovery", callback_data=CB_COPY_DISCOVER)],
+            [InlineKeyboardButton("⬅️ Copy Menu", callback_data=CB_COPY)],
+        ]
+    )
+
+
+def watchlist_card_keyboard(
+    wallet: str,
+    *,
+    index: int,
+    total: int,
+    enabled: bool,
+    profile_url: str,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if enabled:
+        rows.append(
+            [InlineKeyboardButton("⏸ Pause", callback_data=f"copy:wl:pause:{wallet}")]
+        )
+    else:
+        rows.append(
+            [InlineKeyboardButton("▶️ Resume", callback_data=f"copy:wl:resume:{wallet}")]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton("🗑 Unsubscribe", callback_data=f"copy:wl:rmq:{wallet}"),
+            InlineKeyboardButton("🔗 Open Profile", url=profile_url),
+        ]
+    )
+    nav: list[InlineKeyboardButton] = []
+    if index > 0:
+        nav.append(InlineKeyboardButton("Previous", callback_data=CB_WL_PREV))
+    if index < total - 1:
+        nav.append(InlineKeyboardButton("Next", callback_data=CB_WL_NEXT))
+    nav.append(InlineKeyboardButton("Back", callback_data=CB_WL_BACK))
+    rows.append(nav)
+    rows.append([InlineKeyboardButton("⬅️ Watchlist", callback_data=CB_COPY_WATCHLIST)])
+    return InlineKeyboardMarkup(rows)
+
+
+def watchlist_unsubscribe_confirm_keyboard(wallet: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Unsubscribe",
+                    callback_data=f"copy:wl:rmy:{wallet}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✖️ Cancel",
+                    callback_data=f"copy:wl:rmn:{wallet}",
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Watchlist", callback_data=CB_COPY_WATCHLIST)],
         ]
     )
 

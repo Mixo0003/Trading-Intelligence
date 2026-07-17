@@ -12,16 +12,29 @@ from app.copy_intel.discovery import filter_scores, run_discovery
 from app.copy_intel.risk import assert_read_only
 from app.copy_intel.scoring import score_trader
 from app.copy_intel.settings_profiles import get_user_settings, set_profile, update_setting
-from app.copy_intel.watchlist import add_wallet, list_entries, remove_wallet, toggle_wallet
+from app.copy_intel.watchlist import (
+    add_wallet,
+    can_manage_entry,
+    list_entries,
+    list_entries_for_user,
+    profile_url,
+    remove_wallet,
+    set_monitoring,
+    toggle_wallet,
+)
 from app.database import copy_storage
 from app.database.copy_storage import get_recent_recommendations
+from app.telegram.auth import is_admin
 from app.telegram.copy_intel.formatting import (
     format_copy_status,
     format_paper_portfolio,
     format_recent_alerts,
     format_settings_card,
+    format_subscription_card,
     format_trader_card,
+    format_unsubscribe_confirm,
     format_watchlist,
+    format_watchlist_empty,
 )
 from app.telegram.inline_menus import (
     CB_COPY,
@@ -33,12 +46,18 @@ from app.telegram.inline_menus import (
     CB_SET_BALANCED,
     CB_SET_CONSERVATIVE,
     CB_SET_EXPLORATORY,
+    CB_WL_BACK,
+    CB_WL_NEXT,
+    CB_WL_PREV,
     COPY_MENU_TEXT,
     DISCOVERY_MENU_TEXT,
     copy_inline_keyboard,
     copy_settings_inline_keyboard,
     discovery_inline_keyboard,
+    empty_watchlist_keyboard,
     trader_actions_keyboard,
+    watchlist_card_keyboard,
+    watchlist_unsubscribe_confirm_keyboard,
 )
 from app.telegram.nav import edit_or_reply
 
@@ -47,6 +66,7 @@ logger = logging.getLogger(__name__)
 _DISCOVERY_CACHE_KEY = "copy_discovery_scores"
 _DISCOVERY_VIEW_KEY = "copy_discovery_view"
 _DISCOVERY_INDEX_KEY = "copy_discovery_index"
+_WATCHLIST_INDEX_KEY = "copy_watchlist_index"
 
 
 def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
@@ -93,6 +113,10 @@ async def copy_remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not context.args:
         await update.effective_message.reply_text("Usage: /copy_remove 0x…")
         return
+    entry = _require_manageable_entry(update, context, context.args[0])
+    if entry is None:
+        await update.effective_message.reply_text("Wallet not on watchlist.")
+        return
     actor = str(update.effective_user.id if update.effective_user else "system")
     try:
         removed = remove_wallet(settings, context.args[0], actor=actor)
@@ -106,6 +130,10 @@ async def copy_toggle_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     settings = _settings(context)
     if not context.args:
         await update.effective_message.reply_text("Usage: /copy_toggle 0x…")
+        return
+    entry = _require_manageable_entry(update, context, context.args[0])
+    if entry is None:
+        await update.effective_message.reply_text("Wallet not on watchlist.")
         return
     actor = str(update.effective_user.id if update.effective_user else "system")
     try:
@@ -136,6 +164,7 @@ async def copy_settings_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 def _watchlist_text(settings: Settings) -> str:
+    """Legacy compact list for slash-command fallback."""
     entries = list_entries(settings)
     metrics_by_wallet: dict[str, float] = {}
     for entry in entries:
@@ -165,13 +194,204 @@ def _watchlist_text(settings: Settings) -> str:
     return format_watchlist(entries, metrics_by_wallet)
 
 
+def _user_id(update: Update) -> int | None:
+    return update.effective_user.id if update.effective_user else None
+
+
+def _user_is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    return is_admin(_settings(context), _user_id(update))
+
+
+def _managed_entries(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return list_entries_for_user(
+        _settings(context),
+        _user_id(update),
+        is_admin=_user_is_admin(update, context),
+    )
+
+
+def _require_manageable_entry(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    wallet: str,
+):
+    settings = _settings(context)
+    entry = copy_storage.get_watchlist_entry(settings, wallet)
+    if not can_manage_entry(entry, _user_id(update), is_admin=_user_is_admin(update, context)):
+        return None
+    return entry
+
+
 async def show_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:
-    text = _watchlist_text(_settings(context))
-    markup = copy_inline_keyboard()
+    entries = _managed_entries(update, context)
+    if not entries:
+        text = format_watchlist_empty()
+        markup = empty_watchlist_keyboard()
+        if edit:
+            await edit_or_reply(update, text, reply_markup=markup)
+        else:
+            await update.effective_message.reply_text(text, reply_markup=markup)
+        return
+
+    index = int(context.user_data.get(_WATCHLIST_INDEX_KEY) or 0)
+    index = max(0, min(index, len(entries) - 1))
+    context.user_data[_WATCHLIST_INDEX_KEY] = index
+    await _render_watchlist_card(update, context, entries=entries, index=index, edit=edit)
+
+
+async def _render_watchlist_card(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    entries: list | None = None,
+    index: int | None = None,
+    edit: bool = True,
+) -> None:
+    settings = _settings(context)
+    entries = entries if entries is not None else _managed_entries(update, context)
+    if not entries:
+        text = format_watchlist_empty()
+        markup = empty_watchlist_keyboard()
+        if edit:
+            await edit_or_reply(update, text, reply_markup=markup)
+        else:
+            await update.effective_message.reply_text(text, reply_markup=markup)
+        return
+
+    idx = int(context.user_data.get(_WATCHLIST_INDEX_KEY) or 0) if index is None else index
+    idx = max(0, min(idx, len(entries) - 1))
+    context.user_data[_WATCHLIST_INDEX_KEY] = idx
+    entry = entries[idx]
+    state = copy_storage.get_wallet_monitor_state(settings, entry.wallet)
+    user = get_user_settings(settings, _user_id(update) or 0)
+    text = format_subscription_card(
+        label=entry.label,
+        wallet=entry.wallet,
+        enabled=entry.enabled,
+        added_at=entry.created_at,
+        baseline_status=state.baseline_status if state else "PENDING",
+        last_poll_at=state.last_polled_at if state else None,
+        last_new_event_at=copy_storage.get_latest_alertable_event_at(settings, entry.wallet),
+        alert_decisions=user.alert_decisions,
+        profile_url=profile_url(entry.wallet),
+        index=idx,
+        total=len(entries),
+    )
+    markup = watchlist_card_keyboard(
+        entry.wallet,
+        index=idx,
+        total=len(entries),
+        enabled=entry.enabled,
+        profile_url=profile_url(entry.wallet),
+    )
     if edit:
         await edit_or_reply(update, text, reply_markup=markup)
     else:
         await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def watchlist_nav(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if data == CB_WL_BACK:
+        await edit_or_reply(update, COPY_MENU_TEXT, reply_markup=copy_inline_keyboard())
+        return
+    entries = _managed_entries(update, context)
+    if not entries:
+        await show_watchlist(update, context, edit=True)
+        return
+    index = int(context.user_data.get(_WATCHLIST_INDEX_KEY) or 0)
+    if data == CB_WL_PREV:
+        context.user_data[_WATCHLIST_INDEX_KEY] = max(0, index - 1)
+    elif data == CB_WL_NEXT:
+        context.user_data[_WATCHLIST_INDEX_KEY] = min(len(entries) - 1, index + 1)
+    await _render_watchlist_card(update, context, entries=entries, edit=True)
+
+
+async def watchlist_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    data: str,
+) -> None:
+    """Handle pause / resume / unsubscribe confirm flow callbacks."""
+    settings = _settings(context)
+    actor = str(_user_id(update) or "system")
+
+    if data.startswith("copy:wl:pause:"):
+        wallet = data.removeprefix("copy:wl:pause:")
+        entry = _require_manageable_entry(update, context, wallet)
+        if entry is None:
+            await edit_or_reply(
+                update,
+                "Not authorized to manage this subscription.",
+                reply_markup=empty_watchlist_keyboard(),
+            )
+            return
+        result = set_monitoring(settings, wallet, enabled=False, actor=actor)
+        if result == "missing":
+            await show_watchlist(update, context, edit=True)
+            return
+        await _render_watchlist_card(update, context, edit=True)
+        return
+
+    if data.startswith("copy:wl:resume:"):
+        wallet = data.removeprefix("copy:wl:resume:")
+        entry = _require_manageable_entry(update, context, wallet)
+        if entry is None:
+            await edit_or_reply(
+                update,
+                "Not authorized to manage this subscription.",
+                reply_markup=empty_watchlist_keyboard(),
+            )
+            return
+        result = set_monitoring(settings, wallet, enabled=True, actor=actor)
+        if result == "missing":
+            await show_watchlist(update, context, edit=True)
+            return
+        await _render_watchlist_card(update, context, edit=True)
+        return
+
+    if data.startswith("copy:wl:rmq:"):
+        wallet = data.removeprefix("copy:wl:rmq:")
+        entry = _require_manageable_entry(update, context, wallet)
+        if entry is None:
+            await edit_or_reply(
+                update,
+                "Not authorized to manage this subscription.",
+                reply_markup=empty_watchlist_keyboard(),
+            )
+            return
+        await edit_or_reply(
+            update,
+            format_unsubscribe_confirm(label=entry.label, wallet=entry.wallet),
+            reply_markup=watchlist_unsubscribe_confirm_keyboard(entry.wallet),
+        )
+        return
+
+    if data.startswith("copy:wl:rmy:"):
+        wallet = data.removeprefix("copy:wl:rmy:")
+        entry = _require_manageable_entry(update, context, wallet)
+        if entry is None:
+            # Already removed or not owned — safe no-op into empty/list view.
+            await show_watchlist(update, context, edit=True)
+            return
+        remove_wallet(settings, wallet, actor=actor)
+        entries = _managed_entries(update, context)
+        if not entries:
+            context.user_data[_WATCHLIST_INDEX_KEY] = 0
+            await show_watchlist(update, context, edit=True)
+            return
+        index = int(context.user_data.get(_WATCHLIST_INDEX_KEY) or 0)
+        context.user_data[_WATCHLIST_INDEX_KEY] = min(index, len(entries) - 1)
+        await _render_watchlist_card(update, context, entries=entries, edit=True)
+        return
+
+    if data.startswith("copy:wl:rmn:"):
+        wallet = data.removeprefix("copy:wl:rmn:")
+        entry = _require_manageable_entry(update, context, wallet)
+        if entry is None:
+            await show_watchlist(update, context, edit=True)
+            return
+        await _render_watchlist_card(update, context, edit=True)
+        return
 
 
 async def show_copy_status(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:

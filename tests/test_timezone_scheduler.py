@@ -35,21 +35,33 @@ def test_invalid_timezone_logs_and_falls_back(caplog):
     assert "falling back to UTC" in caplog.text
 
 
+def _job_names(application) -> list[str]:
+    return [job.name for job in application.job_queue.jobs()]
+
+
 def test_jobqueue_available_and_registers_once():
     application = build_telegram_application(_scheduled_settings())
     assert application.job_queue is not None
-    assert len(application.job_queue.jobs()) == 3
+    names = _job_names(application)
+    assert sum(1 for name in names if name and name.startswith("report_")) == 3
+    assert names.count("health_monitor_tick") == 1
+    assert len(names) == 4
 
     schedule_report_jobs(application, _scheduled_settings())
-    assert len(application.job_queue.jobs()) == 3
+    names_again = _job_names(application)
+    assert sum(1 for name in names_again if name and name.startswith("report_")) == 3
+    assert names_again.count("health_monitor_tick") == 1
+    assert len(names_again) == 4
 
 
 def test_restart_builds_fresh_nonduplicated_jobqueue():
     first = build_telegram_application(_scheduled_settings())
     second = build_telegram_application(_scheduled_settings())
     assert first.job_queue is not second.job_queue
-    assert len(first.job_queue.jobs()) == 3
-    assert len(second.job_queue.jobs()) == 3
+    assert len(_job_names(first)) == 4
+    assert len(_job_names(second)) == 4
+    assert _job_names(first).count("health_monitor_tick") == 1
+    assert _job_names(second).count("health_monitor_tick") == 1
 
 
 def test_auto_reports_disabled_registers_no_jobs():
@@ -60,4 +72,7 @@ def test_auto_reports_disabled_registers_no_jobs():
     )
     application = build_telegram_application(settings)
     assert application.job_queue is not None
-    assert application.job_queue.jobs() == ()
+    # Report jobs stay off; V2.1 health monitor still registers its tick job.
+    names = _job_names(application)
+    assert not any(name and name.startswith("report_") for name in names)
+    assert names == ["health_monitor_tick"]

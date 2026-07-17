@@ -41,17 +41,74 @@ def format_recommendation_messages(recs: list[CopyRecommendation]) -> list[str]:
 
 
 def format_watchlist(entries: list, metrics_by_wallet: dict[str, float]) -> str:
+    """Legacy compact list (slash-command fallback)."""
     if not entries:
-        return "Watchlist empty. Add traders from Trader Discovery."
-    lines = ["Copy Watchlist"]
+        return format_watchlist_empty()
+    lines = ["👀 Watchlist"]
     for entry in entries:
-        status = "ON" if entry.enabled else "OFF"
+        status = "ON" if entry.enabled else "PAUSED"
         label = entry.label or entry.wallet[:10]
         score = metrics_by_wallet.get(entry.wallet)
         score_text = f"score {score:.0f}" if score is not None else "score —"
         lines.append(f"• {label} ({status}) {score_text}")
-        lines.append(f"  {entry.wallet}")
+        lines.append(f"  {_short_wallet(entry.wallet)}")
     return "\n".join(lines)
+
+
+def format_watchlist_empty() -> str:
+    return (
+        "👀 Watchlist\n"
+        "No subscribed traders yet.\n"
+        "Use Trader Discovery to add one."
+    )
+
+
+def format_subscription_card(
+    *,
+    label: str | None,
+    wallet: str,
+    enabled: bool,
+    added_at: str | None,
+    baseline_status: str | None,
+    last_poll_at: str | None,
+    last_new_event_at: str | None,
+    alert_decisions: str,
+    profile_url: str,
+    index: int,
+    total: int,
+) -> str:
+    monitoring = "ON" if enabled else "PAUSED"
+    baseline = (baseline_status or "PENDING").upper()
+    if baseline not in {"COMPLETE", "PENDING", "FAILED", "RUNNING", "MIGRATING"}:
+        baseline = "PENDING"
+    decision = (
+        "FOLLOW only"
+        if alert_decisions == "FOLLOW_ONLY"
+        else "FOLLOW + WATCH"
+    )
+    lines = [
+        f"👀 Watchlist ({index + 1}/{total})",
+        "",
+        f"👤 {label or _short_wallet(wallet)}",
+        f"Wallet: {_short_wallet(wallet)}",
+        f"Monitoring: {monitoring}",
+        f"Added: {_fmt_ts(added_at)}",
+        f"Baseline: {baseline}",
+        f"Last poll: {_fmt_ts(last_poll_at) if last_poll_at else 'Never'}",
+        f"Last new event: {_fmt_ts(last_new_event_at) if last_new_event_at else 'None'}",
+        f"Decision filter: {decision}",
+        f"Profile: {profile_url}",
+    ]
+    return "\n".join(lines)
+
+
+def format_unsubscribe_confirm(*, label: str | None, wallet: str) -> str:
+    return (
+        "🗑 Unsubscribe\n"
+        f"Remove {label or _short_wallet(wallet)} from your Watchlist?\n"
+        "This stops future polling for this subscription.\n"
+        "History may be retained for audit/dedup."
+    )
 
 
 def format_copy_status(settings, poll_state: dict[str, str | None]) -> str:
@@ -187,3 +244,29 @@ def _pct_signed(value: float | None) -> str:
 
 def _short(text: str, limit: int = 48) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _short_wallet(wallet: str) -> str:
+    w = wallet or ""
+    if len(w) <= 12:
+        return w
+    return f"{w[:6]}…{w[-4:]}"
+
+
+def _fmt_ts(value: str | None) -> str:
+    if not value:
+        return "—"
+    text = value.replace("Z", "+00:00")
+    if "T" in text:
+        date_part, time_part = text.split("T", 1)
+        time_part = time_part.split(".")[0]
+        time_part = time_part.replace("+00:00", "").replace("-00:00", "")
+        if "+" in time_part:
+            time_part = time_part.split("+", 1)[0]
+        elif time_part.count("-") > 0 and ":" in time_part:
+            # strip trailing offset like -05:00
+            maybe = time_part.rsplit("-", 1)
+            if len(maybe) == 2 and ":" in maybe[1]:
+                time_part = maybe[0]
+        return f"{date_part} {time_part[:8]} UTC"
+    return text[:19]

@@ -6,6 +6,8 @@ import logging
 
 from telegram import InlineKeyboardMarkup, Message, Update
 
+from app.config.settings import Settings
+from app.telegram.auth import is_admin
 from app.telegram.inline_menus import (
     MAIN_MENU_TEXT,
     main_inline_keyboard,
@@ -46,13 +48,27 @@ async def edit_or_reply(
     return None
 
 
-async def open_main_menu(update: Update, *, from_command: bool = False) -> None:
+def _admin_flag(update: Update, settings: Settings | None) -> bool:
+    if settings is None:
+        return False
+    user = update.effective_user
+    return is_admin(settings, user.id if user else None)
+
+
+async def open_main_menu(
+    update: Update,
+    *,
+    from_command: bool = False,
+    settings: Settings | None = None,
+) -> None:
     """Show main inline menu; clear any old reply keyboard on command entry."""
+    admin = _admin_flag(update, settings)
+    keyboard = main_inline_keyboard(is_admin=admin)
     if update.callback_query is not None and not from_command:
-        await edit_or_reply(update, MAIN_MENU_TEXT, reply_markup=main_inline_keyboard())
+        await edit_or_reply(update, MAIN_MENU_TEXT, reply_markup=keyboard)
         return
     message = update.effective_message
     if message is None:
         return
     await message.reply_text("Menu", reply_markup=remove_reply_keyboard())
-    await message.reply_text(MAIN_MENU_TEXT, reply_markup=main_inline_keyboard())
+    await message.reply_text(MAIN_MENU_TEXT, reply_markup=keyboard)

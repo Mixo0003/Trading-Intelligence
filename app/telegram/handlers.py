@@ -22,6 +22,7 @@ from app.telegram.inline_menus import (
     remove_reply_keyboard,
     weather_inline_keyboard,
 )
+from app.telegram.auth import is_admin
 from app.telegram.nav import edit_or_reply, open_main_menu
 from app.telegram.formatting import (
     format_concise_opportunity,
@@ -54,6 +55,13 @@ def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
 
 def _bot_data(context: ContextTypes.DEFAULT_TYPE) -> dict:
     return context.application.bot_data
+
+
+def _main_keyboard(update: Update, settings: Settings):
+    user = update.effective_user
+    return main_inline_keyboard(
+        is_admin=is_admin(settings, user.id if user else None)
+    )
 
 
 async def _run_scan(settings: Settings, region: ScanRegion):
@@ -176,11 +184,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     from app.telegram.inline_menus import MAIN_MENU_TEXT
 
     await message.reply_text(START_TEXT, reply_markup=remove_reply_keyboard())
-    await message.reply_text(MAIN_MENU_TEXT, reply_markup=main_inline_keyboard())
+    await message.reply_text(
+        MAIN_MENU_TEXT,
+        reply_markup=_main_keyboard(update, settings),
+    )
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await open_main_menu(update, from_command=True)
+    await open_main_menu(update, from_command=True, settings=_settings(context))
 
 
 async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -192,7 +203,11 @@ async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(HELP_TEXT, reply_markup=main_inline_keyboard())
+        settings = _settings(context)
+        await update.message.reply_text(
+            HELP_TEXT,
+            reply_markup=_main_keyboard(update, settings),
+        )
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -220,7 +235,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "Mode: ANALYSIS ONLY"
     )
     if update.message:
-        await update.message.reply_text(text, reply_markup=main_inline_keyboard())
+        await update.message.reply_text(
+            text,
+            reply_markup=_main_keyboard(update, settings),
+        )
 
 
 async def _start_region_scan(
@@ -318,7 +336,7 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     region = get_user_scan_region(context)
     telegram_id = update.effective_user.id if update.effective_user else message.chat.id
-    reply_markup = main_inline_keyboard()
+    reply_markup = _main_keyboard(update, _settings(context))
     loading_message = await message.reply_text(
         f"📊 Loading {region.display_label} opportunities...",
     )
@@ -347,7 +365,11 @@ async def top_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         text = await _load_top_text(context, telegram_id, region)
     except Exception:
         text = "❌ Could not load opportunities."
-    await edit_or_reply(update, text, reply_markup=main_inline_keyboard())
+    await edit_or_reply(
+        update,
+        text,
+        reply_markup=_main_keyboard(update, _settings(context)),
+    )
 
 
 async def top_signals_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -402,11 +424,11 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not context.args:
         await message.reply_text(
             "Usage: /analyze https://polymarket.com/event/...\n\nOptional manual fallback only.",
-            reply_markup=main_inline_keyboard(),
+            reply_markup=_main_keyboard(update, settings),
         )
         return
     url = context.args[0]
-    reply_markup = main_inline_keyboard()
+    reply_markup = _main_keyboard(update, settings)
     loading_message = await message.reply_text(
         "Analyzing URL (manual fallback)...",
         reply_markup=reply_markup,
@@ -443,7 +465,10 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"• {row['decision']} | EV {ev_text} | {row['market_title']}")
         text = "\n".join(lines)
     if update.message:
-        await update.message.reply_text(text, reply_markup=main_inline_keyboard())
+        await update.message.reply_text(
+            text,
+            reply_markup=_main_keyboard(update, settings),
+        )
 
 
 async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

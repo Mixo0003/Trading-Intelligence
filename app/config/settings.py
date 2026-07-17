@@ -97,9 +97,18 @@ class Settings:
     copy_paper_bankroll_usd: float
     copy_poll_interval_seconds: int
     copy_max_trade_age_min: int
+    copy_max_event_age_seconds: int
     copy_min_resolved_trades: int
     copy_min_liquidity_usd: float
     copy_max_slippage_pct: float
+
+    health_monitor_enabled: bool
+    health_check_interval_seconds: int
+    health_alerts_enabled: bool
+    health_failure_threshold: int
+    health_recovery_threshold: int
+    health_job_stale_multiplier: float
+    health_ai_explainer_enabled: bool
 
     report_timezone: str
     report_times: list[str]
@@ -205,7 +214,17 @@ def load_settings() -> Settings:
         copy_paper_bankroll_usd=float(os.getenv("COPY_PAPER_BANKROLL_USD", "10000")),
         copy_poll_interval_seconds=max(60, int(os.getenv("COPY_POLL_INTERVAL_SECONDS", "120"))),
         copy_max_trade_age_min=max(1, int(os.getenv("COPY_MAX_TRADE_AGE_MIN", "30"))),
+        copy_max_event_age_seconds=max(1, int(os.getenv("COPY_MAX_EVENT_AGE_SECONDS", "600"))),
         copy_min_resolved_trades=max(1, int(os.getenv("COPY_MIN_RESOLVED_TRADES", "20"))),
         copy_min_liquidity_usd=float(os.getenv("COPY_MIN_LIQUIDITY_USD", "500")),
         copy_max_slippage_pct=float(os.getenv("COPY_MAX_SLIPPAGE_PCT", "0.02")),
+        health_monitor_enabled=_parse_bool(os.getenv("HEALTH_MONITOR_ENABLED", "true"), default=True),
+        health_check_interval_seconds=max(30, int(os.getenv("HEALTH_CHECK_INTERVAL_SECONDS", "300"))),
+        health_alerts_enabled=_parse_bool(os.getenv("HEALTH_ALERTS_ENABLED", "true"), default=True),
+        health_failure_threshold=max(1, int(os.getenv("HEALTH_FAILURE_THRESHOLD", "3"))),
+        health_recovery_threshold=max(1, int(os.getenv("HEALTH_RECOVERY_THRESHOLD", "2"))),
+        health_job_stale_multiplier=max(1.0, float(os.getenv("HEALTH_JOB_STALE_MULTIPLIER", "2"))),
+        health_ai_explainer_enabled=_parse_bool(
+            os.getenv("HEALTH_AI_EXPLAINER_ENABLED", "false")
+        ),
     )
