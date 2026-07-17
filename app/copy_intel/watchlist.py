@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.config.settings import Settings
 from app.copy_intel.data_client import normalize_wallet
+from app.copy_intel.freshness import begin_subscription
 from app.database import copy_storage
 
 
@@ -15,6 +16,7 @@ def add_wallet(
     added_by: int | None = None,
 ) -> str:
     wallet = normalize_wallet(address)
+    prior = copy_storage.get_watchlist_entry(settings, wallet)
     copy_storage.add_watchlist_wallet(settings, wallet, label=label, added_by=added_by)
     copy_storage.write_audit_log(
         settings,
@@ -22,6 +24,9 @@ def add_wallet(
         action="watchlist_add",
         payload={"wallet": wallet, "label": label},
     )
+    # New wallet, or re-add of a previously disabled wallet: start baseline.
+    if prior is None or not prior.enabled:
+        begin_subscription(settings, wallet)
     return wallet
 
 
@@ -48,6 +53,17 @@ def toggle_wallet(settings: Settings, address: str, *, actor: str = "system") ->
             action="watchlist_toggle",
             payload={"wallet": wallet, "enabled": enabled},
         )
+        if enabled:
+            # Safest: re-enable creates a new baseline; downtime activity is never alerted.
+            begin_subscription(settings, wallet)
+        else:
+            state = copy_storage.get_wallet_monitor_state(settings, wallet)
+            if state is not None:
+                copy_storage.update_wallet_monitor_fields(
+                    settings,
+                    wallet,
+                    monitoring_enabled=False,
+                )
     return enabled
 
 

@@ -38,6 +38,9 @@ class TradeEvent:
     title: str | None
     slug: str | None
     dedup_key: str
+    observed_at: int | None = None
+    event_uid: str | None = None
+    is_baseline: bool = False
 
 
 @dataclass(frozen=True)

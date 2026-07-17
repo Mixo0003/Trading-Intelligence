@@ -151,6 +151,54 @@ def initialize_copy_schema(settings: Settings) -> None:
                 computed_at TEXT NOT NULL
             )
         """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_monitor_state (
+                wallet TEXT PRIMARY KEY,
+                subscription_started_at TEXT NOT NULL,
+                baseline_started_at TEXT,
+                baseline_status TEXT NOT NULL DEFAULT 'PENDING',
+                baseline_error TEXT,
+                newest_event_ts INTEGER,
+                newest_event_uid TEXT,
+                monitoring_enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_event_watermarks (
+                wallet TEXT PRIMARY KEY,
+                newest_event_ts INTEGER,
+                newest_event_uid TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS processed_copy_events (
+                event_uid TEXT PRIMARY KEY,
+                wallet TEXT NOT NULL,
+                event_ts INTEGER,
+                observed_at INTEGER,
+                is_baseline INTEGER NOT NULL DEFAULT 0,
+                alertable INTEGER NOT NULL DEFAULT 0,
+                reject_reason TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_processed_copy_events_wallet
+            ON processed_copy_events(wallet)
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS baseline_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                positions_count INTEGER,
+                error TEXT
+            )
+        """)
 
 
 def _now_iso() -> str:
@@ -645,3 +693,282 @@ def get_discovery_score(settings: Settings, wallet: str) -> sqlite3.Row | None:
             "SELECT * FROM copy_discovery_scores WHERE wallet = ?",
             (wallet.lower(),),
         ).fetchone()
+
+
+@dataclass(frozen=True)
+class WalletMonitorState:
+    wallet: str
+    subscription_started_at: str
+    baseline_started_at: str | None
+    baseline_status: str
+    baseline_error: str | None
+    newest_event_ts: int | None
+    newest_event_uid: str | None
+    monitoring_enabled: bool
+    updated_at: str
+
+
+def get_watchlist_entry(settings: Settings, wallet: str) -> WatchlistEntry | None:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT wallet, label, enabled, added_by, created_at, updated_at
+            FROM copy_watchlist WHERE wallet = ?
+            """,
+            (wallet.lower(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return WatchlistEntry(
+        wallet=row["wallet"],
+        label=row["label"],
+        enabled=bool(row["enabled"]),
+        added_by=row["added_by"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert_wallet_monitor_state(
+    settings: Settings,
+    wallet: str,
+    *,
+    subscription_started_at: str,
+    baseline_started_at: str | None = None,
+    baseline_status: str = "PENDING",
+    baseline_error: str | None = None,
+    newest_event_ts: int | None = None,
+    newest_event_uid: str | None = None,
+    monitoring_enabled: bool = True,
+) -> None:
+    now = _now_iso()
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            INSERT INTO wallet_monitor_state (
+                wallet, subscription_started_at, baseline_started_at, baseline_status,
+                baseline_error, newest_event_ts, newest_event_uid, monitoring_enabled,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(wallet) DO UPDATE SET
+                subscription_started_at = excluded.subscription_started_at,
+                baseline_started_at = excluded.baseline_started_at,
+                baseline_status = excluded.baseline_status,
+                baseline_error = excluded.baseline_error,
+                newest_event_ts = excluded.newest_event_ts,
+                newest_event_uid = excluded.newest_event_uid,
+                monitoring_enabled = excluded.monitoring_enabled,
+                updated_at = excluded.updated_at
+            """,
+            (
+                wallet.lower(),
+                subscription_started_at,
+                baseline_started_at,
+                baseline_status,
+                baseline_error,
+                newest_event_ts,
+                newest_event_uid,
+                1 if monitoring_enabled else 0,
+                now,
+            ),
+        )
+
+
+def update_wallet_monitor_fields(
+    settings: Settings,
+    wallet: str,
+    **fields: object,
+) -> None:
+    if not fields:
+        return
+    allowed = {
+        "subscription_started_at",
+        "baseline_started_at",
+        "baseline_status",
+        "baseline_error",
+        "newest_event_ts",
+        "newest_event_uid",
+        "monitoring_enabled",
+    }
+    cols = []
+    values: list[object] = []
+    for key, value in fields.items():
+        if key not in allowed:
+            raise ValueError(f"Unsupported monitor field: {key}")
+        cols.append(f"{key} = ?")
+        if key == "monitoring_enabled":
+            values.append(1 if value else 0)
+        else:
+            values.append(value)
+    cols.append("updated_at = ?")
+    values.append(_now_iso())
+    values.append(wallet.lower())
+    with get_connection(settings) as connection:
+        connection.execute(
+            f"UPDATE wallet_monitor_state SET {', '.join(cols)} WHERE wallet = ?",
+            values,
+        )
+
+
+def get_wallet_monitor_state(settings: Settings, wallet: str) -> WalletMonitorState | None:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            "SELECT * FROM wallet_monitor_state WHERE wallet = ?",
+            (wallet.lower(),),
+        ).fetchone()
+    if row is None:
+        return None
+    return WalletMonitorState(
+        wallet=row["wallet"],
+        subscription_started_at=row["subscription_started_at"],
+        baseline_started_at=row["baseline_started_at"],
+        baseline_status=row["baseline_status"],
+        baseline_error=row["baseline_error"],
+        newest_event_ts=row["newest_event_ts"],
+        newest_event_uid=row["newest_event_uid"],
+        monitoring_enabled=bool(row["monitoring_enabled"]),
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert_wallet_event_watermark(
+    settings: Settings,
+    wallet: str,
+    *,
+    newest_event_ts: int | None,
+    newest_event_uid: str | None,
+) -> None:
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            INSERT INTO wallet_event_watermarks (
+                wallet, newest_event_ts, newest_event_uid, updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(wallet) DO UPDATE SET
+                newest_event_ts = excluded.newest_event_ts,
+                newest_event_uid = excluded.newest_event_uid,
+                updated_at = excluded.updated_at
+            """,
+            (wallet.lower(), newest_event_ts, newest_event_uid, _now_iso()),
+        )
+
+
+def get_wallet_event_watermark(settings: Settings, wallet: str) -> sqlite3.Row | None:
+    with get_connection(settings) as connection:
+        return connection.execute(
+            "SELECT * FROM wallet_event_watermarks WHERE wallet = ?",
+            (wallet.lower(),),
+        ).fetchone()
+
+
+def mark_processed_copy_event(
+    settings: Settings,
+    *,
+    event_uid: str,
+    wallet: str,
+    event_ts: int | None,
+    observed_at: int | None,
+    is_baseline: bool = False,
+    alertable: bool = False,
+    reject_reason: str | None = None,
+) -> bool:
+    """Insert processed event marker. Returns False if already present."""
+    with get_connection(settings) as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO processed_copy_events (
+                    event_uid, wallet, event_ts, observed_at, is_baseline,
+                    alertable, reject_reason, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_uid,
+                    wallet.lower(),
+                    event_ts,
+                    observed_at,
+                    1 if is_baseline else 0,
+                    1 if alertable else 0,
+                    reject_reason,
+                    _now_iso(),
+                ),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def is_processed_copy_event(settings: Settings, event_uid: str) -> bool:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            "SELECT 1 FROM processed_copy_events WHERE event_uid = ? LIMIT 1",
+            (event_uid,),
+        ).fetchone()
+    return row is not None
+
+
+def clear_position_snapshots(settings: Settings, wallet: str) -> None:
+    with get_connection(settings) as connection:
+        connection.execute(
+            "DELETE FROM copy_position_snapshots WHERE wallet = ?",
+            (wallet.lower(),),
+        )
+
+
+def start_baseline_run(settings: Settings, wallet: str) -> int:
+    with get_connection(settings) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO baseline_runs (wallet, started_at, status)
+            VALUES (?, ?, 'RUNNING')
+            """,
+            (wallet.lower(), _now_iso()),
+        )
+        return int(cursor.lastrowid)
+
+
+def finish_baseline_run(
+    settings: Settings,
+    run_id: int,
+    *,
+    status: str,
+    positions_count: int | None = None,
+    error: str | None = None,
+) -> None:
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            UPDATE baseline_runs
+            SET finished_at = ?, status = ?, positions_count = ?, error = ?
+            WHERE id = ?
+            """,
+            (_now_iso(), status, positions_count, error, run_id),
+        )
+
+
+def count_baseline_failures(settings: Settings, wallet: str, *, limit: int = 10) -> int:
+    with get_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT status FROM baseline_runs
+            WHERE wallet = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (wallet.lower(), limit),
+        ).fetchall()
+    return sum(1 for row in rows if row["status"] == "FAILED")
+
+
+def prune_processed_copy_events(settings: Settings, *, keep_days: int = 30) -> int:
+    cutoff = datetime.now(timezone.utc).timestamp() - keep_days * 86400
+    cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+    with get_connection(settings) as connection:
+        cursor = connection.execute(
+            "DELETE FROM processed_copy_events WHERE created_at < ?",
+            (cutoff_iso,),
+        )
+    return int(cursor.rowcount)

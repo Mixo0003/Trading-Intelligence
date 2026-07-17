@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import logging
+import time
 import traceback
 from datetime import datetime, timezone
 
 from app.config.settings import Settings
 from app.copy_intel.data_client import CopyDataClient
+from app.copy_intel.freshness import (
+    baseline_is_complete,
+    ensure_monitor_state,
+    filter_alertable_events,
+    run_baseline,
+)
 from app.copy_intel.ingestion import ingest_wallet
 from app.copy_intel.recommendation import build_recommendation
 from app.copy_intel.risk import assert_read_only, record_paper_copy
@@ -23,16 +30,37 @@ async def copy_intel_poll_job(context) -> None:
     settings: Settings = context.application.bot_data["settings"]
     if not settings.copy_intel_enabled:
         return
+    job_started = time.monotonic()
+    from app.health.jobs import finish_job_execution, record_job_execution
+
+    record_job_execution(
+        settings,
+        job_name="copy_intel_poll",
+        status="running",
+        started_at=datetime.now(timezone.utc).isoformat(),
+        expected_interval_seconds=settings.copy_poll_interval_seconds,
+    )
+
     try:
         assert_read_only(settings)
         client = CopyDataClient(settings)
         labels = {e.wallet: (e.label or e.wallet[:10]) for e in list_entries(settings)}
         all_events = []
         last_error = None
+        stale_rejects = 0
         for wallet in list_enabled(settings):
             try:
+                ensure_monitor_state(settings, wallet)
+                if not baseline_is_complete(settings, wallet):
+                    status = run_baseline(settings, wallet, client=client)
+                    if status != "COMPLETE":
+                        last_error = f"baseline {status} for {wallet[:10]}"
+                    continue
+
                 events = ingest_wallet(settings, wallet, client=client)
-                for event in events:
+                alertable = filter_alertable_events(settings, wallet, events)
+                stale_rejects += max(0, len(events) - len(alertable))
+                for event in alertable:
                     if event.event_type in {"open", "increase"}:
                         rec = build_recommendation(
                             settings,
@@ -60,6 +88,13 @@ async def copy_intel_poll_job(context) -> None:
             datetime.now(timezone.utc).isoformat(),
         )
         copy_storage.set_poll_state(settings, "last_event_count", str(len(all_events)))
+        copy_storage.set_poll_state(settings, "last_stale_rejects", str(stale_rejects))
+        if all_events:
+            copy_storage.set_poll_state(
+                settings,
+                "last_new_event_at",
+                datetime.now(timezone.utc).isoformat(),
+            )
         if last_error:
             copy_storage.set_poll_state(settings, "last_error", last_error)
         else:
@@ -75,9 +110,22 @@ async def copy_intel_poll_job(context) -> None:
                         await context.bot.send_message(chat_id=admin_id, text=text)
                     except Exception:
                         logger.exception("Failed to send copy alert to %s", admin_id)
+        finish_job_execution(
+            settings,
+            job_name="copy_intel_poll",
+            status="ok",
+            duration_ms=int((time.monotonic() - job_started) * 1000),
+        )
     except Exception:
         copy_storage.set_poll_state(settings, "last_error", traceback.format_exc()[-500:])
         logger.exception("Copy intel poll job failed")
+        finish_job_execution(
+            settings,
+            job_name="copy_intel_poll",
+            status="error",
+            duration_ms=int((time.monotonic() - job_started) * 1000),
+            error=traceback.format_exc()[-500:],
+        )
 
 
 def schedule_copy_intel_jobs(application, settings: Settings) -> None:

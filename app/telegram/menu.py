@@ -3,6 +3,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 from app.config.settings import Settings
 from app.copy_intel.scheduler import schedule_copy_intel_jobs
 from app.database.storage import initialize_database
+from app.health.scheduler import schedule_health_jobs
 from app.telegram.callback_handler import inline_callback_handler
 from app.telegram.copy_intel.handlers import (
     copy_add_command,
@@ -29,6 +30,7 @@ from app.telegram.handlers import (
     top_command,
     weather_command,
 )
+from app.telegram.health.handlers import health_command
 
 
 def _build_application(token: str) -> Application:
@@ -56,6 +58,7 @@ def build_telegram_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("recent", recent_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("health", health_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("copy", copy_command))
     app.add_handler(CommandHandler("copy_list", copy_list_command))
@@ -73,4 +76,5 @@ def build_telegram_application(settings: Settings) -> Application:
 
     schedule_report_jobs(app, settings)
     schedule_copy_intel_jobs(app, settings)
+    schedule_health_jobs(app, settings)
     return app

@@ -47,8 +47,11 @@ from app.telegram.inline_menus import (
     copy_inline_keyboard,
     copy_settings_inline_keyboard,
     discovery_inline_keyboard,
+    main_inline_keyboard,
     weather_inline_keyboard,
 )
+from app.telegram.auth import is_admin
+from app.telegram.health.buttons import HEALTH_CALLBACKS
 from app.telegram.nav import answer_callback, edit_or_reply, open_main_menu
 
 logger = logging.getLogger(__name__)
@@ -67,9 +70,19 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         return
     data = query.data
     await answer_callback(update)
+    settings = context.application.bot_data["settings"]
+    user = update.effective_user
+    admin = is_admin(settings, user.id if user else None)
+    main_kb = main_inline_keyboard(is_admin=admin)
+
+    if data in HEALTH_CALLBACKS:
+        from app.telegram.health.handlers import handle_health_callback
+
+        await handle_health_callback(update, context, data)
+        return
 
     if data == CB_MAIN:
-        await open_main_menu(update)
+        await open_main_menu(update, settings=settings)
         return
     if data == CB_WEATHER:
         await edit_or_reply(update, WEATHER_MENU_TEXT, reply_markup=weather_inline_keyboard())
@@ -83,7 +96,7 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await top_from_callback(update, context)
         return
     if data == CB_SETTINGS:
-        await edit_or_reply(update, SETTINGS_MENU_TEXT, reply_markup=main_inline_keyboard())
+        await edit_or_reply(update, SETTINGS_MENU_TEXT, reply_markup=main_kb)
         return
 
     if data in _SCAN_CB:

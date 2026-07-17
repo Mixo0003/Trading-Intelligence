@@ -65,16 +65,23 @@ Do not perform broad refactors without a proven failing acceptance test.
 
 ## Current verified state
 
-- Current branch: `main`.
-- Current HEAD: `2c0d679f421f5c2a0453b27f2ae6b9c0fc3e66af`.
-- Working tree: 13 modified tracked files and 9 untracked files; nothing is staged.
-- Latest targeted result: 9 passed, 0 failed, 34 deselected.
-- Latest known full-suite result: 302 passed, 0 failed, 0 skipped, with one Python 3.15 date-parsing deprecation warning. This was run before the final parent-URL patch; targeted tests passed after that patch.
-- Latest bounded live proof: active Austin daily-high event produced a concrete WATCH Telegram card with exact child outcome `82-83°F` and matching live YES price `18%`.
-- Focused final patch: `app/polymarket/pricing.py` and `tests/test_outcome_mapping.py`.
-- Other current uncommitted USA-classification work is visible in `git status` and must be reviewed separately before staging.
-- The real `.env` was not modified.
-- No commit or push occurred during the latest USA proof task.
+- Product baseline on main: Weather Intelligence V1.1 + Trader Intelligence V2 (read-only / paper-only).
+- V2.1 release branch: `feature/v2.1-health-monitor` (Health Monitor + copy-event freshness).
+- Copy freshness: baseline/watermarks/`processed_copy_events`; re-enable starts a new baseline; no alerts until baseline `COMPLETE`.
+- Health: deterministic probes, admin-only System Health UX (`ADMIN_IDS`), deduplicated incidents; AI explainer off by default.
+- Manual Telegram verification accepted: System Health, self-test, DB/cache diagnostics, Weather, Copy read-only, baseline/stale protection, navigation.
+- Automated: full suite green on release validation; Weather/Copy scoring rules unchanged.
+- The real `.env` was not modified as part of V2.1 source commits.
+
+## V2.1 modules
+
+| Area | Path |
+|------|------|
+| Freshness | `app/copy_intel/freshness.py` |
+| Health core | `app/health/*` |
+| Admin auth | `app/telegram/auth.py` |
+| Health UX | `app/telegram/health/*` |
+| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `ROADMAP.md` |
 
 ## Latest live weather proof
 
@@ -152,7 +159,8 @@ Current result: one active USA event satisfies this acceptance card.
 - add bounded retries and rate limits;
 - verify scheduler reliability;
 - document VPS deployment;
-- improve monitoring and structured diagnostics.
+- [x] Health Monitor + admin diagnostics (V2.1);
+- [x] Copy event freshness / baseline protection (V2.1).
 
 ### Phase 4 — Telegram UX
 

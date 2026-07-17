@@ -10,6 +10,7 @@ CB_WEATHER = "nav:weather"
 CB_COPY = "nav:copy"
 CB_TOP = "nav:top"
 CB_SETTINGS = "nav:settings"
+CB_HEALTH = "nav:health"
 
 CB_WX_SCAN_USA = "wx:scan:usa"
 CB_WX_SCAN_EUROPE = "wx:scan:europe"
@@ -48,15 +49,19 @@ def remove_reply_keyboard() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
 
-def main_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
-            [InlineKeyboardButton("📋 Copy Trading Intelligence", callback_data=CB_COPY)],
-            [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_TOP)],
-            [InlineKeyboardButton("⚙️ Settings", callback_data=CB_SETTINGS)],
-        ]
-    )
+def main_inline_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
+        [InlineKeyboardButton("📋 Copy Trading Intelligence", callback_data=CB_COPY)],
+        [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_TOP)],
+        [InlineKeyboardButton("⚙️ Settings", callback_data=CB_SETTINGS)],
+    ]
+    if is_admin:
+        rows.insert(
+            -1,
+            [InlineKeyboardButton("🩺 System Health", callback_data=CB_HEALTH)],
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 def weather_inline_keyboard() -> InlineKeyboardMarkup:

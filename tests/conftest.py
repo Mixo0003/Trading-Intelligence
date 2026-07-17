@@ -47,9 +47,17 @@ def make_test_settings(**overrides) -> Settings:
         copy_paper_bankroll_usd=10000.0,
         copy_poll_interval_seconds=120,
         copy_max_trade_age_min=30,
+        copy_max_event_age_seconds=600,
         copy_min_resolved_trades=20,
         copy_min_liquidity_usd=500.0,
         copy_max_slippage_pct=0.02,
+        health_monitor_enabled=True,
+        health_check_interval_seconds=300,
+        health_alerts_enabled=True,
+        health_failure_threshold=3,
+        health_recovery_threshold=2,
+        health_job_stale_multiplier=2.0,
+        health_ai_explainer_enabled=False,
     )
     base.update(overrides)
     return Settings(**base)
