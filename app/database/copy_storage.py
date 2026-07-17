@@ -166,6 +166,7 @@ def initialize_copy_schema(settings: Settings) -> None:
             )
         """)
         _ensure_copy_column(connection, "wallet_monitor_state", "last_polled_at", "TEXT")
+        _ensure_copy_column(connection, "wallet_monitor_state", "baseline_version", "INTEGER")
         connection.execute("""
             CREATE TABLE IF NOT EXISTS wallet_event_watermarks (
                 wallet TEXT PRIMARY KEY,
@@ -199,6 +200,30 @@ def initialize_copy_schema(settings: Settings) -> None:
                 status TEXT NOT NULL,
                 positions_count INTEGER,
                 error TEXT
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_alert_deliveries (
+                subscriber_id INTEGER NOT NULL,
+                wallet TEXT NOT NULL,
+                event_uid TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_text TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (subscriber_id, wallet, event_uid)
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_copy_alert_deliveries_status
+            ON copy_alert_deliveries(status)
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_job_locks (
+                job_name TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                locked_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
             )
         """)
 
@@ -733,6 +758,7 @@ class WalletMonitorState:
     monitoring_enabled: bool
     updated_at: str
     last_polled_at: str | None = None
+    baseline_version: int | None = None
 
 
 def get_watchlist_entry(settings: Settings, wallet: str) -> WatchlistEntry | None:
@@ -767,6 +793,7 @@ def upsert_wallet_monitor_state(
     newest_event_ts: int | None = None,
     newest_event_uid: str | None = None,
     monitoring_enabled: bool = True,
+    baseline_version: int | None = None,
 ) -> None:
     now = _now_iso()
     with get_connection(settings) as connection:
@@ -775,9 +802,9 @@ def upsert_wallet_monitor_state(
             INSERT INTO wallet_monitor_state (
                 wallet, subscription_started_at, baseline_started_at, baseline_status,
                 baseline_error, newest_event_ts, newest_event_uid, monitoring_enabled,
-                updated_at
+                baseline_version, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(wallet) DO UPDATE SET
                 subscription_started_at = excluded.subscription_started_at,
                 baseline_started_at = excluded.baseline_started_at,
@@ -786,6 +813,7 @@ def upsert_wallet_monitor_state(
                 newest_event_ts = excluded.newest_event_ts,
                 newest_event_uid = excluded.newest_event_uid,
                 monitoring_enabled = excluded.monitoring_enabled,
+                baseline_version = excluded.baseline_version,
                 updated_at = excluded.updated_at
             """,
             (
@@ -797,6 +825,7 @@ def upsert_wallet_monitor_state(
                 newest_event_ts,
                 newest_event_uid,
                 1 if monitoring_enabled else 0,
+                baseline_version,
                 now,
             ),
         )
@@ -818,6 +847,7 @@ def update_wallet_monitor_fields(
         "newest_event_uid",
         "monitoring_enabled",
         "last_polled_at",
+        "baseline_version",
     }
     cols = []
     values: list[object] = []
@@ -859,6 +889,7 @@ def get_wallet_monitor_state(settings: Settings, wallet: str) -> WalletMonitorSt
         monitoring_enabled=bool(row["monitoring_enabled"]),
         updated_at=row["updated_at"],
         last_polled_at=row["last_polled_at"] if "last_polled_at" in keys else None,
+        baseline_version=row["baseline_version"] if "baseline_version" in keys else None,
     )
 
 
@@ -1024,3 +1055,164 @@ def prune_processed_copy_events(settings: Settings, *, keep_days: int = 30) -> i
             (cutoff_iso,),
         )
     return int(cursor.rowcount)
+
+
+def try_acquire_job_lock(
+    settings: Settings,
+    *,
+    job_name: str,
+    owner: str,
+    ttl_seconds: int,
+) -> bool:
+    """Atomically acquire a job lock. Stale locks (past expires_at) are stolen."""
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    expires = datetime.fromtimestamp(now.timestamp() + max(1, ttl_seconds), tz=timezone.utc).isoformat()
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            "SELECT owner, expires_at FROM copy_job_locks WHERE job_name = ?",
+            (job_name,),
+        ).fetchone()
+        if row is not None:
+            try:
+                exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+            except ValueError:
+                exp = now
+            if exp > now:
+                return False
+            connection.execute(
+                """
+                UPDATE copy_job_locks
+                SET owner = ?, locked_at = ?, expires_at = ?
+                WHERE job_name = ?
+                """,
+                (owner, now_iso, expires, job_name),
+            )
+            return True
+        try:
+            connection.execute(
+                """
+                INSERT INTO copy_job_locks (job_name, owner, locked_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (job_name, owner, now_iso, expires),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def release_job_lock(settings: Settings, *, job_name: str, owner: str) -> None:
+    with get_connection(settings) as connection:
+        connection.execute(
+            "DELETE FROM copy_job_locks WHERE job_name = ? AND owner = ?",
+            (job_name, owner),
+        )
+
+
+def claim_copy_alert_delivery(
+    settings: Settings,
+    *,
+    subscriber_id: int,
+    wallet: str,
+    event_uid: str,
+    payload_text: str | None = None,
+) -> bool:
+    """
+    Atomically claim alert delivery for (subscriber, wallet, event_uid).
+    Returns True only for the successful claimant (or a failed→retry reclaim).
+    """
+    now = _now_iso()
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT status FROM copy_alert_deliveries
+            WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+            """,
+            (subscriber_id, wallet.lower(), event_uid),
+        ).fetchone()
+        if row is None:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO copy_alert_deliveries (
+                        subscriber_id, wallet, event_uid, status, payload_text,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, 'claimed', ?, ?, ?)
+                    """,
+                    (
+                        subscriber_id,
+                        wallet.lower(),
+                        event_uid,
+                        payload_text,
+                        now,
+                        now,
+                    ),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
+        if row["status"] == "failed":
+            cursor = connection.execute(
+                """
+                UPDATE copy_alert_deliveries
+                SET status = 'claimed', payload_text = COALESCE(?, payload_text),
+                    updated_at = ?
+                WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+                  AND status = 'failed'
+                """,
+                (payload_text, now, subscriber_id, wallet.lower(), event_uid),
+            )
+            return cursor.rowcount > 0
+        return False
+
+
+def mark_copy_alert_delivery(
+    settings: Settings,
+    *,
+    subscriber_id: int,
+    wallet: str,
+    event_uid: str,
+    status: str,
+    payload_text: str | None = None,
+) -> None:
+    now = _now_iso()
+    with get_connection(settings) as connection:
+        if payload_text is not None:
+            connection.execute(
+                """
+                UPDATE copy_alert_deliveries
+                SET status = ?, payload_text = ?, updated_at = ?
+                WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+                """,
+                (status, payload_text, now, subscriber_id, wallet.lower(), event_uid),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE copy_alert_deliveries
+                SET status = ?, updated_at = ?
+                WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+                """,
+                (status, now, subscriber_id, wallet.lower(), event_uid),
+            )
+
+
+def list_failed_copy_alert_deliveries(
+    settings: Settings,
+    *,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    with get_connection(settings) as connection:
+        return connection.execute(
+            """
+            SELECT * FROM copy_alert_deliveries
+            WHERE status = 'failed' AND payload_text IS NOT NULL
+            ORDER BY updated_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()

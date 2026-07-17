@@ -57,7 +57,42 @@ def format_copy_health(settings: Settings, overall: OverallHealth) -> str:
                 lines.append(f"{key}: {metrics[key]}")
     if ro:
         lines.append(f"Read-only: {ro.status} — {ro.detail}")
+    lines.append("")
+    lines.append("Use Rebuild Copy Baselines to re-seed active subscriptions.")
+    lines.append("No wallet addresses or secrets are shown.")
     return "\n".join(lines)
+
+
+def format_rebuild_baselines_confirm(settings: Settings) -> str:
+    from app.database import copy_storage
+
+    active = len(copy_storage.list_enabled_wallets(settings))
+    return "\n".join(
+        [
+            "🔄 Rebuild Copy Baselines",
+            "",
+            f"Active subscriptions: {active}",
+            "This re-seeds baselines for enabled wallets only.",
+            "Zero alerts during rebuild.",
+            "Watchlist, paper, and analytics are preserved.",
+            "",
+            "Confirm to continue.",
+        ]
+    )
+
+
+def format_rebuild_baselines_result(result: dict[str, int]) -> str:
+    return "\n".join(
+        [
+            "🔄 Rebuild Copy Baselines — Done",
+            f"Total: {result.get('total', 0)}",
+            f"Succeeded: {result.get('succeeded', 0)}",
+            f"Failed: {result.get('failed', 0)}",
+            "",
+            "No wallet addresses or secrets shown.",
+            "Alerts stay off until each baseline is COMPLETE.",
+        ]
+    )
 
 
 def format_jobs_health(settings: Settings) -> str:

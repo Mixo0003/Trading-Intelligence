@@ -254,11 +254,14 @@ class TestEventUid:
         e = _event(tx_hash="0xABC", ts=1)
         assert build_event_uid(e).startswith("tx:0xabc:")
 
-    def test_position_diff_composite(self):
+    def test_position_diff_composite_ignores_poll_seq(self):
         e = _event(ts=None)
-        uid = build_event_uid(e, poll_seq=3)
-        assert uid.startswith("pd:")
-        assert "|3" in uid
+        uid_a = build_event_uid(e, poll_seq=3)
+        uid_b = build_event_uid(e, poll_seq=99)
+        assert uid_a.startswith("pd:")
+        assert uid_a == uid_b
+        assert "|3" not in uid_a
+        assert "|99" not in uid_b
 
 
 class TestIngestAfterBaseline:

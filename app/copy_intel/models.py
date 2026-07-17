@@ -41,6 +41,10 @@ class TradeEvent:
     observed_at: int | None = None
     event_uid: str | None = None
     is_baseline: bool = False
+    # Absolute book sizes for stable position-diff identity (not deltas).
+    prev_size: float | None = None
+    new_size: float | None = None
+    trade_id: str | None = None
 
 
 @dataclass(frozen=True)

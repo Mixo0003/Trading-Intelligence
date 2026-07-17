@@ -79,7 +79,7 @@ def format_subscription_card(
 ) -> str:
     monitoring = "ON" if enabled else "PAUSED"
     baseline = (baseline_status or "PENDING").upper()
-    if baseline not in {"COMPLETE", "PENDING", "FAILED", "RUNNING"}:
+    if baseline not in {"COMPLETE", "PENDING", "FAILED", "RUNNING", "MIGRATING"}:
         baseline = "PENDING"
     decision = (
         "FOLLOW only"

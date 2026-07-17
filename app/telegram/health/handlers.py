@@ -14,13 +14,18 @@ from app.telegram.health.buttons import (
     CB_HEALTH_DB,
     CB_HEALTH_INCIDENTS,
     CB_HEALTH_JOBS,
+    CB_HEALTH_REBUILD_BASELINES,
+    CB_HEALTH_REBUILD_CANCEL,
+    CB_HEALTH_REBUILD_CONFIRM,
     CB_HEALTH_SELFTEST,
     CB_HEALTH_SETTINGS,
     CB_HEALTH_SUMMARY,
     CB_HEALTH_WEATHER,
     HEALTH_MENU_TEXT,
+    copy_health_keyboard,
     health_back_keyboard,
     health_inline_keyboard,
+    rebuild_baselines_confirm_keyboard,
 )
 from app.telegram.health.formatting import (
     format_copy_health,
@@ -29,6 +34,8 @@ from app.telegram.health.formatting import (
     format_health_summary,
     format_incidents,
     format_jobs_health,
+    format_rebuild_baselines_confirm,
+    format_rebuild_baselines_result,
     format_self_test,
     format_weather_health,
 )
@@ -69,6 +76,34 @@ async def handle_health_callback(
         await edit_or_reply(update, HEALTH_MENU_TEXT, reply_markup=health_inline_keyboard())
         return
 
+    if data == CB_HEALTH_REBUILD_BASELINES:
+        await edit_or_reply(
+            update,
+            format_rebuild_baselines_confirm(settings),
+            reply_markup=rebuild_baselines_confirm_keyboard(),
+        )
+        return
+
+    if data == CB_HEALTH_REBUILD_CANCEL:
+        overall = run_health_check(settings, bot_data=context.application.bot_data)
+        await edit_or_reply(
+            update,
+            format_copy_health(settings, overall),
+            reply_markup=copy_health_keyboard(),
+        )
+        return
+
+    if data == CB_HEALTH_REBUILD_CONFIRM:
+        from app.copy_intel.freshness import rebuild_all_copy_baselines
+
+        result = rebuild_all_copy_baselines(settings)
+        await edit_or_reply(
+            update,
+            format_rebuild_baselines_result(result),
+            reply_markup=copy_health_keyboard(),
+        )
+        return
+
     overall = run_health_check(settings, bot_data=context.application.bot_data)
     back = health_back_keyboard()
 
@@ -78,6 +113,8 @@ async def handle_health_callback(
         text = format_weather_health(settings)
     elif data == CB_HEALTH_COPY:
         text = format_copy_health(settings, overall)
+        await edit_or_reply(update, text, reply_markup=copy_health_keyboard())
+        return
     elif data == CB_HEALTH_JOBS:
         text = format_jobs_health(settings)
     elif data == CB_HEALTH_DB:

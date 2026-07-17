@@ -15,6 +15,9 @@ CB_HEALTH_DB = "health:db"
 CB_HEALTH_INCIDENTS = "health:incidents"
 CB_HEALTH_SELFTEST = "health:selftest"
 CB_HEALTH_SETTINGS = "health:settings"
+CB_HEALTH_REBUILD_BASELINES = "health:rebuild_baselines"
+CB_HEALTH_REBUILD_CONFIRM = "health:rebuild_confirm"
+CB_HEALTH_REBUILD_CANCEL = "health:rebuild_cancel"
 
 HEALTH_MENU_TEXT = "🩺 System Health\nAdmin diagnostics — choose a section:"
 
@@ -29,6 +32,9 @@ HEALTH_CALLBACKS = frozenset(
         CB_HEALTH_INCIDENTS,
         CB_HEALTH_SELFTEST,
         CB_HEALTH_SETTINGS,
+        CB_HEALTH_REBUILD_BASELINES,
+        CB_HEALTH_REBUILD_CONFIRM,
+        CB_HEALTH_REBUILD_CANCEL,
     }
 )
 
@@ -60,5 +66,40 @@ def health_back_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
             [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def copy_health_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔄 Rebuild Copy Baselines",
+                    callback_data=CB_HEALTH_REBUILD_BASELINES,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
+            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def rebuild_baselines_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Rebuild",
+                    callback_data=CB_HEALTH_REBUILD_CONFIRM,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data=CB_HEALTH_REBUILD_CANCEL,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
         ]
     )

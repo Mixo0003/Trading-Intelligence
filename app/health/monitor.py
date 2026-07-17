@@ -315,11 +315,12 @@ def probe_copy_intelligence(settings: Settings) -> ComponentStatus:
             "stale_rejects": stale_rejects,
         }
     )
+    from app.copy_intel.freshness import baseline_is_complete
+
     incomplete = 0
     failed_baselines = 0
     for wallet in copy_storage.list_enabled_wallets(settings):
-        state = copy_storage.get_wallet_monitor_state(settings, wallet)
-        if state is None or state.baseline_status != "COMPLETE":
+        if not baseline_is_complete(settings, wallet):
             incomplete += 1
         failed_baselines += copy_storage.count_baseline_failures(settings, wallet, limit=5)
     metrics["baselines_incomplete"] = incomplete
