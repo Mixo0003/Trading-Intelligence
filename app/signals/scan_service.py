@@ -8,6 +8,7 @@ from app.diagnostics.scan_runtime import log_scan_runtime_diagnostics
 from app.metrics.scan_metrics import reset_scan_metrics
 from app.polymarket.client import PolymarketClient
 from app.polymarket.discovery import SkipReason, evaluate_market_eligibility
+from app.polymarket.discovery_errors import WeatherDiscoveryError
 from app.polymarket.event_expansion import expand_group_children
 from app.polymarket.market_text import build_market_context_text
 from app.polymarket.markets import get_weather_markets
@@ -155,6 +156,8 @@ async def scan_weather_markets_async(
                 scan_limit,
                 settings.priority_weather_cities,
             )
+        except WeatherDiscoveryError:
+            raise
         except Exception as exc:
             logger.exception("Polymarket discovery failed: %s", exc)
             raise
