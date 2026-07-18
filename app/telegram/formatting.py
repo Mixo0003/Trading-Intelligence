@@ -125,6 +125,7 @@ def _forecast_analyses(analyses: list[MarketAnalysis]) -> list[MarketAnalysis]:
     return [
         item for item in analyses
         if has_forecast_result(item.display_status, item.forecast_display)
+        and _is_current_or_future_local_forecast(item)
     ]
 
 
@@ -161,6 +162,17 @@ def _matches_station_local_today(analysis: MarketAnalysis) -> bool:
     if station_today and analysis.target_date_local:
         return analysis.target_date_local == station_today
     return False
+
+
+def _is_current_or_future_local_forecast(analysis: MarketAnalysis) -> bool:
+    """Hide snapshot cards whose market-local target date is already past."""
+    target = analysis.target_date_local
+    if not target:
+        return False
+    today = _station_local_today_iso(analysis)
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+    return target >= today
 
 
 def format_concise_card(analysis: MarketAnalysis) -> str:
@@ -351,8 +363,7 @@ def format_today_forecast_report(progress: ScanProgress, region: ScanRegion | No
     if not analyses:
         return (
             f"📅 {scan_region.display_label.upper()} FORECASTS\n\n"
-            f"No forecasts in the latest {scan_region.display_label} scan.\n"
-            f"Use {scan_region.scan_button} to refresh."
+            f"No current forecast results. Run a new scan."
         )
     cards = [format_today_forecast_card(item) for item in analyses[:MAX_SCAN_RESULT_CARDS]]
     return f"📅 {scan_region.display_label.upper()} FORECASTS\n\n" + "\n\n".join(cards)

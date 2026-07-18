@@ -1,24 +1,62 @@
+from __future__ import annotations
+
+import logging
+from typing import Callable
+
 from app.polymarket.city import text_matches_priority_city
 from app.polymarket.client import PolymarketClient
+from app.polymarket.discovery_errors import WeatherDiscoveryError
 from app.polymarket.event_expansion import supplement_discovered_markets
 from app.polymarket.market_text import build_market_context_text, is_temperature_market_candidate
 from app.polymarket.models import PolymarketEvent, PolymarketMarket
 from app.polymarket.parser import parse_event, parse_market
+
+logger = logging.getLogger(__name__)
+
+
+def _http_status(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return int(status) if status is not None else None
+
+
+def _safe_collect(
+    collector_name: str,
+    endpoint_type: str,
+    fn: Callable[[], list[PolymarketMarket]],
+) -> tuple[list[PolymarketMarket], bool]:
+    """Run one discovery collector. Failures are non-fatal; returns (markets, ok)."""
+    try:
+        markets = fn()
+        logger.info(
+            "Discovery collector ok name=%s endpoint=%s count=%s",
+            collector_name,
+            endpoint_type,
+            len(markets),
+        )
+        return markets, True
+    except Exception as exc:
+        logger.warning(
+            "Discovery collector failed name=%s endpoint=%s status=%s error=%s",
+            collector_name,
+            endpoint_type,
+            _http_status(exc),
+            type(exc).__name__,
+        )
+        return [], False
 
 
 def _collect_markets_from_events(
     client: PolymarketClient,
     limit: int,
 ) -> list[PolymarketMarket]:
-    """Fetch active events and expand to child markets with event metadata attached."""
+    """Fetch active events without unsupported ordering (Gamma rejects volume_24hr)."""
     data = client.get_json(
         "/events",
         params={
             "active": "true",
             "closed": "false",
             "limit": min(limit, 100),
-            "order": "volume_24hr",
-            "ascending": "false",
         },
     )
     items = data if isinstance(data, list) else data.get("events", data.get("data", []))
@@ -192,48 +230,88 @@ def get_weather_markets(
     limit: int = 100,
     priority_cities: list[str] | None = None,
 ) -> tuple[list[PolymarketMarket], int, int]:
-    """Return child markets, direct-market count, and priority-only additions."""
-    markets = get_active_markets(client, limit=limit)
+    """Return child markets, direct-market count, and priority-only additions.
+
+    Individual collectors may fail (e.g. Gamma 422 on unsupported order params).
+    The scan aborts only when every path fails and no usable markets remain.
+    """
     weather_markets: list[PolymarketMarket] = []
+    collector_ok = 0
+    collector_fail = 0
 
-    for market in markets:
-        if is_temperature_market_candidate(market):
-            weather_markets.append(market)
-
-    direct_market_count = len(_dedupe_markets(weather_markets))
-
-    for market in _collect_markets_from_events(client, limit=limit):
-        if is_temperature_market_candidate(market):
-            weather_markets.append(market)
-
-    # Full worldwide discovery: follows every /events/keyset page instead of
-    # relying on a single fixed-size page, so events beyond the first ~100
-    # site-wide results are still found. `client` is only None in tests that
-    # stub out the legacy single-page collectors above.
-    if client is not None:
-        for market in _collect_markets_from_gamma_discovery(client):
+    def _absorb(batch: list[PolymarketMarket], ok: bool) -> None:
+        nonlocal collector_ok, collector_fail
+        if ok:
+            collector_ok += 1
+        else:
+            collector_fail += 1
+        for market in batch:
             if is_temperature_market_candidate(market):
                 weather_markets.append(market)
 
+    markets_batch, markets_ok = _safe_collect(
+        "active_markets",
+        "markets",
+        lambda: get_active_markets(client, limit=limit),
+    )
+    _absorb(markets_batch, markets_ok)
+
+    direct_market_count = len(_dedupe_markets(weather_markets))
+
+    events_batch, events_ok = _safe_collect(
+        "events_page",
+        "events",
+        lambda: _collect_markets_from_events(client, limit=limit),
+    )
+    _absorb(events_batch, events_ok)
+
+    # Full worldwide discovery via /events/keyset (paginated).
+    # `client` is only None in tests that stub the legacy collectors above.
+    if client is not None:
+        keyset_batch, keyset_ok = _safe_collect(
+            "events_keyset",
+            "events_keyset",
+            lambda: _collect_markets_from_gamma_discovery(client),
+        )
+        _absorb(keyset_batch, keyset_ok)
+
     merged = _dedupe_markets(weather_markets)
+
+    if not merged and collector_ok == 0 and collector_fail > 0:
+        raise WeatherDiscoveryError(
+            "Market discovery is temporarily unavailable. Please retry shortly."
+        )
 
     priority_added = 0
     if priority_cities:
-        batch = get_active_markets(client, limit=min(limit * 2, 100))
-        priority_candidates = _filter_priority_city_markets(batch, priority_cities)
-        existing_keys = {m.id or m.slug for m in merged}
-        for market in priority_candidates:
-            key = market.id or market.slug
-            if key and key not in existing_keys:
-                merged.append(market)
-                existing_keys.add(key)
-                priority_added += 1
+        batch, batch_ok = _safe_collect(
+            "priority_markets",
+            "markets",
+            lambda: get_active_markets(client, limit=min(limit * 2, 100)),
+        )
+        if batch_ok:
+            priority_candidates = _filter_priority_city_markets(batch, priority_cities)
+            existing_keys = {m.id or m.slug for m in merged}
+            for market in priority_candidates:
+                key = market.id or market.slug
+                if key and key not in existing_keys:
+                    merged.append(market)
+                    existing_keys.add(key)
+                    priority_added += 1
 
     # `limit` bounds parent events, not child brackets. Slicing the child list
     # previously let five 11-bracket events exhaust a limit of 50 and omit
     # lower-volume USA parent events before regional classification.
     core = _limit_parent_events(merged, limit)
-    final = _dedupe_markets(supplement_discovered_markets(client, core))
+    try:
+        final = _dedupe_markets(supplement_discovered_markets(client, core))
+    except Exception as exc:
+        logger.warning(
+            "Discovery supplement failed status=%s error=%s; using core markets",
+            _http_status(exc),
+            type(exc).__name__,
+        )
+        final = core
     return final, direct_market_count, priority_added
 
 

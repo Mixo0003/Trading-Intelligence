@@ -9,6 +9,7 @@ from app.config.settings import Settings
 from app.config.timezones import load_timezone
 from app.database.storage import get_recent_analyses, upsert_user
 from app.polymarket.client import PolymarketClient
+from app.polymarket.discovery_errors import WeatherDiscoveryError
 from app.region.session import get_user_scan_region
 from app.region.types import ScanRegion
 from app.signals.scan_service import (
@@ -47,6 +48,10 @@ FORECAST_VIEW_TIMEOUT_SECONDS = 5
 SCHEDULED_REPORTS_REGISTERED_KEY = "scheduled_reports_registered"
 SCAN_STARTED_MESSAGE = "🔍 Scan started…"
 SCAN_ALREADY_RUNNING_MESSAGE = "A scan for this region is already running."
+SCAN_DISCOVERY_UNAVAILABLE_MESSAGE = (
+    "❌ Market discovery is temporarily unavailable. Please retry shortly."
+)
+SCAN_FAILED_MESSAGE = "❌ Scan failed. Please retry shortly."
 
 
 def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
@@ -278,11 +283,18 @@ async def _start_region_scan(
                     text=chunk,
                     reply_markup=reply_markup if i == len(chunks) - 1 else None,
                 )
+        except WeatherDiscoveryError:
+            logger.warning("Background scan discovery unavailable for %s", scope)
+            await bot.send_message(
+                chat_id=chat_id,
+                text=SCAN_DISCOVERY_UNAVAILABLE_MESSAGE,
+                reply_markup=reply_markup,
+            )
         except Exception as exc:
             logger.exception("Background scan failed for %s: %s", scope, type(exc).__name__)
             await bot.send_message(
                 chat_id=chat_id,
-                text="❌ Scan failed due to a provider error. Please retry shortly.",
+                text=SCAN_FAILED_MESSAGE,
                 reply_markup=reply_markup,
             )
 

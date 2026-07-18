@@ -89,6 +89,18 @@ def _delta_fahrenheit(delta_c: float) -> float:
     return delta_c * 9.0 / 5.0
 
 
+def _try_provider(
+    label: str,
+    fetcher,
+) -> ProviderForecast | None:
+    """Optional provider fetch — exceptions never abort the ensemble."""
+    try:
+        return fetcher()
+    except Exception as exc:
+        logger.warning("Optional provider %s failed: %s", label, type(exc).__name__)
+        return None
+
+
 def _collect_independent_providers(
     settings: Settings,
     station: WeatherStation,
@@ -100,27 +112,42 @@ def _collect_independent_providers(
     seen_vendors: set[str] = set()
 
     if station.code.startswith("K"):
-        nws = fetch_nws_hourly(settings, station, target, event_type, timezone)
+        nws = _try_provider(
+            "NWS",
+            lambda: fetch_nws_hourly(settings, station, target, event_type, timezone),
+        )
         if nws is not None and "NWS" not in seen_vendors:
             providers.append(nws)
             seen_vendors.add("NWS")
 
-    weather_daily = fetch_weather_com_daily(station, target, event_type, timezone)
+    weather_daily = _try_provider(
+        "Weather.com",
+        lambda: fetch_weather_com_daily(station, target, event_type, timezone),
+    )
     if weather_daily is not None and "Weather.com" not in seen_vendors:
         providers.append(weather_daily)
         seen_vendors.add("Weather.com")
 
-    met = fetch_met_norway(station, target, event_type, timezone)
+    met = _try_provider(
+        "MET Norway",
+        lambda: fetch_met_norway(station, target, event_type, timezone),
+    )
     if met is not None and "MET Norway" not in seen_vendors:
         providers.append(met)
         seen_vendors.add("MET Norway")
 
-    ecmwf = fetch_ecmwf_ifs(station, target, event_type, timezone)
+    ecmwf = _try_provider(
+        "ECMWF IFS",
+        lambda: fetch_ecmwf_ifs(station, target, event_type, timezone),
+    )
     if ecmwf is not None and "ECMWF IFS" not in seen_vendors:
         providers.append(ecmwf)
         seen_vendors.add("ECMWF IFS")
 
-    icon = fetch_dwd_icon_global(station, target, event_type, timezone)
+    icon = _try_provider(
+        "DWD ICON Global",
+        lambda: fetch_dwd_icon_global(station, target, event_type, timezone),
+    )
     if icon is not None and "DWD ICON Global" not in seen_vendors:
         providers.append(icon)
         seen_vendors.add("DWD ICON Global")
