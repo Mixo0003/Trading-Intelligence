@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.config.settings import Settings
 from app.health import storage as health_storage
 from app.health.models import OverallHealth
-from app.health.sanitize import sanitize_config_summary, sanitize_mapping, sanitize_path
+from app.health.sanitize import sanitize_config_summary, sanitize_mapping
 from app.health.self_test import run_self_test
 
 
@@ -117,15 +117,45 @@ def format_db_health(settings: Settings, overall: OverallHealth) -> str:
         lines.append(f"SQLite: {sqlite_c.status} — {sqlite_c.detail}")
         metrics = sanitize_mapping(sqlite_c.metrics)
         if "database" in metrics:
-            lines.append(f"DB file: {metrics['database']}")
+            lines.append(f"DB: {metrics['database']}")
         if "table_count" in metrics:
             lines.append(f"Tables: {metrics['table_count']}")
     if infra:
         lines.append(f"Infrastructure: {infra.status} — {infra.detail}")
-        disk = sanitize_mapping(infra.metrics).get("disk_free_mb")
+        metrics = sanitize_mapping(infra.metrics)
+        level = metrics.get("storage_level")
+        if level is not None:
+            lines.append(f"Storage level: {level}")
+        disk = metrics.get("disk_free_mb")
         if disk is not None:
             lines.append(f"Disk free MB: {disk}")
-    lines.append(f"Configured DB: {sanitize_path(settings.database_path)}")
+        free_pct = metrics.get("disk_free_percent")
+        if free_pct is not None:
+            lines.append(f"Disk free %: {free_pct}")
+        db_size = metrics.get("database_size_bytes")
+        if db_size is not None:
+            lines.append(f"DB size bytes: {db_size}")
+        journal_mode = metrics.get("journal_mode")
+        if journal_mode:
+            lines.append(f"Journal mode: {journal_mode}")
+        path_labels = metrics.get("path_labels")
+        if isinstance(path_labels, dict):
+            lines.append(
+                "Paths: "
+                + ", ".join(f"{k}={v}" for k, v in path_labels.items())
+            )
+        row_counts = metrics.get("table_row_counts")
+        if isinstance(row_counts, dict) and row_counts:
+            highlight = (
+                "processed_copy_events",
+                "copy_trade_events",
+                "health_checks",
+                "copy_alert_deliveries",
+            )
+            for name in highlight:
+                if name in row_counts:
+                    lines.append(f"{name}: {row_counts[name]}")
+    lines.append("Configured DB: live_database")
     return "\n".join(lines)
 
 

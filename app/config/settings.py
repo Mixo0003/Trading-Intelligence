@@ -8,11 +8,21 @@ from app.config.constants import (
     DEFAULT_DB_PATH,
     DEFAULT_LANGUAGE,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_STORAGE_CACHE_DIR,
+    DEFAULT_STORAGE_LOGS_DIR,
     POLYMARKET_CLOB_BASE_URL,
     POLYMARKET_DATA_BASE_URL,
     POLYMARKET_GAMMA_BASE_URL,
     PROJECT_NAME,
     PROJECT_VERSION,
+    STORAGE_CRITICAL_DB_GROWTH_BYTES,
+    STORAGE_CRITICAL_FREE_BYTES,
+    STORAGE_CRITICAL_FREE_PERCENT,
+    STORAGE_CRITICAL_WAL_BYTES,
+    STORAGE_DEGRADED_DB_GROWTH_BYTES,
+    STORAGE_DEGRADED_FREE_BYTES,
+    STORAGE_DEGRADED_FREE_PERCENT,
+    STORAGE_DEGRADED_WAL_BYTES,
     WEATHER_GOV_BASE_URL,
 )
 
@@ -109,6 +119,17 @@ class Settings:
     health_recovery_threshold: int
     health_job_stale_multiplier: float
     health_ai_explainer_enabled: bool
+
+    storage_logs_dir: str
+    storage_cache_dir: str
+    storage_degraded_free_bytes: int
+    storage_critical_free_bytes: int
+    storage_degraded_free_percent: float
+    storage_critical_free_percent: float
+    storage_degraded_db_growth_bytes: int
+    storage_critical_db_growth_bytes: int
+    storage_degraded_wal_bytes: int
+    storage_critical_wal_bytes: int
 
     report_timezone: str
     report_times: list[str]
@@ -226,5 +247,45 @@ def load_settings() -> Settings:
         health_job_stale_multiplier=max(1.0, float(os.getenv("HEALTH_JOB_STALE_MULTIPLIER", "2"))),
         health_ai_explainer_enabled=_parse_bool(
             os.getenv("HEALTH_AI_EXPLAINER_ENABLED", "false")
+        ),
+        storage_logs_dir=os.getenv("STORAGE_LOGS_DIR", DEFAULT_STORAGE_LOGS_DIR).strip(),
+        storage_cache_dir=os.getenv("STORAGE_CACHE_DIR", DEFAULT_STORAGE_CACHE_DIR).strip(),
+        storage_degraded_free_bytes=max(
+            1, int(os.getenv("STORAGE_DEGRADED_FREE_BYTES", str(STORAGE_DEGRADED_FREE_BYTES)))
+        ),
+        storage_critical_free_bytes=max(
+            1, int(os.getenv("STORAGE_CRITICAL_FREE_BYTES", str(STORAGE_CRITICAL_FREE_BYTES)))
+        ),
+        storage_degraded_free_percent=max(
+            0.0,
+            float(os.getenv("STORAGE_DEGRADED_FREE_PERCENT", str(STORAGE_DEGRADED_FREE_PERCENT))),
+        ),
+        storage_critical_free_percent=max(
+            0.0,
+            float(os.getenv("STORAGE_CRITICAL_FREE_PERCENT", str(STORAGE_CRITICAL_FREE_PERCENT))),
+        ),
+        storage_degraded_db_growth_bytes=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_DEGRADED_DB_GROWTH_BYTES",
+                    str(STORAGE_DEGRADED_DB_GROWTH_BYTES),
+                )
+            ),
+        ),
+        storage_critical_db_growth_bytes=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_CRITICAL_DB_GROWTH_BYTES",
+                    str(STORAGE_CRITICAL_DB_GROWTH_BYTES),
+                )
+            ),
+        ),
+        storage_degraded_wal_bytes=max(
+            1, int(os.getenv("STORAGE_DEGRADED_WAL_BYTES", str(STORAGE_DEGRADED_WAL_BYTES)))
+        ),
+        storage_critical_wal_bytes=max(
+            1, int(os.getenv("STORAGE_CRITICAL_WAL_BYTES", str(STORAGE_CRITICAL_WAL_BYTES)))
         ),
     )

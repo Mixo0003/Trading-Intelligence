@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -15,7 +15,8 @@ from app.database.storage import get_connection
 from app.health import storage as health_storage
 from app.health.aggregator import aggregate_overall
 from app.health.models import ComponentStatus, OverallHealth
-from app.health.sanitize import sanitize_config_summary, sanitize_path
+from app.health.sanitize import logical_path_label, sanitize_config_summary, sanitize_path
+from app.health.storage_metrics import collect_storage_metrics
 from app.health.thresholds import (
     apply_consecutive_thresholds,
     copy_poll_stale_seconds,
@@ -380,7 +381,8 @@ def probe_sqlite(settings: Settings) -> ComponentStatus:
         }
         missing = sorted(required - tables)
         metrics = {
-            "database": sanitize_path(path),
+            "database": logical_path_label("live_database"),
+            "database_basename": sanitize_path(path),
             "table_count": len(tables),
             "missing": missing,
         }
@@ -412,40 +414,49 @@ def probe_sqlite(settings: Settings) -> ComponentStatus:
 
 
 def probe_infrastructure(settings: Settings) -> ComponentStatus:
-    db_path = Path(settings.database_path)
-    disk_free_mb = None
-    try:
-        usage = os.statvfs(db_path.parent if db_path.parent.exists() else Path("."))  # type: ignore[attr-defined]
-        disk_free_mb = (usage.f_bavail * usage.f_frsize) / (1024 * 1024)
-    except (AttributeError, OSError):
-        # Windows: shutil.disk_usage
-        try:
-            import shutil
+    prior = health_storage.get_component_state(settings, "infrastructure")
+    prior_metrics = None
+    if prior is not None:
+        raw = prior["metrics_json"] if "metrics_json" in prior.keys() else None
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    prior_metrics = parsed
+            except json.JSONDecodeError:
+                prior_metrics = None
 
-            target = db_path.parent if db_path.parent.exists() else Path(".")
-            disk_free_mb = shutil.disk_usage(target).free / (1024 * 1024)
-        except OSError:
-            disk_free_mb = None
-
+    storage = collect_storage_metrics(settings, prior_metrics=prior_metrics)
     cfg = sanitize_config_summary(settings)
     metrics = {
-        "disk_free_mb": round(disk_free_mb, 1) if disk_free_mb is not None else None,
+        **storage.as_sanitized_dict(),
         "config": cfg,
         "cache_note": "scan_snapshots bounded per user/region",
     }
-    if disk_free_mb is not None and disk_free_mb < 100:
+
+    if storage.level == "CRITICAL":
         return _update_state(
             settings,
             "infrastructure",
             probe_ok=False,
-            detail=f"Low disk: {disk_free_mb:.0f} MB free",
+            hard_down=True,
+            detail=storage.detail,
+            metrics=metrics,
+        )
+    if storage.level == "DEGRADED":
+        return _update_state(
+            settings,
+            "infrastructure",
+            probe_ok=False,
+            forced_status="DEGRADED",
+            detail=storage.detail,
             metrics=metrics,
         )
     return _update_state(
         settings,
         "infrastructure",
         probe_ok=True,
-        detail="Infrastructure OK",
+        detail=storage.detail,
         metrics=metrics,
     )
 

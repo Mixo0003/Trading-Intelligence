@@ -32,6 +32,29 @@ def sanitize_path(path: str | Path | None) -> str:
     return p.name or str(p)
 
 
+_LOGICAL_PATH_LABELS = frozenset({"live_database", "logs", "cache", "backup"})
+
+
+def logical_path_label(role: str) -> str:
+    """Return a stable logical label for Telegram/logs — never absolute paths."""
+    key = str(role or "").strip().lower()
+    if key in _LOGICAL_PATH_LABELS:
+        return key
+    return "path"
+
+
+def assert_no_private_path(value: str) -> bool:
+    """True when value does not look like an absolute private filesystem path."""
+    text = str(value or "")
+    if not text or text in {"(unset)", "live_database", "logs", "cache", "backup", "path"}:
+        return True
+    if ":\\" in text or text.startswith("\\\\") or text.startswith("/home/") or text.startswith("/Users/"):
+        return False
+    if text.startswith("/") and len(text) > 1:
+        return False
+    return True
+
+
 def sanitize_mapping(data: dict[str, Any] | None) -> dict[str, Any]:
     if not data:
         return {}
@@ -58,7 +81,13 @@ def sanitize_config_summary(settings) -> dict[str, Any]:
         "health_monitor_enabled": settings.health_monitor_enabled,
         "health_alerts_enabled": settings.health_alerts_enabled,
         "admin_count": len(settings.admin_ids),
-        "database": sanitize_path(settings.database_path),
+        "database": logical_path_label("live_database"),
+        "storage_logs": (
+            logical_path_label("logs") if getattr(settings, "storage_logs_dir", "") else "(unset)"
+        ),
+        "storage_cache": (
+            logical_path_label("cache") if getattr(settings, "storage_cache_dir", "") else "(unset)"
+        ),
         "copy_poll_interval_seconds": settings.copy_poll_interval_seconds,
         "health_check_interval_seconds": settings.health_check_interval_seconds,
         "forecast_min_providers": settings.forecast_min_providers,

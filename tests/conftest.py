@@ -58,6 +58,16 @@ def make_test_settings(**overrides) -> Settings:
         health_recovery_threshold=2,
         health_job_stale_multiplier=2.0,
         health_ai_explainer_enabled=False,
+        storage_logs_dir="logs",
+        storage_cache_dir="",
+        storage_degraded_free_bytes=1024 * 1024 * 1024,
+        storage_critical_free_bytes=256 * 1024 * 1024,
+        storage_degraded_free_percent=10.0,
+        storage_critical_free_percent=5.0,
+        storage_degraded_db_growth_bytes=512 * 1024 * 1024,
+        storage_critical_db_growth_bytes=2 * 1024 * 1024 * 1024,
+        storage_degraded_wal_bytes=64 * 1024 * 1024,
+        storage_critical_wal_bytes=256 * 1024 * 1024,
     )
     base.update(overrides)
     return Settings(**base)
