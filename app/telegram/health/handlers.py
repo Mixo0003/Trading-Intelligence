@@ -17,6 +17,7 @@ from app.telegram.health.buttons import (
     CB_HEALTH_REBUILD_BASELINES,
     CB_HEALTH_REBUILD_CANCEL,
     CB_HEALTH_REBUILD_CONFIRM,
+    CB_HEALTH_RETENTION,
     CB_HEALTH_SELFTEST,
     CB_HEALTH_SETTINGS,
     CB_HEALTH_SUMMARY,
@@ -36,6 +37,7 @@ from app.telegram.health.formatting import (
     format_jobs_health,
     format_rebuild_baselines_confirm,
     format_rebuild_baselines_result,
+    format_retention_preview,
     format_self_test,
     format_weather_health,
 )
@@ -119,6 +121,9 @@ async def handle_health_callback(
         text = format_jobs_health(settings)
     elif data == CB_HEALTH_DB:
         text = format_db_health(settings, overall)
+    elif data == CB_HEALTH_RETENTION:
+        # Dedicated admin dry-run; do not rely on overall probe side effects.
+        text = format_retention_preview(settings)
     elif data == CB_HEALTH_INCIDENTS:
         text = format_incidents(settings)
     elif data == CB_HEALTH_SELFTEST:
