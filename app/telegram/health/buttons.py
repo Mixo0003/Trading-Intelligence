@@ -24,7 +24,28 @@ CB_HEALTH_REBUILD_BASELINES = "health:rebuild_baselines"
 CB_HEALTH_REBUILD_CONFIRM = "health:rebuild_confirm"
 CB_HEALTH_REBUILD_CANCEL = "health:rebuild_cancel"
 
+# Phase 5 Storage UX
+CB_HEALTH_STORAGE = "health:storage"
+CB_HEALTH_STORAGE_METRICS = "health:storage_metrics"
+CB_HEALTH_STORAGE_BACKUP = "health:storage_backup"
+CB_HEALTH_STORAGE_BACKUP_CREATE = "health:storage_backup_create"
+CB_HEALTH_STORAGE_BACKUP_CONFIRM = "health:storage_backup_confirm"
+CB_HEALTH_STORAGE_BACKUP_CANCEL = "health:storage_backup_cancel"
+CB_HEALTH_STORAGE_CLEANUP_PREVIEW = "health:storage_cleanup_preview"
+CB_HEALTH_STORAGE_RETENTION_PREVIEW = "health:storage_retention_preview"
+CB_HEALTH_STORAGE_CLEANUP_RUN = "health:storage_cleanup_run"
+CB_HEALTH_STORAGE_CLEANUP_CONFIRM = "health:storage_cleanup_confirm"
+CB_HEALTH_STORAGE_CLEANUP_CANCEL = "health:storage_cleanup_cancel"
+CB_HEALTH_STORAGE_PRUNE_RUN = "health:storage_prune_run"
+CB_HEALTH_STORAGE_PRUNE_CONFIRM = "health:storage_prune_confirm"
+CB_HEALTH_STORAGE_PRUNE_CANCEL = "health:storage_prune_cancel"
+CB_HEALTH_STORAGE_HISTORY = "health:storage_history"
+CB_HEALTH_STORAGE_REFRESH = "health:storage_refresh"
+CB_HEALTH_STORAGE_RETENTION_PAGE = "health:storage_ret_page"
+CB_HEALTH_STORAGE_HISTORY_PAGE = "health:storage_hist_page"
+
 HEALTH_MENU_TEXT = "🩺 System Health\nAdmin diagnostics — choose a section:"
+STORAGE_MENU_TITLE = "📦 Storage"
 
 HEALTH_CALLBACKS = frozenset(
     {
@@ -45,6 +66,24 @@ HEALTH_CALLBACKS = frozenset(
         CB_HEALTH_REBUILD_BASELINES,
         CB_HEALTH_REBUILD_CONFIRM,
         CB_HEALTH_REBUILD_CANCEL,
+        CB_HEALTH_STORAGE,
+        CB_HEALTH_STORAGE_METRICS,
+        CB_HEALTH_STORAGE_BACKUP,
+        CB_HEALTH_STORAGE_BACKUP_CREATE,
+        CB_HEALTH_STORAGE_BACKUP_CONFIRM,
+        CB_HEALTH_STORAGE_BACKUP_CANCEL,
+        CB_HEALTH_STORAGE_CLEANUP_PREVIEW,
+        CB_HEALTH_STORAGE_RETENTION_PREVIEW,
+        CB_HEALTH_STORAGE_CLEANUP_RUN,
+        CB_HEALTH_STORAGE_CLEANUP_CONFIRM,
+        CB_HEALTH_STORAGE_CLEANUP_CANCEL,
+        CB_HEALTH_STORAGE_PRUNE_RUN,
+        CB_HEALTH_STORAGE_PRUNE_CONFIRM,
+        CB_HEALTH_STORAGE_PRUNE_CANCEL,
+        CB_HEALTH_STORAGE_HISTORY,
+        CB_HEALTH_STORAGE_REFRESH,
+        CB_HEALTH_STORAGE_RETENTION_PAGE,
+        CB_HEALTH_STORAGE_HISTORY_PAGE,
     }
 )
 
@@ -61,6 +100,7 @@ def health_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("⏱ Jobs & Scheduler", callback_data=CB_HEALTH_JOBS),
                 InlineKeyboardButton("🗄 Database & Cache", callback_data=CB_HEALTH_DB),
             ],
+            [InlineKeyboardButton("📦 Storage", callback_data=CB_HEALTH_STORAGE)],
             [
                 InlineKeyboardButton(
                     "📋 Retention Dry-Run", callback_data=CB_HEALTH_RETENTION
@@ -77,11 +117,66 @@ def health_inline_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def storage_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📈 Storage Metrics", callback_data=CB_HEALTH_STORAGE_METRICS)],
+            [
+                InlineKeyboardButton("💾 Backup Status", callback_data=CB_HEALTH_STORAGE_BACKUP),
+                InlineKeyboardButton("🛡 Create Backup", callback_data=CB_HEALTH_STORAGE_BACKUP_CREATE),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🧹 File Cleanup Preview",
+                    callback_data=CB_HEALTH_STORAGE_CLEANUP_PREVIEW,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 Retention Preview",
+                    callback_data=CB_HEALTH_STORAGE_RETENTION_PREVIEW,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 Run Safe File Cleanup",
+                    callback_data=CB_HEALTH_STORAGE_CLEANUP_RUN,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✂ Run Retention Batch",
+                    callback_data=CB_HEALTH_STORAGE_PRUNE_RUN,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📜 Maintenance History",
+                    callback_data=CB_HEALTH_STORAGE_HISTORY,
+                )
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data=CB_HEALTH_STORAGE_REFRESH),
+                InlineKeyboardButton("⬅️ Back to System Health", callback_data=CB_HEALTH),
+            ],
+        ]
+    )
+
+
 def health_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
             [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def storage_back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("⬅️ Storage", callback_data=CB_HEALTH_STORAGE)],
+            [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
         ]
     )
 
@@ -117,6 +212,66 @@ def backup_confirm_keyboard() -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
+        ]
+    )
+
+
+def storage_backup_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Backup",
+                    callback_data=CB_HEALTH_STORAGE_BACKUP_CONFIRM,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data=CB_HEALTH_STORAGE_BACKUP_CANCEL,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Storage", callback_data=CB_HEALTH_STORAGE)],
+        ]
+    )
+
+
+def storage_cleanup_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Cleanup",
+                    callback_data=CB_HEALTH_STORAGE_CLEANUP_CONFIRM,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data=CB_HEALTH_STORAGE_CLEANUP_CANCEL,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Storage", callback_data=CB_HEALTH_STORAGE)],
+        ]
+    )
+
+
+def storage_prune_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Retention Batch",
+                    callback_data=CB_HEALTH_STORAGE_PRUNE_CONFIRM,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data=CB_HEALTH_STORAGE_PRUNE_CANCEL,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Storage", callback_data=CB_HEALTH_STORAGE)],
         ]
     )
 

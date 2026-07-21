@@ -56,4 +56,26 @@ Admin-only, deduplicated by `(component, incident_type, fingerprint)`:
 
 ## Telegram UX
 
-Edit-in-place English menu under **System Health**: Summary, Weather Providers, Copy Intelligence, Jobs & Scheduler, Database & Cache, Recent Incidents, Run Self-Test, Health Settings, Main Menu.
+Edit-in-place English menu under **System Health**: Summary, Weather Providers, Copy Intelligence, Jobs & Scheduler, Database & Cache, **Storage**, Retention Dry-Run, Backup Status, Recent Incidents, Run Self-Test, Health Settings, Main Menu.
+
+### Storage (admin-only, V2.1.1 Phase 5)
+
+Compact Storage section with:
+
+- Storage Metrics, Backup Status, Create Backup
+- File Cleanup Preview, Retention Preview
+- Run Safe File Cleanup, Run Retention Batch
+- Maintenance History, Refresh, Back to System Health
+
+Safe actions require explicit confirmation tokens bound to admin identity, database identity, and preview fingerprints. Defaults keep cleanup/pruning disabled and dry-run enabled. Destructive handlers never bypass service-layer gates. Paths, secrets, wallets, Telegram IDs, raw SQL, and message contents are never shown.
+
+### Storage alerts
+
+Admin-only, watermarked transitions (restart-safe):
+
+- storage HEALTHY → DEGRADED / DEGRADED → CRITICAL / recovery → HEALTHY
+- backup VERIFIED → FAILED; verified backup too old
+- retention gate READY → BLOCKED
+- cleanup/pruning failure
+
+Component recovery and overall recovery are deduplicated for the same underlying transition.

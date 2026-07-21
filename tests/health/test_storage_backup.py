@@ -395,7 +395,9 @@ class TestNoShutilCopyPathInModule:
         from app.storage import backup as mod
 
         src = inspect.getsource(mod.create_online_backup)
-        assert "shutil.copy(" not in src
-        assert "shutil.copy2(" not in src
-        assert "shutil.copyfile(" not in src
-        assert ".backup(" in src
+        inner = inspect.getsource(mod._create_online_backup_inner)
+        combined = src + "\n" + inner
+        assert "shutil.copy(" not in combined
+        assert "shutil.copy2(" not in combined
+        assert "shutil.copyfile(" not in combined
+        assert ".backup(" in combined
