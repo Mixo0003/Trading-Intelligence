@@ -9,6 +9,7 @@ from app.config.constants import (
     DEFAULT_LANGUAGE,
     DEFAULT_LOG_LEVEL,
     DEFAULT_STORAGE_ACTIVE_LOG_NAME,
+    DEFAULT_STORAGE_BACKUP_DIR,
     DEFAULT_STORAGE_CACHE_DIR,
     DEFAULT_STORAGE_LOGS_DIR,
     DEFAULT_STORAGE_PROOF_DIR,
@@ -17,6 +18,12 @@ from app.config.constants import (
     POLYMARKET_GAMMA_BASE_URL,
     PROJECT_NAME,
     PROJECT_VERSION,
+    STORAGE_BACKUP_ENABLED,
+    STORAGE_BACKUP_LABEL,
+    STORAGE_BACKUP_LOCK_TTL_SECONDS,
+    STORAGE_BACKUP_MAX_AGE_DAYS,
+    STORAGE_BACKUP_MAX_COUNT,
+    STORAGE_BACKUP_MIN_FREE_BYTES,
     STORAGE_CACHE_MIN_AGE_SECONDS,
     STORAGE_CLEANUP_DRY_RUN,
     STORAGE_CLEANUP_ENABLED,
@@ -158,6 +165,13 @@ class Settings:
     storage_critical_db_growth_bytes: int
     storage_degraded_wal_bytes: int
     storage_critical_wal_bytes: int
+    storage_backup_dir: str
+    storage_backup_enabled: bool
+    storage_backup_max_count: int
+    storage_backup_max_age_days: int
+    storage_backup_lock_ttl_seconds: int
+    storage_backup_min_free_bytes: int
+    storage_backup_label: str
 
     report_timezone: str
     report_times: list[str]
@@ -380,5 +394,37 @@ def load_settings() -> Settings:
         ),
         storage_critical_wal_bytes=max(
             1, int(os.getenv("STORAGE_CRITICAL_WAL_BYTES", str(STORAGE_CRITICAL_WAL_BYTES)))
+        ),
+        storage_backup_dir=os.getenv("STORAGE_BACKUP_DIR", DEFAULT_STORAGE_BACKUP_DIR).strip(),
+        storage_backup_enabled=_parse_bool(
+            os.getenv("STORAGE_BACKUP_ENABLED", str(STORAGE_BACKUP_ENABLED).lower()),
+            default=STORAGE_BACKUP_ENABLED,
+        ),
+        storage_backup_max_count=max(
+            1, int(os.getenv("STORAGE_BACKUP_MAX_COUNT", str(STORAGE_BACKUP_MAX_COUNT)))
+        ),
+        storage_backup_max_age_days=max(
+            1, int(os.getenv("STORAGE_BACKUP_MAX_AGE_DAYS", str(STORAGE_BACKUP_MAX_AGE_DAYS)))
+        ),
+        storage_backup_lock_ttl_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_BACKUP_LOCK_TTL_SECONDS",
+                    str(STORAGE_BACKUP_LOCK_TTL_SECONDS),
+                )
+            ),
+        ),
+        storage_backup_min_free_bytes=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_BACKUP_MIN_FREE_BYTES",
+                    str(STORAGE_BACKUP_MIN_FREE_BYTES),
+                )
+            ),
+        ),
+        storage_backup_label=(
+            os.getenv("STORAGE_BACKUP_LABEL", STORAGE_BACKUP_LABEL).strip() or STORAGE_BACKUP_LABEL
         ),
     )

@@ -22,6 +22,7 @@ from app.health.thresholds import (
     copy_poll_stale_seconds,
     job_stale_seconds,
 )
+from app.storage.backup import backup_metrics_for_health
 from app.storage.cleanup import cleanup_metrics_for_health
 
 logger = logging.getLogger(__name__)
@@ -429,10 +430,12 @@ def probe_infrastructure(settings: Settings) -> ComponentStatus:
 
     storage = collect_storage_metrics(settings, prior_metrics=prior_metrics)
     cleanup_metrics = cleanup_metrics_for_health(settings)
+    backup_metrics = backup_metrics_for_health(settings)
     cfg = sanitize_config_summary(settings)
     metrics = {
         **storage.as_sanitized_dict(),
         **cleanup_metrics,
+        **backup_metrics,
         "config": cfg,
         "cache_note": "scan_snapshots bounded per user/region",
         "retention_preview": "admin dry-run available via System Health",

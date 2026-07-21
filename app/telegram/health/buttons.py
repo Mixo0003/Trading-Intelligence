@@ -16,6 +16,10 @@ CB_HEALTH_INCIDENTS = "health:incidents"
 CB_HEALTH_SELFTEST = "health:selftest"
 CB_HEALTH_SETTINGS = "health:settings"
 CB_HEALTH_RETENTION = "health:retention"
+CB_HEALTH_BACKUP = "health:backup"
+CB_HEALTH_BACKUP_CREATE = "health:backup_create"
+CB_HEALTH_BACKUP_CONFIRM = "health:backup_confirm"
+CB_HEALTH_BACKUP_CANCEL = "health:backup_cancel"
 CB_HEALTH_REBUILD_BASELINES = "health:rebuild_baselines"
 CB_HEALTH_REBUILD_CONFIRM = "health:rebuild_confirm"
 CB_HEALTH_REBUILD_CANCEL = "health:rebuild_cancel"
@@ -34,6 +38,10 @@ HEALTH_CALLBACKS = frozenset(
         CB_HEALTH_SELFTEST,
         CB_HEALTH_SETTINGS,
         CB_HEALTH_RETENTION,
+        CB_HEALTH_BACKUP,
+        CB_HEALTH_BACKUP_CREATE,
+        CB_HEALTH_BACKUP_CONFIRM,
+        CB_HEALTH_BACKUP_CANCEL,
         CB_HEALTH_REBUILD_BASELINES,
         CB_HEALTH_REBUILD_CONFIRM,
         CB_HEALTH_REBUILD_CANCEL,
@@ -57,6 +65,7 @@ def health_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     "📋 Retention Dry-Run", callback_data=CB_HEALTH_RETENTION
                 ),
+                InlineKeyboardButton("💾 Backup Status", callback_data=CB_HEALTH_BACKUP),
             ],
             [
                 InlineKeyboardButton("🚨 Recent Incidents", callback_data=CB_HEALTH_INCIDENTS),
@@ -73,6 +82,41 @@ def health_back_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
             [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def backup_health_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "💾 Create Backup",
+                    callback_data=CB_HEALTH_BACKUP_CREATE,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
+            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def backup_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Backup",
+                    callback_data=CB_HEALTH_BACKUP_CONFIRM,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data=CB_HEALTH_BACKUP_CANCEL,
+                )
+            ],
+            [InlineKeyboardButton("⬅️ System Health", callback_data=CB_HEALTH)],
         ]
     )
 

@@ -10,6 +10,10 @@ from app.health.monitor import run_health_check
 from app.telegram.auth import require_admin
 from app.telegram.health.buttons import (
     CB_HEALTH,
+    CB_HEALTH_BACKUP,
+    CB_HEALTH_BACKUP_CANCEL,
+    CB_HEALTH_BACKUP_CONFIRM,
+    CB_HEALTH_BACKUP_CREATE,
     CB_HEALTH_COPY,
     CB_HEALTH_DB,
     CB_HEALTH_INCIDENTS,
@@ -23,12 +27,17 @@ from app.telegram.health.buttons import (
     CB_HEALTH_SUMMARY,
     CB_HEALTH_WEATHER,
     HEALTH_MENU_TEXT,
+    backup_confirm_keyboard,
+    backup_health_keyboard,
     copy_health_keyboard,
     health_back_keyboard,
     health_inline_keyboard,
     rebuild_baselines_confirm_keyboard,
 )
 from app.telegram.health.formatting import (
+    format_backup_confirm,
+    format_backup_result,
+    format_backup_status,
     format_copy_health,
     format_db_health,
     format_health_settings,
@@ -42,6 +51,8 @@ from app.telegram.health.formatting import (
     format_weather_health,
 )
 from app.telegram.nav import edit_or_reply
+
+_BACKUP_IN_FLIGHT_KEY = "health_backup_in_flight"
 
 
 def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
@@ -104,6 +115,59 @@ async def handle_health_callback(
             format_rebuild_baselines_result(result),
             reply_markup=copy_health_keyboard(),
         )
+        return
+
+    if data == CB_HEALTH_BACKUP:
+        await edit_or_reply(
+            update,
+            format_backup_status(settings),
+            reply_markup=backup_health_keyboard(),
+        )
+        return
+
+    if data == CB_HEALTH_BACKUP_CREATE:
+        if not await require_admin(update, settings, action="cb:health_backup_create"):
+            return
+        await edit_or_reply(
+            update,
+            format_backup_confirm(settings),
+            reply_markup=backup_confirm_keyboard(),
+        )
+        return
+
+    if data == CB_HEALTH_BACKUP_CANCEL:
+        if not await require_admin(update, settings, action="cb:health_backup_cancel"):
+            return
+        await edit_or_reply(
+            update,
+            format_backup_status(settings),
+            reply_markup=backup_health_keyboard(),
+        )
+        return
+
+    if data == CB_HEALTH_BACKUP_CONFIRM:
+        if not await require_admin(update, settings, action="cb:health_backup_confirm"):
+            return
+        # Prevent concurrent backups from repeated taps (in addition to DB lock).
+        if context.application.bot_data.get(_BACKUP_IN_FLIGHT_KEY):
+            await edit_or_reply(
+                update,
+                "💾 Backup Result\nStatus: BUSY\nDetail: backup already in progress",
+                reply_markup=backup_health_keyboard(),
+            )
+            return
+        context.application.bot_data[_BACKUP_IN_FLIGHT_KEY] = True
+        try:
+            from app.storage.backup import create_online_backup
+
+            report = create_online_backup(settings)
+            await edit_or_reply(
+                update,
+                format_backup_result(report),
+                reply_markup=backup_health_keyboard(),
+            )
+        finally:
+            context.application.bot_data[_BACKUP_IN_FLIGHT_KEY] = False
         return
 
     overall = run_health_check(settings, bot_data=context.application.bot_data)

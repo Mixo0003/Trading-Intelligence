@@ -101,8 +101,14 @@ def sanitize_config_summary(settings) -> dict[str, Any]:
             if getattr(settings, "storage_proof_dir", "")
             else "(unset)"
         ),
+        "storage_backup": (
+            logical_path_label("backup")
+            if getattr(settings, "storage_backup_dir", "")
+            else "(unset)"
+        ),
         "storage_cleanup_enabled": bool(getattr(settings, "storage_cleanup_enabled", False)),
         "storage_cleanup_dry_run": bool(getattr(settings, "storage_cleanup_dry_run", True)),
+        "storage_backup_enabled": bool(getattr(settings, "storage_backup_enabled", False)),
         "copy_poll_interval_seconds": settings.copy_poll_interval_seconds,
         "health_check_interval_seconds": settings.health_check_interval_seconds,
         "forecast_min_providers": settings.forecast_min_providers,

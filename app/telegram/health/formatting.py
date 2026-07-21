@@ -170,7 +170,85 @@ def format_db_health(settings: Settings, overall: OverallHealth) -> str:
                 f"{metrics.get('cleanup_enabled', False)}; "
                 f"dry-run: {metrics.get('cleanup_dry_run', True)}"
             )
+        if "backup_configured" in metrics:
+            lines.append(
+                "Backup configured: "
+                + ("yes" if metrics.get("backup_configured") else "no")
+            )
+        if metrics.get("backup_status") is not None:
+            lines.append(f"Backup status: {metrics.get('backup_status')}")
+        if metrics.get("backup_label") and metrics.get("backup_label") != "(none)":
+            lines.append(f"Backup label: {metrics.get('backup_label')}")
+        if metrics.get("backup_integrity") is not None:
+            lines.append(f"Backup integrity: {metrics.get('backup_integrity')}")
+        if metrics.get("backup_expired_candidates") is not None:
+            lines.append(
+                f"Expired backup candidates: {metrics.get('backup_expired_candidates')}"
+            )
+        if metrics.get("backup_retention_gate") is not None:
+            lines.append(f"Retention gate: {metrics.get('backup_retention_gate')}")
     lines.append("Configured DB: live_database")
+    return "\n".join(lines)
+
+
+def format_backup_status(settings: Settings) -> str:
+    """Admin-only backup status. Never exposes absolute paths."""
+    from app.storage.backup import backup_status
+
+    report = backup_status(settings)
+    lines = [
+        "💾 Online Backup Status",
+        "Read-only status — no restore or prune.",
+        f"Configured: {'yes' if report.configured else 'no'}",
+        f"Status: {report.status}",
+        f"Detail: {report.detail}",
+    ]
+    if report.backup_label:
+        lines.append(f"Label: {report.backup_label}")
+    if report.backup_size_bytes is not None:
+        lines.append(f"Size bytes: {report.backup_size_bytes}")
+    if report.integrity_result:
+        lines.append(f"Integrity: {report.integrity_result}")
+    if report.created_at:
+        lines.append(f"Verified at: {report.created_at}")
+    if report.age_seconds is not None:
+        lines.append(f"Age seconds: {report.age_seconds}")
+    lines.append(f"Expired candidates (dry-run): {report.expired_candidate_count}")
+    lines.append(f"Future retention gate: {report.future_retention_gate}")
+    lines.append("Path label: backup")
+    lines.append("No absolute paths, usernames, or secrets shown.")
+    return "\n".join(lines)
+
+
+def format_backup_confirm(settings: Settings) -> str:
+    configured = bool(getattr(settings, "storage_backup_dir", "") or "")
+    return "\n".join(
+        [
+            "💾 Create Online Backup",
+            "This creates a verified SQLite online backup only.",
+            "No cleanup, restore, prune, or VACUUM.",
+            f"Backup directory configured: {'yes' if configured else 'no'}",
+            "Confirm to continue.",
+        ]
+    )
+
+
+def format_backup_result(report) -> str:
+    lines = [
+        "💾 Backup Result",
+        f"Status: {report.status}",
+        f"Detail: {report.detail}",
+    ]
+    if report.backup_label:
+        lines.append(f"Label: {report.backup_label}")
+    if report.backup_size_bytes is not None:
+        lines.append(f"Size bytes: {report.backup_size_bytes}")
+    if report.integrity_result:
+        lines.append(f"Integrity: {report.integrity_result}")
+    if report.created_at:
+        lines.append(f"Created: {report.created_at}")
+    lines.append(f"Future retention gate: {report.future_retention_gate}")
+    lines.append("No absolute paths shown.")
     return "\n".join(lines)
 
 

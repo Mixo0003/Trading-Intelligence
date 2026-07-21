@@ -36,6 +36,16 @@ STORAGE_CLEANUP_MAX_BYTES_PER_RUN = 100 * 1024 * 1024  # 100 MiB
 STORAGE_CLEANUP_LOCK_TTL_SECONDS = 300
 STORAGE_CLEANUP_LOCK_JOB = "storage_file_cleanup"
 
+# Phase 4A online backup (no prune/restore).
+DEFAULT_STORAGE_BACKUP_DIR = ""
+STORAGE_BACKUP_ENABLED = False
+STORAGE_BACKUP_MAX_COUNT = 7
+STORAGE_BACKUP_MAX_AGE_DAYS = 30
+STORAGE_BACKUP_LOCK_TTL_SECONDS = 600
+STORAGE_BACKUP_LOCK_JOB = "storage_online_backup"
+STORAGE_BACKUP_MIN_FREE_BYTES = 256 * 1024 * 1024  # refuse if free below this
+STORAGE_BACKUP_LABEL = "ti_backup"
+
 POLYMARKET_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 POLYMARKET_DATA_BASE_URL = "https://data-api.polymarket.com"
 POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com"

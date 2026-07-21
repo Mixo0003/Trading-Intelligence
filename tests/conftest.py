@@ -82,6 +82,13 @@ def make_test_settings(**overrides) -> Settings:
         storage_critical_db_growth_bytes=2 * 1024 * 1024 * 1024,
         storage_degraded_wal_bytes=64 * 1024 * 1024,
         storage_critical_wal_bytes=256 * 1024 * 1024,
+        storage_backup_dir="",
+        storage_backup_enabled=False,
+        storage_backup_max_count=7,
+        storage_backup_max_age_days=30,
+        storage_backup_lock_ttl_seconds=600,
+        storage_backup_min_free_bytes=256 * 1024 * 1024,
+        storage_backup_label="ti_backup",
     )
     base.update(overrides)
     return Settings(**base)
