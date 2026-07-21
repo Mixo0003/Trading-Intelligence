@@ -18,6 +18,7 @@ from app.config.constants import (
     POLYMARKET_GAMMA_BASE_URL,
     PROJECT_NAME,
     PROJECT_VERSION,
+    STORAGE_BACKUP_CONFIRM_TTL_SECONDS,
     STORAGE_BACKUP_ENABLED,
     STORAGE_BACKUP_LABEL,
     STORAGE_BACKUP_LOCK_TTL_SECONDS,
@@ -25,6 +26,7 @@ from app.config.constants import (
     STORAGE_BACKUP_MAX_COUNT,
     STORAGE_BACKUP_MIN_FREE_BYTES,
     STORAGE_CACHE_MIN_AGE_SECONDS,
+    STORAGE_CLEANUP_CONFIRM_TTL_SECONDS,
     STORAGE_CLEANUP_DRY_RUN,
     STORAGE_CLEANUP_ENABLED,
     STORAGE_CLEANUP_LOCK_TTL_SECONDS,
@@ -181,6 +183,8 @@ class Settings:
     storage_backup_lock_ttl_seconds: int
     storage_backup_min_free_bytes: int
     storage_backup_label: str
+    storage_backup_confirm_ttl_seconds: int
+    storage_cleanup_confirm_ttl_seconds: int
     storage_retention_prune_enabled: bool
     storage_retention_prune_dry_run: bool
     storage_retention_prune_max_rows_per_run: int
@@ -444,6 +448,24 @@ def load_settings() -> Settings:
         ),
         storage_backup_label=(
             os.getenv("STORAGE_BACKUP_LABEL", STORAGE_BACKUP_LABEL).strip() or STORAGE_BACKUP_LABEL
+        ),
+        storage_backup_confirm_ttl_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_BACKUP_CONFIRM_TTL_SECONDS",
+                    str(STORAGE_BACKUP_CONFIRM_TTL_SECONDS),
+                )
+            ),
+        ),
+        storage_cleanup_confirm_ttl_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_CLEANUP_CONFIRM_TTL_SECONDS",
+                    str(STORAGE_CLEANUP_CONFIRM_TTL_SECONDS),
+                )
+            ),
         ),
         storage_retention_prune_enabled=_parse_bool(
             os.getenv(

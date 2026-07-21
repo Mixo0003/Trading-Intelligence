@@ -8,19 +8,26 @@ import logging
 import os
 import shutil
 import sqlite3
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.config.constants import STORAGE_BACKUP_LOCK_JOB
 from app.config.settings import Settings
+from app.health import storage as health_storage
 from app.health.sanitize import logical_path_label, sanitize_path
 from app.storage.backup_paths import (
     backup_path_is_safe,
     reject_reason_for_backup_dir,
     resolve_backup_dir,
 )
-from app.storage.lock import acquire_backup_lock, release_backup_lock
+from app.storage.lock import (
+    acquire_backup_lock,
+    fresh_exclusive_lock_job,
+    release_backup_lock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +49,7 @@ _PROTECTED_COUNT_TABLES = (
 )
 
 _LAST_BACKUP_REPORT = None
+_CONFIRMATIONS: dict[str, "BackupConfirmation"] = {}
 
 
 def compute_source_database_identity(database_path: str) -> str:
@@ -92,6 +100,18 @@ class BackupReport:
         }
 
 
+@dataclass(frozen=True)
+class BackupConfirmation:
+    token: str
+    operator_id: str
+    database_identity: str
+    backup_dir_identity: str
+    backup_enabled: bool
+    backup_label_prefix: str
+    expires_at: float
+    preview_fingerprint: str
+
+
 def get_last_backup_report() -> BackupReport | None:
     return _LAST_BACKUP_REPORT
 
@@ -100,6 +120,55 @@ def _set_last(report: BackupReport) -> BackupReport:
     global _LAST_BACKUP_REPORT
     _LAST_BACKUP_REPORT = report
     return report
+
+
+def _token_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def _backup_dir_identity(settings: Settings) -> str:
+    raw = (settings.storage_backup_dir or "").strip()
+    if not raw:
+        return ""
+    try:
+        resolved = str(Path(raw).resolve())
+    except OSError:
+        resolved = raw
+    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:32]
+
+
+def _record_backup_audit(settings: Settings, report: BackupReport) -> None:
+    """Persist sanitized backup outcome in job_executions for maintenance history."""
+    try:
+        summary = json.dumps(
+            {
+                "status": report.status,
+                "integrity": report.integrity_result,
+                "label": report.backup_label,
+                "size_bytes": report.backup_size_bytes,
+                "gate": report.future_retention_gate,
+                "detail": report.detail,
+            },
+            sort_keys=True,
+        )
+        if any(x in summary.lower() for x in ("token", "wallet", ":\\", "/users/", "/home/")):
+            summary = '{"status":"sanitized"}'
+        started = report.created_at or _now_iso()
+        health_storage.insert_job_execution(
+            settings,
+            job_name=STORAGE_BACKUP_LOCK_JOB,
+            status="ok" if report.status == "VERIFIED" else "error",
+            started_at=started,
+            expected_interval_seconds=None,
+        )
+        health_storage.finish_latest_job_execution(
+            settings,
+            job_name=STORAGE_BACKUP_LOCK_JOB,
+            status="ok" if report.status == "VERIFIED" else "error",
+            error=summary,
+        )
+    except Exception:
+        logger.debug("Backup audit record failed", exc_info=True)
 
 
 def _now() -> datetime:
@@ -326,12 +395,206 @@ def backup_status(settings: Settings) -> BackupReport:
     return latest
 
 
+def create_backup_confirmation(
+    settings: Settings,
+    *,
+    operator_id: str,
+) -> tuple[BackupConfirmation | None, BackupReport]:
+    """
+    Bind a short-lived confirmation for Create Backup.
+    Does not create a backup file.
+    """
+    reason = reject_reason_for_backup_dir(
+        settings.storage_backup_dir, database_path=settings.database_path
+    )
+    configured = reason is None and bool((settings.storage_backup_dir or "").strip())
+    if not configured:
+        report = BackupReport(
+            status="UNAVAILABLE",
+            configured=False,
+            detail=f"backup unavailable: {reason or 'empty'}",
+            future_retention_gate="blocked_until_verified_backup",
+        )
+        return None, _set_last(report)
+
+    conflict = fresh_exclusive_lock_job(settings)
+    if conflict is not None:
+        report = BackupReport(
+            status="BUSY",
+            configured=True,
+            detail=f"maintenance busy: {conflict}",
+            future_retention_gate="blocked_until_verified_backup",
+        )
+        return None, _set_last(report)
+
+    db_identity = compute_source_database_identity(settings.database_path)
+    dir_identity = _backup_dir_identity(settings)
+    preview_fp = hashlib.sha256(
+        json.dumps(
+            {
+                "db": db_identity,
+                "dir": dir_identity,
+                "enabled": bool(settings.storage_backup_enabled),
+                "label": settings.storage_backup_label,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    token = uuid.uuid4().hex
+    confirmation = BackupConfirmation(
+        token=token,
+        operator_id=str(operator_id),
+        database_identity=db_identity,
+        backup_dir_identity=dir_identity,
+        backup_enabled=bool(settings.storage_backup_enabled),
+        backup_label_prefix=settings.storage_backup_label,
+        expires_at=time.time() + settings.storage_backup_confirm_ttl_seconds,
+        preview_fingerprint=preview_fp,
+    )
+    _CONFIRMATIONS[token] = confirmation
+    report = BackupReport(
+        status="UNAVAILABLE" if not settings.storage_backup_enabled else "INCOMPLETE",
+        configured=True,
+        detail=(
+            "confirmation preview ready — create requires matching token"
+            if settings.storage_backup_enabled
+            else "backup disabled by configuration"
+        ),
+        future_retention_gate="blocked_until_verified_backup",
+        mutation_proof={"confirmation_fingerprint": _token_fingerprint(token)},
+    )
+    if not settings.storage_backup_enabled:
+        # Still allow confirmation binding so UI can show unavailable clearly;
+        # execute will refuse.
+        pass
+    return confirmation, _set_last(report)
+
+
+def execute_confirmed_backup(
+    settings: Settings,
+    *,
+    token: str,
+    operator_id: str,
+) -> BackupReport:
+    """Execute online backup only when confirmation binding still matches."""
+    confirmation = _CONFIRMATIONS.get(token)
+    if confirmation is None:
+        return _set_last(
+            BackupReport(
+                status="REFUSED",
+                configured=bool((settings.storage_backup_dir or "").strip()),
+                detail="confirmation token unknown or already consumed",
+                future_retention_gate="blocked_until_verified_backup",
+                mutation_proof={"failure_code": "invalid_confirmation"},
+            )
+        )
+    if time.time() > confirmation.expires_at:
+        _CONFIRMATIONS.pop(token, None)
+        report = BackupReport(
+            status="REFUSED",
+            configured=True,
+            detail="confirmation token expired",
+            future_retention_gate="blocked_until_verified_backup",
+            mutation_proof={
+                "failure_code": "confirmation_expired",
+                "confirmation_fingerprint": _token_fingerprint(token),
+            },
+        )
+        _record_backup_audit(settings, report)
+        return _set_last(report)
+    if confirmation.operator_id != str(operator_id):
+        report = BackupReport(
+            status="REFUSED",
+            configured=True,
+            detail="confirmation bound to a different operator",
+            future_retention_gate="blocked_until_verified_backup",
+            mutation_proof={
+                "failure_code": "confirmation_operator_mismatch",
+                "confirmation_fingerprint": _token_fingerprint(token),
+            },
+        )
+        _record_backup_audit(settings, report)
+        return _set_last(report)
+
+    db_identity = compute_source_database_identity(settings.database_path)
+    dir_identity = _backup_dir_identity(settings)
+    if (
+        db_identity != confirmation.database_identity
+        or dir_identity != confirmation.backup_dir_identity
+        or bool(settings.storage_backup_enabled) != confirmation.backup_enabled
+        or settings.storage_backup_label != confirmation.backup_label_prefix
+    ):
+        _CONFIRMATIONS.pop(token, None)
+        report = BackupReport(
+            status="REFUSED",
+            configured=True,
+            detail="confirmation binding no longer matches configuration",
+            future_retention_gate="blocked_until_verified_backup",
+            mutation_proof={
+                "failure_code": "stale_preview",
+                "confirmation_fingerprint": _token_fingerprint(token),
+            },
+        )
+        _record_backup_audit(settings, report)
+        return _set_last(report)
+
+    if not settings.storage_backup_enabled:
+        _CONFIRMATIONS.pop(token, None)
+        report = BackupReport(
+            status="UNAVAILABLE",
+            configured=True,
+            detail="backup disabled by configuration",
+            future_retention_gate="blocked_until_verified_backup",
+            mutation_proof={"failure_code": "backup_disabled"},
+        )
+        _record_backup_audit(settings, report)
+        return _set_last(report)
+
+    conflict = fresh_exclusive_lock_job(settings)
+    if conflict is not None:
+        report = BackupReport(
+            status="BUSY",
+            configured=True,
+            detail=f"maintenance busy: {conflict}",
+            future_retention_gate="blocked_until_verified_backup",
+            mutation_proof={
+                "failure_code": "maintenance_busy",
+                "confirmation_fingerprint": _token_fingerprint(token),
+            },
+        )
+        _record_backup_audit(settings, report)
+        return _set_last(report)
+
+    # Single-use consume before create (repeated taps are idempotent refusals).
+    _CONFIRMATIONS.pop(token, None)
+    report = create_online_backup(settings)
+    return report
+
+
 def create_online_backup(settings: Settings) -> BackupReport:
     """
     Create an online SQLite backup with integrity verification.
     Never uses ordinary filesystem copy of the live DB.
     Never deletes backups. Never restores over live DB.
     """
+    conflict = fresh_exclusive_lock_job(settings, exclude_job=STORAGE_BACKUP_LOCK_JOB)
+    if conflict is not None:
+        report = BackupReport(
+            status="BUSY",
+            configured=bool((settings.storage_backup_dir or "").strip()),
+            detail=f"maintenance busy: {conflict}",
+            future_retention_gate="blocked_until_verified_backup",
+        )
+        _record_backup_audit(settings, report)
+        return _set_last(report)
+
+    report = _create_online_backup_inner(settings)
+    _record_backup_audit(settings, report)
+    return report
+
+
+def _create_online_backup_inner(settings: Settings) -> BackupReport:
+    """Inner online backup implementation (lock + sqlite3.backup)."""
     reason = reject_reason_for_backup_dir(
         settings.storage_backup_dir, database_path=settings.database_path
     )

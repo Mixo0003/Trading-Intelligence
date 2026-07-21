@@ -349,3 +349,279 @@ def format_health_settings(settings: Settings) -> str:
         "Secrets are never shown.",
     ]
     return "\n".join(lines)
+
+
+def _bytes_label(value: int | None) -> str:
+    if value is None:
+        return "-"
+    if value < 1024:
+        return f"{value} B"
+    if value < 1024 * 1024:
+        return f"{value / 1024:.1f} KiB"
+    if value < 1024 * 1024 * 1024:
+        return f"{value / (1024 * 1024):.1f} MiB"
+    return f"{value / (1024 * 1024 * 1024):.2f} GiB"
+
+
+def _age_label(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    sec = int(seconds)
+    if sec < 60:
+        return f"{sec}s"
+    if sec < 3600:
+        return f"{sec // 60}m"
+    if sec < 86400:
+        return f"{sec // 3600}h"
+    return f"{sec // 86400}d"
+
+
+def format_storage_menu(settings: Settings, overall: OverallHealth | None = None) -> str:
+    """Compact admin Storage overview. Never exposes absolute paths."""
+    from app.health.monitor import run_health_check
+    from app.storage.backup import backup_status, revalidate_verified_backup_for_pruning
+    from app.storage.cleanup import get_last_cleanup_report
+    from app.storage.retention_prune import get_last_prune_report
+
+    if overall is None:
+        overall = run_health_check(settings)
+    infra = next((c for c in overall.components if c.component == "infrastructure"), None)
+    metrics = sanitize_mapping(infra.metrics if infra else {})
+    backup = backup_status(settings)
+    gate = revalidate_verified_backup_for_pruning(
+        settings,
+        max_age_seconds=settings.storage_retention_prune_max_backup_age_seconds,
+    )
+    last_cleanup = get_last_cleanup_report()
+    last_prune = get_last_prune_report()
+
+    lines = [
+        "📦 Storage",
+        f"Infrastructure: {infra.status if infra else '-'}",
+        f"Storage level: {metrics.get('storage_level', '-')}",
+        (
+            f"Disk free: {_bytes_label(metrics.get('disk_free_bytes'))} "
+            f"({metrics.get('disk_free_percent', '-')}%)"
+        ),
+        f"Live DB: {_bytes_label(metrics.get('database_size_bytes'))}",
+        (
+            "WAL/SHM/journal: "
+            f"{_bytes_label(metrics.get('wal_size_bytes'))}/"
+            f"{_bytes_label(metrics.get('shm_size_bytes'))}/"
+            f"{_bytes_label(metrics.get('journal_size_bytes'))}"
+        ),
+        f"Journal mode: {metrics.get('journal_mode') or '-'}",
+    ]
+    row_counts = metrics.get("table_row_counts")
+    if isinstance(row_counts, dict):
+        for name in (
+            "users",
+            "processed_copy_events",
+            "copy_watchlist",
+            "health_checks",
+            "wallet_event_watermarks",
+        ):
+            if name in row_counts:
+                lines.append(f"{name}: {row_counts[name]}")
+    lines.extend(
+        [
+            (
+                "Backup config: "
+                + (
+                    "enabled"
+                    if settings.storage_backup_enabled and backup.configured
+                    else ("configured/disabled" if backup.configured else "unavailable")
+                )
+            ),
+            f"Latest backup: {backup.status} age={_age_label(backup.age_seconds)}",
+            f"Integrity: {backup.integrity_result or '-'}",
+            f"Retention gate: {'READY' if gate.ok else 'BLOCKED'}",
+            (
+                "Last file cleanup: "
+                + (last_cleanup.status if last_cleanup else "never")
+            ),
+            (
+                "Last retention prune: "
+                + (last_prune.status if last_prune else "never")
+            ),
+            "",
+            "No absolute paths, secrets, wallets, or Telegram IDs shown.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def format_storage_metrics(settings: Settings, overall: OverallHealth | None = None) -> str:
+    from app.health.monitor import run_health_check
+
+    text = format_db_health(
+        settings,
+        overall if overall is not None else run_health_check(settings),
+    )
+    return "📈 Storage Metrics\n" + "\n".join(text.splitlines()[1:])
+
+
+def format_storage_backup_confirm(settings: Settings) -> str:
+    configured = bool(getattr(settings, "storage_backup_dir", "") or "")
+    enabled = bool(settings.storage_backup_enabled)
+    lines = [
+        "🛡 Create Backup",
+        "Confirmation required.",
+        "Creates a verified SQLite online backup only.",
+        "No cleanup, restore, prune, or VACUUM.",
+        f"Configured: {'yes' if configured else 'no'}",
+        f"Enabled: {'yes' if enabled else 'no — UNAVAILABLE'}",
+        "Confirm binds admin + database identity + config and expires.",
+    ]
+    return "\n".join(lines)
+
+
+def format_storage_cleanup_preview(settings: Settings) -> str:
+    from app.storage.cleanup import inventory_cleanup_candidates
+
+    _candidates, report = inventory_cleanup_candidates(settings)
+    lines = [
+        "🧹 File Cleanup Preview",
+        "DRY RUN — no files deleted.",
+        f"Enabled: {report.cleanup_enabled}",
+        f"Dry-run default: {settings.storage_cleanup_dry_run}",
+        f"Candidates: {report.candidate_count}",
+        f"Bounded reclaimable: {_bytes_label(report.reclaimable_bytes)}",
+        f"Skipped protected: {report.skipped_protected}",
+        f"Roots: {', '.join(sorted(report.roots.values())) or '(none)'}",
+        "",
+        "Private paths are never shown.",
+    ]
+    if not report.cleanup_enabled:
+        lines.append("Action UNAVAILABLE — STORAGE_CLEANUP_ENABLED=false.")
+    return "\n".join(lines)
+
+
+def format_storage_cleanup_confirm(settings: Settings, report) -> str:
+    lines = [
+        "🗑 Run Safe File Cleanup",
+        "DESTRUCTIVE ACTION — second confirmation required.",
+        f"Enabled: {settings.storage_cleanup_enabled}",
+        f"Dry-run enforced: {settings.storage_cleanup_dry_run}",
+        f"Candidates: {report.candidate_count}",
+        f"Bounded bytes: {_bytes_label(report.reclaimable_bytes)}",
+        f"Max files/run: {settings.storage_cleanup_max_files_per_run}",
+        f"Max bytes/run: {_bytes_label(settings.storage_cleanup_max_bytes_per_run)}",
+        "",
+        "Confirmation binds candidate fingerprint + limits and expires.",
+        "Changed candidates invalidate confirmation.",
+    ]
+    if not settings.storage_cleanup_enabled:
+        lines.append("UNAVAILABLE — cleanup disabled by configuration.")
+    elif settings.storage_cleanup_dry_run:
+        lines.append("UNAVAILABLE — dry-run still enforced; destructive refuse.")
+    return "\n".join(lines)
+
+
+def format_storage_cleanup_result(report) -> str:
+    return "\n".join(
+        [
+            "🗑 File Cleanup Result",
+            f"Status: {report.status}",
+            f"DRY RUN: {report.dry_run}",
+            f"Deleted: {report.deleted_count} files / {_bytes_label(report.deleted_bytes)}",
+            f"Skipped protected/locked/limits: "
+            f"{report.skipped_protected}/{report.skipped_locked}/{report.skipped_limits}",
+            f"Failed: {report.errors}",
+            f"Detail: {report.detail or report.failure_code or '-'}",
+            "No private paths shown.",
+        ]
+    )
+
+
+def format_storage_prune_confirm(settings: Settings, report, gate) -> str:
+    lines = [
+        "✂ Run Retention Batch",
+        "DESTRUCTIVE ACTION — second confirmation required.",
+        "Logical row deletion only — does not reclaim DB file bytes.",
+        f"Enabled: {settings.storage_retention_prune_enabled}",
+        f"Dry-run default: {settings.storage_retention_prune_dry_run}",
+        f"Backup gate: {'READY' if gate.ok else 'BLOCKED'}",
+        f"Backup label: {gate.backup_label or '-'}",
+        f"Backup age: {_age_label(gate.age_seconds)}",
+        f"Candidate total: {sum(report.candidate_counts.values())}",
+        "",
+        "Policies:",
+    ]
+    for dataset, count in list(report.candidate_counts.items())[:12]:
+        lines.append(f"• {dataset}: {count}")
+    if len(report.candidate_counts) > 12:
+        lines.append(f"• … +{len(report.candidate_counts) - 12} more")
+    lines.append("")
+    lines.append("Token binds admin, DB identity, backup, policies, cutoffs, counts.")
+    if not gate.ok:
+        lines.append(f"BLOCKED — {gate.failure_code or gate.detail}")
+    if not settings.storage_retention_prune_enabled:
+        lines.append("UNAVAILABLE — retention pruning disabled.")
+    elif settings.storage_retention_prune_dry_run:
+        lines.append("UNAVAILABLE — dry-run still enforced.")
+    return "\n".join(lines)
+
+
+def format_storage_prune_result(report) -> str:
+    lines = [
+        "✂ Retention Batch Result",
+        f"Status: {report.status}",
+        f"DRY RUN: {report.dry_run}",
+        f"Deleted rows (logical): {sum(report.deleted_counts.values())}",
+        f"Backup: {report.backup_label or '-'}",
+        f"Failure: {report.failure_code or '-'}",
+        f"Rollback: {'yes' if report.rolled_back else 'no'}",
+        "",
+        "Deleted by policy:",
+    ]
+    if report.deleted_counts:
+        for dataset, count in report.deleted_counts.items():
+            lines.append(f"• {dataset}: {count}")
+    else:
+        lines.append("• (none)")
+    lines.append("")
+    lines.append("Row deletion only — disk space is not immediately reclaimed.")
+    lines.append("No paths, SQL, or row IDs shown.")
+    return "\n".join(lines)
+
+
+def format_maintenance_history(settings: Settings, *, page: int = 0) -> str:
+    from app.storage.history import list_maintenance_history
+
+    items, total = list_maintenance_history(settings, page=page, page_size=8)
+    page_size = 8
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    lines = [
+        "📜 Maintenance History",
+        f"Page {page + 1}/{total_pages} ({total} ops)",
+        "",
+    ]
+    if not items:
+        lines.append("No maintenance operations recorded.")
+        return "\n".join(lines)
+    for item in items:
+        lines.append(
+            f"• {item.operation} [{item.outcome}] "
+            f"{item.started_at}"
+        )
+        bits = []
+        if item.dry_run is True:
+            bits.append("DRY_RUN")
+        if item.candidate_count is not None:
+            bits.append(f"cand={item.candidate_count}")
+        if item.deleted_count is not None:
+            bits.append(f"del={item.deleted_count}")
+        if item.skipped_count is not None:
+            bits.append(f"skip={item.skipped_count}")
+        if item.backup_status:
+            bits.append(f"backup={item.backup_status}")
+        if item.failure_code:
+            bits.append(f"fail={item.failure_code}")
+        if item.rollback_status and item.rollback_status != "none":
+            bits.append(f"rollback={item.rollback_status}")
+        if bits:
+            lines.append("  " + " ".join(bits))
+    lines.append("")
+    lines.append("No private paths, raw SQL, or secrets shown.")
+    return "\n".join(lines)

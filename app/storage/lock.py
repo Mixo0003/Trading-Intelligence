@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from app.config.constants import (
     STORAGE_BACKUP_LOCK_JOB,
@@ -11,6 +12,48 @@ from app.config.constants import (
 )
 from app.config.settings import Settings
 from app.database import copy_storage
+from app.database.storage import get_connection
+
+_EXCLUSIVE_JOBS = (
+    STORAGE_BACKUP_LOCK_JOB,
+    STORAGE_CLEANUP_LOCK_JOB,
+    STORAGE_RETENTION_PRUNE_LOCK_JOB,
+)
+
+
+def _lock_is_fresh(expires_at: str | None) -> bool:
+    if not expires_at:
+        return False
+    now = datetime.now(timezone.utc)
+    try:
+        exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return exp > now
+
+
+def fresh_exclusive_lock_job(
+    settings: Settings,
+    *,
+    exclude_job: str | None = None,
+) -> str | None:
+    """
+    Return the job name of a fresh exclusive maintenance lock, if any.
+    Used to refuse conflicting backup/cleanup/prune operations safely.
+    """
+    with get_connection(settings) as connection:
+        for job_name in _EXCLUSIVE_JOBS:
+            if exclude_job and job_name == exclude_job:
+                continue
+            row = connection.execute(
+                "SELECT expires_at FROM copy_job_locks WHERE job_name = ?",
+                (job_name,),
+            ).fetchone()
+            if row is not None and _lock_is_fresh(row["expires_at"]):
+                return job_name
+    return None
 
 
 def acquire_cleanup_lock(settings: Settings, *, ttl_seconds: int | None = None) -> str | None:

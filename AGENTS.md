@@ -5,29 +5,43 @@
 - One task per branch (or one clearly bounded task per session).
 - Do not mix Weather Intelligence, Copy Intelligence, and Health Monitor changes unless the task explicitly requires a shared hook.
 - Prefer minimal verified patches over broad refactors.
+- Use separate small version branches for V2.2.1, V2.2.2, and later versioned work — never combine multiple V2.2.x scopes on one branch.
 
 ## Tests
 
 - Run focused tests for the changed module.
 - After cross-cutting changes, also run regressions for Weather, Copy Intelligence, Telegram UX, and scheduler jobs.
 - Unit tests alone are not enough for product paths; use a bounded read-only live proof when behavior is user-visible.
+- Remove temporary verification scripts before final status / documentation / PR preparation.
 
 ## Secrets and environment
 
 - Never modify or expose the real `.env`.
-- Never commit credentials, tokens, local databases, logs, caches, or screenshots.
+- Never commit credentials, tokens, local databases, WAL/SHM files, backups, logs, caches, screenshots, or other runtime artifacts.
 - Health and status UIs must sanitize tokens, API keys, wallet secrets, and unsafe paths.
+- Never show absolute private filesystem paths in Telegram.
 
 ## Telegram process safety
 
+- Exactly one logical Telegram bot instance during live verification.
+- Parent/child Python processes may represent one logical bot; that is normal.
 - Never start a second Telegram polling process against the same bot token.
 - Do not start, stop, or restart the bot unless the user explicitly asks.
 - JobQueue registrations must be idempotent (`*_REGISTERED_KEY` guards).
+- Long Telegram operations must acknowledge promptly and continue work in the background (avoid blocking the update handler).
 
 ## Git
 
+- No automatic commit or push during implementation or audits.
 - No commit or push before manual verification unless the user explicitly requests it.
 - Review `git diff` and scan for secrets before any commit.
+
+## Storage safety (V2.1.1)
+
+- Real cleanup and retention pruning remain disabled and dry-run by default.
+- Destructive cleanup or pruning requires explicit admin confirmation and all service-layer safety gates (locks, age/budget limits, verified-backup gate for prune).
+- No automatic VACUUM or `journal_mode` changes.
+- Backup creation is explicit and admin-confirmed; never invent or commit backup artifacts.
 
 ## Module boundaries
 
@@ -36,6 +50,7 @@
 | Weather Intelligence | Forecasts, scans, signal formatting | Place trades, own Copy alerts |
 | Copy Intelligence | Read-only discovery, watchlist, paper alerts | Sign trades, disable read-only, alert baseline history |
 | Health Monitor | Deterministic probes, admin diagnostics, incidents | Depend on AI for status, edit `.env`, restart processes, trade |
+| Storage | Metrics, explicit-path cleanup, online backup, gated prune | Bypass dry-run/disabled defaults, commit runtime data, expose absolute paths |
 
 ## Copy freshness
 
@@ -46,4 +61,5 @@
 ## Health
 
 - System Health UI and `/health` are admin-only (`ADMIN_IDS`).
+- Every storage callback re-checks admin authorization.
 - Core health status is deterministic; AI explainer (if ever enabled) is optional and read-only on sanitized data.

@@ -65,23 +65,43 @@ Do not perform broad refactors without a proven failing acceptance test.
 
 ## Current verified state
 
-- Product baseline on main: Weather Intelligence V1.1 + Trader Intelligence V2 (read-only / paper-only).
-- V2.1 release branch: `feature/v2.1-health-monitor` (Health Monitor + copy-event freshness).
+- Product baseline on main: Weather Intelligence V1.1 + Trader Intelligence V2 (read-only / paper-only) + Health Monitor V2.1.
+- **V2.1.1 storage retention — implementation and live verification complete** on branch `feature/v2.1.1-storage-retention`.
+- V2.1.1 delivered and verified:
+  - storage metrics and disk / growth thresholds;
+  - explicit-path file cleanup with safe defaults (disabled + dry-run);
+  - SQLite retention audit and dry-run preview;
+  - verified online SQLite backup and integrity gate;
+  - verified-backup-gated bounded retention pruning (disabled + dry-run by default);
+  - admin Storage Telegram UX (Metrics, Backup, Cleanup, Retention, History);
+  - storage alerts and recovery deduplication;
+  - maintenance history;
+  - admin-only authorization on every storage callback.
+- Live Telegram verification passed; Weather, Copy Intelligence, and scheduler regressions passed.
+- Full suite: **652 passed, 2 skipped**.
+- Safety defaults unchanged: real cleanup and pruning remain disabled / dry-run; no automatic VACUUM or `journal_mode` changes; backup creation is explicit and admin-confirmed.
 - Copy freshness: baseline/watermarks/`processed_copy_events`; re-enable starts a new baseline; no alerts until baseline `COMPLETE`.
 - Health: deterministic probes, admin-only System Health UX (`ADMIN_IDS`), deduplicated incidents; AI explainer off by default.
-- Manual Telegram verification accepted: System Health, self-test, DB/cache diagnostics, Weather, Copy read-only, baseline/stale protection, navigation.
-- Automated: full suite green on release validation; Weather/Copy scoring rules unchanged.
-- The real `.env` was not modified as part of V2.1 source commits.
+- The real `.env` was not modified as part of V2.1 / V2.1.1 source work.
+- **V2.1.1 is ready for PR review and merge after final documentation review.**
 
-## V2.1 modules
+### Strix (optional external audit)
+
+- Strix was evaluated but unavailable locally; no Strix scan was executed and no findings were produced.
+- Audit deferred to a disposable VM or isolated Docker host.
+- Only a sanitized source-only worktree may be scanned; exclude `.env`, databases, backups, logs, caches, and runtime data.
+- Strix is **not a blocker** for the V2.1.1 PR — it was an optional external audit, not an existing release check.
+
+## V2.1 / V2.1.1 modules
 
 | Area | Path |
 |------|------|
 | Freshness | `app/copy_intel/freshness.py` |
 | Health core | `app/health/*` |
+| Storage metrics / cleanup / backup / prune | `app/storage/*`, `app/health/storage_metrics.py`, `app/health/storage_alerts.py` |
 | Admin auth | `app/telegram/auth.py` |
-| Health UX | `app/telegram/health/*` |
-| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `ROADMAP.md` |
+| Health + Storage UX | `app/telegram/health/*` |
+| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `ROADMAP.md`, `CHANGELOG.md` |
 
 ## Latest live weather proof
 
@@ -160,7 +180,8 @@ Current result: one active USA event satisfies this acceptance card.
 - verify scheduler reliability;
 - document VPS deployment;
 - [x] Health Monitor + admin diagnostics (V2.1);
-- [x] Copy event freshness / baseline protection (V2.1).
+- [x] Copy event freshness / baseline protection (V2.1);
+- [x] Storage metrics, cleanup, backup, retention pruning, admin Storage UX (V2.1.1 — pending merge).
 
 ### Phase 4 — Telegram UX
 
@@ -200,7 +221,7 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-Verify one genuine active Europe temperature event end to end through the current `Scan Europe` path and produce one correct Telegram card. Apply a minimal patch only if that single event fails exact station, local-date statistic, real-outcome, live-price, forecast, or card acceptance.
+Complete final documentation review for V2.1.1 on `feature/v2.1.1-storage-retention`, then open the PR for review and merge. Do not implement V2.2 until V2.1.1 is merged. After merge, the next bounded product work follows the V2.2.1+ sequence in `ROADMAP.md` (separate small version branches).
 
 ## Fresh Cursor context startup prompt
 

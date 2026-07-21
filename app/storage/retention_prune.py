@@ -22,7 +22,11 @@ from app.storage.backup import (
     compute_source_database_identity,
     revalidate_verified_backup_for_pruning,
 )
-from app.storage.lock import acquire_prune_lock, release_prune_lock
+from app.storage.lock import (
+    acquire_prune_lock,
+    fresh_exclusive_lock_job,
+    release_prune_lock,
+)
 from app.storage.retention_policies import (
     RetentionPolicy,
     build_retention_policies,
@@ -714,6 +718,19 @@ def run_retention_prune(
 
     gate: VerifiedBackupGate | None = None
     if not effective_dry_run:
+        conflict = fresh_exclusive_lock_job(
+            settings, exclude_job=STORAGE_RETENTION_PRUNE_LOCK_JOB
+        )
+        if conflict is not None:
+            return _refuse(
+                settings,
+                code="maintenance_busy",
+                detail=f"maintenance busy: {conflict}",
+                dry_run=False,
+                operator_id=operator_id,
+                approved=approved,
+                started_at=started,
+            )
         gate = revalidate_verified_backup_for_pruning(
             settings,
             max_age_seconds=settings.storage_retention_prune_max_backup_age_seconds,

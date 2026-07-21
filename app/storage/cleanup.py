@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.config.constants import STORAGE_CLEANUP_LOCK_JOB
 from app.config.settings import Settings
+from app.health import storage as health_storage
 from app.health.sanitize import logical_path_label
-from app.storage.lock import acquire_cleanup_lock, release_cleanup_lock
+from app.storage.lock import (
+    acquire_cleanup_lock,
+    fresh_exclusive_lock_job,
+    release_cleanup_lock,
+)
 from app.storage.paths import (
     is_protected_file,
     is_within_approved_root,
@@ -23,6 +32,7 @@ from app.storage.paths import (
 logger = logging.getLogger(__name__)
 
 _LAST_REPORT = None
+_CONFIRMATIONS: dict[str, "CleanupConfirmation"] = {}
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,11 @@ class CleanupReport:
     errors: int = 0
     roots: dict[str, str] = field(default_factory=dict)
     checked_at: str = ""
+    failure_code: str = ""
+    detail: str = ""
+    confirmation_token_fingerprint: str | None = None
+    started_at: str = ""
+    finished_at: str = ""
 
     def as_sanitized_dict(self) -> dict:
         return {
@@ -73,20 +88,88 @@ class CleanupReport:
             "cleanup_errors": self.errors,
             "cleanup_roots": dict(self.roots),
             "cleanup_checked_at": self.checked_at,
+            "cleanup_failure_code": self.failure_code or None,
+            "cleanup_detail": self.detail or None,
         }
+
+
+@dataclass(frozen=True)
+class CleanupConfirmation:
+    token: str
+    operator_id: str
+    candidate_fingerprint: str
+    candidate_count: int
+    reclaimable_bytes: int
+    max_files: int
+    max_bytes: int
+    expires_at: float
 
 
 def get_last_cleanup_report():
     return _LAST_REPORT
 
 
-def _set_last_report(report: CleanupReport) -> None:
+def _set_last_report(report: CleanupReport) -> CleanupReport:
     global _LAST_REPORT
     _LAST_REPORT = report
+    return report
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _token_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def _candidate_fingerprint(candidates: list[CleanupCandidate]) -> str:
+    payload = [
+        {
+            "root": c.root_label,
+            "name": c.name,
+            "size": c.size_bytes,
+            "policy": c.policy,
+            "age": c.age_seconds,
+        }
+        for c in sorted(candidates, key=lambda x: (x.root_label, x.name, x.size_bytes))
+    ]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _record_cleanup_audit(settings: Settings, report: CleanupReport) -> None:
+    try:
+        summary = json.dumps(
+            {
+                "status": report.status,
+                "dry_run": report.dry_run,
+                "candidates": report.candidate_count,
+                "deleted": report.deleted_count,
+                "skipped_protected": report.skipped_protected,
+                "errors": report.errors,
+                "failure_code": report.failure_code or None,
+            },
+            sort_keys=True,
+        )
+        if any(x in summary.lower() for x in ("token", "wallet", ":\\", "/users/", "/home/")):
+            summary = '{"status":"sanitized"}'
+        started = report.started_at or report.checked_at or _now_iso()
+        ok = report.status in {"dry_run", "disabled", "completed", "inventory"}
+        health_storage.insert_job_execution(
+            settings,
+            job_name=STORAGE_CLEANUP_LOCK_JOB,
+            status="ok" if ok else "error",
+            started_at=started,
+            expected_interval_seconds=None,
+        )
+        health_storage.finish_latest_job_execution(
+            settings,
+            job_name=STORAGE_CLEANUP_LOCK_JOB,
+            status="ok" if ok else "error",
+            error=summary,
+        )
+    except Exception:
+        logger.debug("Cleanup audit record failed", exc_info=True)
 
 
 def _active_log_path(settings: Settings, logs_root: Path | None) -> Path | None:
@@ -285,6 +368,190 @@ def _resolve_candidate_path(
     return None
 
 
+def create_cleanup_confirmation(
+    settings: Settings,
+    *,
+    operator_id: str,
+) -> tuple[CleanupConfirmation | None, CleanupReport]:
+    """Dry-run preview that binds a short-lived confirmation token. Never deletes."""
+    candidates, report = inventory_cleanup_candidates(settings)
+    report.dry_run = True
+    report.cleanup_enabled = bool(settings.storage_cleanup_enabled)
+    report.started_at = _now_iso()
+    report.finished_at = report.started_at
+    report.status = "dry_run" if settings.storage_cleanup_enabled else "disabled"
+    report.detail = (
+        "confirmation preview ready — destructive cleanup requires matching token"
+        if settings.storage_cleanup_enabled
+        else "file cleanup disabled by configuration"
+    )
+
+    if not settings.storage_cleanup_enabled:
+        report.failure_code = "cleanup_disabled"
+        _record_cleanup_audit(settings, report)
+        return None, _set_last_report(report)
+
+    conflict = fresh_exclusive_lock_job(settings)
+    if conflict is not None:
+        report.status = "lock_busy"
+        report.failure_code = "maintenance_busy"
+        report.detail = f"maintenance busy: {conflict}"
+        _record_cleanup_audit(settings, report)
+        return None, _set_last_report(report)
+
+    token = uuid.uuid4().hex
+    fingerprint = _candidate_fingerprint(candidates)
+    confirmation = CleanupConfirmation(
+        token=token,
+        operator_id=str(operator_id),
+        candidate_fingerprint=fingerprint,
+        candidate_count=len(candidates),
+        reclaimable_bytes=report.reclaimable_bytes,
+        max_files=settings.storage_cleanup_max_files_per_run,
+        max_bytes=settings.storage_cleanup_max_bytes_per_run,
+        expires_at=time.time() + settings.storage_cleanup_confirm_ttl_seconds,
+    )
+    _CONFIRMATIONS[token] = confirmation
+    report.confirmation_token_fingerprint = _token_fingerprint(token)
+    _record_cleanup_audit(settings, report)
+    return confirmation, _set_last_report(report)
+
+
+def execute_confirmed_cleanup(
+    settings: Settings,
+    *,
+    token: str,
+    operator_id: str,
+) -> CleanupReport:
+    """Execute destructive cleanup only when confirmation binding still matches."""
+    confirmation = _CONFIRMATIONS.get(token)
+    if confirmation is None:
+        report = CleanupReport(
+            dry_run=False,
+            cleanup_enabled=bool(settings.storage_cleanup_enabled),
+            status="refused",
+            failure_code="invalid_confirmation",
+            detail="confirmation token unknown or already consumed",
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    if time.time() > confirmation.expires_at:
+        _CONFIRMATIONS.pop(token, None)
+        report = CleanupReport(
+            dry_run=False,
+            cleanup_enabled=bool(settings.storage_cleanup_enabled),
+            status="refused",
+            failure_code="confirmation_expired",
+            detail="confirmation token expired",
+            confirmation_token_fingerprint=_token_fingerprint(token),
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    if confirmation.operator_id != str(operator_id):
+        report = CleanupReport(
+            dry_run=False,
+            cleanup_enabled=bool(settings.storage_cleanup_enabled),
+            status="refused",
+            failure_code="confirmation_operator_mismatch",
+            detail="confirmation bound to a different operator",
+            confirmation_token_fingerprint=_token_fingerprint(token),
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    candidates, inventory = inventory_cleanup_candidates(settings)
+    fingerprint = _candidate_fingerprint(candidates)
+    if (
+        fingerprint != confirmation.candidate_fingerprint
+        or len(candidates) != confirmation.candidate_count
+        or inventory.reclaimable_bytes != confirmation.reclaimable_bytes
+        or settings.storage_cleanup_max_files_per_run != confirmation.max_files
+        or settings.storage_cleanup_max_bytes_per_run != confirmation.max_bytes
+    ):
+        _CONFIRMATIONS.pop(token, None)
+        report = CleanupReport(
+            dry_run=False,
+            cleanup_enabled=bool(settings.storage_cleanup_enabled),
+            status="refused",
+            failure_code="stale_preview",
+            detail="candidates or limits changed — confirmation invalidated",
+            confirmation_token_fingerprint=_token_fingerprint(token),
+            candidate_count=len(candidates),
+            reclaimable_bytes=inventory.reclaimable_bytes,
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    if not settings.storage_cleanup_enabled:
+        _CONFIRMATIONS.pop(token, None)
+        report = CleanupReport(
+            dry_run=True,
+            cleanup_enabled=False,
+            status="disabled",
+            failure_code="cleanup_disabled",
+            detail="file cleanup disabled by configuration",
+            confirmation_token_fingerprint=_token_fingerprint(token),
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    if settings.storage_cleanup_dry_run:
+        _CONFIRMATIONS.pop(token, None)
+        report = CleanupReport(
+            dry_run=True,
+            cleanup_enabled=True,
+            status="refused",
+            failure_code="dry_run_enforced",
+            detail="destructive cleanup refused while STORAGE_CLEANUP_DRY_RUN=true",
+            confirmation_token_fingerprint=_token_fingerprint(token),
+            candidate_count=confirmation.candidate_count,
+            reclaimable_bytes=confirmation.reclaimable_bytes,
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    conflict = fresh_exclusive_lock_job(settings)
+    if conflict is not None:
+        report = CleanupReport(
+            dry_run=False,
+            cleanup_enabled=True,
+            status="lock_busy",
+            failure_code="maintenance_busy",
+            detail=f"maintenance busy: {conflict}",
+            confirmation_token_fingerprint=_token_fingerprint(token),
+            started_at=_now_iso(),
+            finished_at=_now_iso(),
+            checked_at=_now_iso(),
+        )
+        _record_cleanup_audit(settings, report)
+        return _set_last_report(report)
+
+    _CONFIRMATIONS.pop(token, None)
+    report = run_storage_cleanup(settings, force_dry_run=False)
+    report.confirmation_token_fingerprint = _token_fingerprint(token)
+    return report
+
+
 def run_storage_cleanup(
     settings: Settings,
     *,
@@ -298,9 +565,11 @@ def run_storage_cleanup(
     if not settings.storage_cleanup_enabled:
         dry_run = True
 
+    started = _now_iso()
     candidates, report = inventory_cleanup_candidates(settings)
     report.dry_run = dry_run
     report.cleanup_enabled = bool(settings.storage_cleanup_enabled)
+    report.started_at = started
     report.status = "disabled" if not settings.storage_cleanup_enabled else (
         "dry_run" if dry_run else "running"
     )
@@ -309,12 +578,27 @@ def run_storage_cleanup(
         report.status = "dry_run" if settings.storage_cleanup_enabled else "disabled"
         report.deleted_count = 0
         report.deleted_bytes = 0
+        report.finished_at = _now_iso()
+        _record_cleanup_audit(settings, report)
+        _set_last_report(report)
+        return report
+
+    conflict = fresh_exclusive_lock_job(settings, exclude_job=STORAGE_CLEANUP_LOCK_JOB)
+    if conflict is not None:
+        report.status = "lock_busy"
+        report.failure_code = "maintenance_busy"
+        report.detail = f"maintenance busy: {conflict}"
+        report.finished_at = _now_iso()
+        _record_cleanup_audit(settings, report)
         _set_last_report(report)
         return report
 
     owner = acquire_cleanup_lock(settings)
     if owner is None:
         report.status = "lock_busy"
+        report.failure_code = "lock_busy"
+        report.finished_at = _now_iso()
+        _record_cleanup_audit(settings, report)
         _set_last_report(report)
         return report
 
@@ -354,8 +638,12 @@ def run_storage_cleanup(
     report.skipped_limits = skipped_limits
     report.skipped_locked = skipped_locked
     report.errors = errors
-    report.status = "completed"
+    report.status = "completed" if errors == 0 else "failed"
+    if errors:
+        report.failure_code = "cleanup_errors"
     report.checked_at = _now_iso()
+    report.finished_at = report.checked_at
+    _record_cleanup_audit(settings, report)
     _set_last_report(report)
     return report
 

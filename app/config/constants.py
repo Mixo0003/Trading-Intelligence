@@ -45,6 +45,10 @@ STORAGE_BACKUP_LOCK_TTL_SECONDS = 600
 STORAGE_BACKUP_LOCK_JOB = "storage_online_backup"
 STORAGE_BACKUP_MIN_FREE_BYTES = 256 * 1024 * 1024  # refuse if free below this
 STORAGE_BACKUP_LABEL = "ti_backup"
+STORAGE_BACKUP_CONFIRM_TTL_SECONDS = 120
+
+# Phase 2 cleanup confirmation (Phase 5 admin UX).
+STORAGE_CLEANUP_CONFIRM_TTL_SECONDS = 120
 
 # Phase 3B verified-backup-gated SQLite retention pruning (disabled + dry-run by default).
 STORAGE_RETENTION_PRUNE_ENABLED = False
