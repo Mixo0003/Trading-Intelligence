@@ -109,6 +109,12 @@ def sanitize_config_summary(settings) -> dict[str, Any]:
         "storage_cleanup_enabled": bool(getattr(settings, "storage_cleanup_enabled", False)),
         "storage_cleanup_dry_run": bool(getattr(settings, "storage_cleanup_dry_run", True)),
         "storage_backup_enabled": bool(getattr(settings, "storage_backup_enabled", False)),
+        "storage_retention_prune_enabled": bool(
+            getattr(settings, "storage_retention_prune_enabled", False)
+        ),
+        "storage_retention_prune_dry_run": bool(
+            getattr(settings, "storage_retention_prune_dry_run", True)
+        ),
         "copy_poll_interval_seconds": settings.copy_poll_interval_seconds,
         "health_check_interval_seconds": settings.health_check_interval_seconds,
         "forecast_min_providers": settings.forecast_min_providers,

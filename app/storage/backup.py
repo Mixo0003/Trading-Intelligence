@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -41,6 +42,19 @@ _PROTECTED_COUNT_TABLES = (
 )
 
 _LAST_BACKUP_REPORT = None
+
+
+def compute_source_database_identity(database_path: str) -> str:
+    """Stable non-path identity for live DB ↔ backup binding (hash only)."""
+    try:
+        resolved = str(Path(database_path).resolve())
+    except OSError:
+        resolved = str(database_path or "")
+    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:32]
+
+
+def source_database_basename(database_path: str) -> str:
+    return sanitize_path(database_path)
 
 
 @dataclass
@@ -468,6 +482,11 @@ def create_online_backup(settings: Settings) -> BackupReport:
             "source_table_count": len(source_tables),
             "missing_required": details.get("missing_required") or [],
             "mechanism": "sqlite3.Connection.backup",
+            "source_database_identity": compute_source_database_identity(str(db_path)),
+            "source_database_basename": source_database_basename(str(db_path)),
+            "integrity_check": details.get("integrity_check") or integrity,
+            "quick_check": details.get("quick_check") or "ok",
+            "required_tables_verified": not bool(details.get("missing_required")),
         }
 
         if status != "VERIFIED":
@@ -568,3 +587,213 @@ def backup_metrics_for_health(settings: Settings) -> dict:
     """Sanitized backup status for infrastructure probe / System Health."""
     report = backup_status(settings)
     return report.as_sanitized_dict()
+
+
+@dataclass(frozen=True)
+class VerifiedBackupGate:
+    ok: bool
+    failure_code: str
+    detail: str
+    backup_path: Path | None = None
+    backup_label: str | None = None
+    created_at: str | None = None
+    age_seconds: float | None = None
+    integrity_result: str | None = None
+    quick_check: str | None = None
+    source_database_identity: str | None = None
+    meta: dict = field(default_factory=dict)
+
+
+def revalidate_verified_backup_for_pruning(
+    settings: Settings,
+    *,
+    max_age_seconds: int | None = None,
+) -> VerifiedBackupGate:
+    """
+    Re-read backup file + metadata from disk and re-run integrity checks.
+    Never trusts in-memory status alone. Never mutates backups.
+    """
+    max_age = int(
+        max_age_seconds
+        if max_age_seconds is not None
+        else getattr(settings, "storage_retention_prune_max_backup_age_seconds", 86400)
+    )
+    expected_identity = compute_source_database_identity(settings.database_path)
+
+    reason = reject_reason_for_backup_dir(
+        settings.storage_backup_dir, database_path=settings.database_path
+    )
+    if reason is not None:
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="backup_unavailable",
+            detail=f"backup unavailable: {reason}",
+        )
+
+    root = resolve_backup_dir(
+        settings.storage_backup_dir, database_path=settings.database_path
+    )
+    if root is None or not root.exists():
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="missing_backup",
+            detail="no backup directory or backups present",
+        )
+
+    verified_files: list[tuple[float, Path, dict]] = []
+    for path in root.glob("*.db"):
+        if not backup_path_is_safe(
+            path, backup_root=root, database_path=settings.database_path
+        ):
+            continue
+        meta = _read_meta(path)
+        if meta is None:
+            continue
+        if meta.get("status") != "VERIFIED":
+            continue
+        created = meta.get("created_at") or ""
+        try:
+            ts = datetime.fromisoformat(str(created).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            ts = path.stat().st_mtime
+        verified_files.append((ts, path, meta))
+
+    if not verified_files:
+        # Distinguish missing meta vs no files vs unverified
+        any_db = list(root.glob("*.db"))
+        if not any_db:
+            return VerifiedBackupGate(
+                ok=False,
+                failure_code="missing_backup",
+                detail="no backup files found",
+            )
+        metas = [_read_meta(p) for p in any_db]
+        if any(m is None for m in metas):
+            return VerifiedBackupGate(
+                ok=False,
+                failure_code="missing_backup_metadata",
+                detail="backup metadata missing or unreadable",
+            )
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="unverified_backup",
+            detail="no VERIFIED backup on disk",
+        )
+
+    verified_files.sort(key=lambda item: item[0], reverse=True)
+    ts, path, meta = verified_files[0]
+
+    required_meta_keys = (
+        "status",
+        "created_at",
+        "integrity_result",
+        "source_database_identity",
+        "label",
+    )
+    missing_keys = [k for k in required_meta_keys if not meta.get(k)]
+    if missing_keys:
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="missing_backup_metadata",
+            detail=f"incomplete metadata: {','.join(missing_keys)}",
+            backup_path=path,
+            backup_label=sanitize_path(path.name),
+            meta=dict(meta),
+        )
+
+    identity = str(meta.get("source_database_identity") or "")
+    if identity != expected_identity:
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="wrong_database_identity",
+            detail="backup source identity does not match live database",
+            backup_path=path,
+            backup_label=sanitize_path(path.name),
+            source_database_identity=identity,
+            meta=dict(meta),
+        )
+
+    age = max(0.0, _now().timestamp() - ts)
+    if age > max_age:
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="expired_backup",
+            detail="verified backup older than configured maximum age",
+            backup_path=path,
+            backup_label=sanitize_path(path.name),
+            created_at=str(meta.get("created_at")),
+            age_seconds=round(age, 1),
+            source_database_identity=identity,
+            meta=dict(meta),
+        )
+
+    # Confirm file still exists and re-verify integrity on disk.
+    if not path.is_file() or not _meta_path(path).is_file():
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="missing_backup",
+            detail="backup file or metadata disappeared before prune",
+            backup_label=sanitize_path(path.name),
+        )
+
+    status, integrity, details = _verify_backup_file(path)
+    if status != "VERIFIED":
+        code = "failed_integrity"
+        if str(integrity).startswith("missing_tables"):
+            code = "failed_required_tables"
+        elif str(integrity).startswith("quick_check"):
+            code = "failed_quick_check"
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code=code,
+            detail=f"backup revalidation failed: {integrity}",
+            backup_path=path,
+            backup_label=sanitize_path(path.name),
+            created_at=str(meta.get("created_at")),
+            age_seconds=round(age, 1),
+            integrity_result=integrity,
+            quick_check=str(details.get("quick_check") or ""),
+            source_database_identity=identity,
+            meta=dict(meta),
+        )
+
+    quick = str(details.get("quick_check") or meta.get("quick_check") or "ok")
+    if quick.lower() not in {"ok", "missing"}:
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="failed_quick_check",
+            detail=f"quick_check failed: {quick}",
+            backup_path=path,
+            backup_label=sanitize_path(path.name),
+            integrity_result=integrity,
+            quick_check=quick,
+            source_database_identity=identity,
+            meta=dict(meta),
+        )
+
+    if details.get("missing_required"):
+        return VerifiedBackupGate(
+            ok=False,
+            failure_code="failed_required_tables",
+            detail="required critical tables missing in backup",
+            backup_path=path,
+            backup_label=sanitize_path(path.name),
+            integrity_result=integrity,
+            quick_check=quick,
+            source_database_identity=identity,
+            meta=dict(meta),
+        )
+
+    return VerifiedBackupGate(
+        ok=True,
+        failure_code="",
+        detail="verified backup gate passed",
+        backup_path=path,
+        backup_label=sanitize_path(path.name),
+        created_at=str(meta.get("created_at")),
+        age_seconds=round(age, 1),
+        integrity_result=integrity,
+        quick_check=quick,
+        source_database_identity=identity,
+        meta=dict(meta),
+    )

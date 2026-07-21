@@ -44,6 +44,15 @@ from app.config.constants import (
     STORAGE_LOG_MAX_BYTES,
     STORAGE_LOG_RETENTION_DAYS,
     STORAGE_PROOF_MIN_AGE_SECONDS,
+    STORAGE_RETENTION_PRUNE_CONFIRM_TTL_SECONDS,
+    STORAGE_RETENTION_PRUNE_DRY_RUN,
+    STORAGE_RETENTION_PRUNE_ENABLED,
+    STORAGE_RETENTION_PRUNE_LOCK_TTL_SECONDS,
+    STORAGE_RETENTION_PRUNE_MAX_BACKUP_AGE_SECONDS,
+    STORAGE_RETENTION_PRUNE_MAX_ROWS_PER_POLICY,
+    STORAGE_RETENTION_PRUNE_MAX_ROWS_PER_RUN,
+    STORAGE_RETENTION_PRUNE_STOP_ON_POLICY_FAILURE,
+    STORAGE_RETENTION_PRUNE_TIMEOUT_SECONDS,
     WEATHER_GOV_BASE_URL,
 )
 
@@ -172,6 +181,15 @@ class Settings:
     storage_backup_lock_ttl_seconds: int
     storage_backup_min_free_bytes: int
     storage_backup_label: str
+    storage_retention_prune_enabled: bool
+    storage_retention_prune_dry_run: bool
+    storage_retention_prune_max_rows_per_run: int
+    storage_retention_prune_max_rows_per_policy: int
+    storage_retention_prune_timeout_seconds: int
+    storage_retention_prune_max_backup_age_seconds: int
+    storage_retention_prune_lock_ttl_seconds: int
+    storage_retention_prune_confirm_ttl_seconds: int
+    storage_retention_prune_stop_on_policy_failure: bool
 
     report_timezone: str
     report_times: list[str]
@@ -426,5 +444,80 @@ def load_settings() -> Settings:
         ),
         storage_backup_label=(
             os.getenv("STORAGE_BACKUP_LABEL", STORAGE_BACKUP_LABEL).strip() or STORAGE_BACKUP_LABEL
+        ),
+        storage_retention_prune_enabled=_parse_bool(
+            os.getenv(
+                "STORAGE_RETENTION_PRUNE_ENABLED",
+                str(STORAGE_RETENTION_PRUNE_ENABLED).lower(),
+            ),
+            default=STORAGE_RETENTION_PRUNE_ENABLED,
+        ),
+        storage_retention_prune_dry_run=_parse_bool(
+            os.getenv(
+                "STORAGE_RETENTION_PRUNE_DRY_RUN",
+                str(STORAGE_RETENTION_PRUNE_DRY_RUN).lower(),
+            ),
+            default=STORAGE_RETENTION_PRUNE_DRY_RUN,
+        ),
+        storage_retention_prune_max_rows_per_run=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_RETENTION_PRUNE_MAX_ROWS_PER_RUN",
+                    str(STORAGE_RETENTION_PRUNE_MAX_ROWS_PER_RUN),
+                )
+            ),
+        ),
+        storage_retention_prune_max_rows_per_policy=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_RETENTION_PRUNE_MAX_ROWS_PER_POLICY",
+                    str(STORAGE_RETENTION_PRUNE_MAX_ROWS_PER_POLICY),
+                )
+            ),
+        ),
+        storage_retention_prune_timeout_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_RETENTION_PRUNE_TIMEOUT_SECONDS",
+                    str(STORAGE_RETENTION_PRUNE_TIMEOUT_SECONDS),
+                )
+            ),
+        ),
+        storage_retention_prune_max_backup_age_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_RETENTION_PRUNE_MAX_BACKUP_AGE_SECONDS",
+                    str(STORAGE_RETENTION_PRUNE_MAX_BACKUP_AGE_SECONDS),
+                )
+            ),
+        ),
+        storage_retention_prune_lock_ttl_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_RETENTION_PRUNE_LOCK_TTL_SECONDS",
+                    str(STORAGE_RETENTION_PRUNE_LOCK_TTL_SECONDS),
+                )
+            ),
+        ),
+        storage_retention_prune_confirm_ttl_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_RETENTION_PRUNE_CONFIRM_TTL_SECONDS",
+                    str(STORAGE_RETENTION_PRUNE_CONFIRM_TTL_SECONDS),
+                )
+            ),
+        ),
+        storage_retention_prune_stop_on_policy_failure=_parse_bool(
+            os.getenv(
+                "STORAGE_RETENTION_PRUNE_STOP_ON_POLICY_FAILURE",
+                str(STORAGE_RETENTION_PRUNE_STOP_ON_POLICY_FAILURE).lower(),
+            ),
+            default=STORAGE_RETENTION_PRUNE_STOP_ON_POLICY_FAILURE,
         ),
     )

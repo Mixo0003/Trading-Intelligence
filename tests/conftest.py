@@ -89,6 +89,15 @@ def make_test_settings(**overrides) -> Settings:
         storage_backup_lock_ttl_seconds=600,
         storage_backup_min_free_bytes=256 * 1024 * 1024,
         storage_backup_label="ti_backup",
+        storage_retention_prune_enabled=False,
+        storage_retention_prune_dry_run=True,
+        storage_retention_prune_max_rows_per_run=500,
+        storage_retention_prune_max_rows_per_policy=200,
+        storage_retention_prune_timeout_seconds=30,
+        storage_retention_prune_max_backup_age_seconds=86400,
+        storage_retention_prune_lock_ttl_seconds=300,
+        storage_retention_prune_confirm_ttl_seconds=120,
+        storage_retention_prune_stop_on_policy_failure=True,
     )
     base.update(overrides)
     return Settings(**base)

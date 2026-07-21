@@ -24,6 +24,7 @@ from app.health.thresholds import (
 )
 from app.storage.backup import backup_metrics_for_health
 from app.storage.cleanup import cleanup_metrics_for_health
+from app.storage.retention_prune import prune_metrics_for_health
 
 logger = logging.getLogger(__name__)
 
@@ -431,11 +432,13 @@ def probe_infrastructure(settings: Settings) -> ComponentStatus:
     storage = collect_storage_metrics(settings, prior_metrics=prior_metrics)
     cleanup_metrics = cleanup_metrics_for_health(settings)
     backup_metrics = backup_metrics_for_health(settings)
+    prune_metrics = prune_metrics_for_health(settings)
     cfg = sanitize_config_summary(settings)
     metrics = {
         **storage.as_sanitized_dict(),
         **cleanup_metrics,
         **backup_metrics,
+        **prune_metrics,
         "config": cfg,
         "cache_note": "scan_snapshots bounded per user/region",
         "retention_preview": "admin dry-run available via System Health",
