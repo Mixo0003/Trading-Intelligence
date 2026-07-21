@@ -58,16 +58,30 @@ Admin-only, deduplicated by `(component, incident_type, fingerprint)`:
 
 Edit-in-place English menu under **System Health**: Summary, Weather Providers, Copy Intelligence, Jobs & Scheduler, Database & Cache, **Storage**, Retention Dry-Run, Backup Status, Recent Incidents, Run Self-Test, Health Settings, Main Menu.
 
-### Storage (admin-only, V2.1.1 Phase 5)
+### Storage menu (admin-only, V2.1.1)
 
-Compact Storage section with:
+Compact Storage section under System Health. Every entry re-checks `ADMIN_IDS`. Telegram shows logical path labels only (`live_database`, `logs`, `cache`, `backup`, `proof_artifacts`) — never absolute private paths, secrets, wallets, Telegram IDs, raw SQL, or message contents.
 
-- Storage Metrics, Backup Status, Create Backup
-- File Cleanup Preview, Retention Preview
-- Run Safe File Cleanup, Run Retention Batch
-- Maintenance History, Refresh, Back to System Health
+| Action | Kind | Behavior |
+|--------|------|----------|
+| **Metrics** | Preview-only | Sanitized disk, DB/WAL sizes, storage level, config flags. Read-only. |
+| **Backup Status** | Preview-only | Last backup label/status/age and integrity-gate readiness. No files created. |
+| **Create Backup** | Explicit confirmation | Online SQLite backup + integrity check. Requires admin confirm token; refuses if backup dir unset or free space too low. |
+| **File Cleanup Preview** | Preview-only | Inventory of eligible files under configured roots; dry-run style report. Deletes nothing. |
+| **Retention Preview** | Preview-only | Read-only SQLite retention audit / candidate counts. Deletes no rows. |
+| **Run Safe Cleanup** | Explicit confirmation | Bounded explicit-path cleanup. Blocked unless enabled and not dry-run; still requires admin confirm + locks/budgets. |
+| **Run Retention Batch** | Explicit confirmation | Bounded prune. Requires verified-backup gate, enabled + non-dry-run settings, admin confirm, locks/row budgets. |
+| **Maintenance History** | Preview-only | Sanitized recent cleanup / backup / prune outcomes. |
+| **Refresh** | Preview-only | Re-renders Storage summary from current metrics. |
 
-Safe actions require explicit confirmation tokens bound to admin identity, database identity, and preview fingerprints. Defaults keep cleanup/pruning disabled and dry-run enabled. Destructive handlers never bypass service-layer gates. Paths, secrets, wallets, Telegram IDs, raw SQL, and message contents are never shown.
+#### Defaults and gates
+
+- `STORAGE_CLEANUP_ENABLED=false`, `STORAGE_CLEANUP_DRY_RUN=true` by default.
+- `STORAGE_RETENTION_PRUNE_ENABLED=false`, `STORAGE_RETENTION_PRUNE_DRY_RUN=true` by default.
+- `STORAGE_BACKUP_ENABLED=false` by default; backup dir must be an absolute configured path.
+- Retention prune requires a recent **verified** backup (age gate); otherwise gate status is BLOCKED.
+- No automatic VACUUM and no automatic `journal_mode` changes.
+- Confirmation tokens are bound to admin identity, database identity, and preview fingerprints. Handlers never bypass service-layer gates.
 
 ### Storage alerts
 
