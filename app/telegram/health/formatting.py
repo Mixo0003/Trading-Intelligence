@@ -155,7 +155,76 @@ def format_db_health(settings: Settings, overall: OverallHealth) -> str:
             for name in highlight:
                 if name in row_counts:
                     lines.append(f"{name}: {row_counts[name]}")
+        # Phase 2 read-only cleanup preview (no destructive actions).
+        if "cleanup_candidate_count" in metrics:
+            lines.append(f"Cleanup candidates: {metrics['cleanup_candidate_count']}")
+        if "cleanup_reclaimable_bytes" in metrics:
+            lines.append(f"Cleanup reclaimable bytes: {metrics['cleanup_reclaimable_bytes']}")
+        if metrics.get("cleanup_status") is not None:
+            lines.append(f"Cleanup inventory: {metrics.get('cleanup_status')}")
+        if metrics.get("cleanup_last_status") is not None:
+            lines.append(f"Cleanup last status: {metrics.get('cleanup_last_status')}")
+        if "cleanup_enabled" in metrics or "cleanup_dry_run" in str(metrics):
+            lines.append(
+                "Cleanup enabled: "
+                f"{metrics.get('cleanup_enabled', False)}; "
+                f"dry-run: {metrics.get('cleanup_dry_run', True)}"
+            )
     lines.append("Configured DB: live_database")
+    return "\n".join(lines)
+
+
+def format_retention_preview(settings: Settings, *, page: int = 0, page_size: int = 12) -> str:
+    """Admin-only dry-run retention preview. Never deletes rows."""
+    from app.storage.retention_audit import run_retention_audit
+
+    report = run_retention_audit(settings)
+    lines = [
+        "📋 Retention Dry-Run Preview",
+        "DRY RUN — no database rows were deleted.",
+        f"Status: {report.status}",
+        f"Checked: {report.checked_at}",
+        "",
+    ]
+    if report.registry_errors:
+        lines.append("Registry errors: " + "; ".join(report.registry_errors[:3]))
+        lines.append("")
+
+    proof = report.mutation_proof or {}
+    if proof.get("row_counts_unchanged") is True:
+        lines.append("Mutation proof: row counts unchanged")
+    elif proof:
+        lines.append("Mutation proof: see audit status")
+    lines.append("")
+
+    # Compact listing with pagination by policy order.
+    start = max(0, page) * page_size
+    end = start + page_size
+    slice_policies = report.policies[start:end]
+    if not report.policies:
+        lines.append("No policies evaluated.")
+    for item in slice_policies:
+        cand = item.candidate_rows if item.candidate_rows is not None else "-"
+        total = item.total_rows if item.total_rows is not None else "-"
+        lines.append(
+            f"• [{item.status}] {item.dataset}: total={total} candidates={cand}"
+        )
+        if item.status == "APPROVED" and item.retention_cutoff_iso:
+            age = (
+                f"{int(item.oldest_candidate_age_seconds)}s"
+                if item.oldest_candidate_age_seconds is not None
+                else "-"
+            )
+            lines.append(
+                f"  cutoff_days_policy batch={item.future_batch_limit} oldest_candidate_age={age}"
+            )
+        lines.append(f"  {item.reason}")
+
+    total_pages = max(1, (len(report.policies) + page_size - 1) // page_size)
+    lines.append("")
+    lines.append(f"Page {page + 1}/{total_pages}")
+    lines.append("Scope is row counts only — not reclaimable disk bytes.")
+    lines.append("No wallets, secrets, paths, or message contents shown.")
     return "\n".join(lines)
 
 

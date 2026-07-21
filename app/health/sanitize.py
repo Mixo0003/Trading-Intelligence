@@ -32,7 +32,7 @@ def sanitize_path(path: str | Path | None) -> str:
     return p.name or str(p)
 
 
-_LOGICAL_PATH_LABELS = frozenset({"live_database", "logs", "cache", "backup"})
+_LOGICAL_PATH_LABELS = frozenset({"live_database", "logs", "cache", "backup", "proof_artifacts"})
 
 
 def logical_path_label(role: str) -> str:
@@ -46,7 +46,15 @@ def logical_path_label(role: str) -> str:
 def assert_no_private_path(value: str) -> bool:
     """True when value does not look like an absolute private filesystem path."""
     text = str(value or "")
-    if not text or text in {"(unset)", "live_database", "logs", "cache", "backup", "path"}:
+    if not text or text in {
+        "(unset)",
+        "live_database",
+        "logs",
+        "cache",
+        "backup",
+        "proof_artifacts",
+        "path",
+    }:
         return True
     if ":\\" in text or text.startswith("\\\\") or text.startswith("/home/") or text.startswith("/Users/"):
         return False
@@ -88,6 +96,13 @@ def sanitize_config_summary(settings) -> dict[str, Any]:
         "storage_cache": (
             logical_path_label("cache") if getattr(settings, "storage_cache_dir", "") else "(unset)"
         ),
+        "storage_proof": (
+            logical_path_label("proof_artifacts")
+            if getattr(settings, "storage_proof_dir", "")
+            else "(unset)"
+        ),
+        "storage_cleanup_enabled": bool(getattr(settings, "storage_cleanup_enabled", False)),
+        "storage_cleanup_dry_run": bool(getattr(settings, "storage_cleanup_dry_run", True)),
         "copy_poll_interval_seconds": settings.copy_poll_interval_seconds,
         "health_check_interval_seconds": settings.health_check_interval_seconds,
         "forecast_min_providers": settings.forecast_min_providers,

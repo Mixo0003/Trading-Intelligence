@@ -8,13 +8,22 @@ from app.config.constants import (
     DEFAULT_DB_PATH,
     DEFAULT_LANGUAGE,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_STORAGE_ACTIVE_LOG_NAME,
     DEFAULT_STORAGE_CACHE_DIR,
     DEFAULT_STORAGE_LOGS_DIR,
+    DEFAULT_STORAGE_PROOF_DIR,
     POLYMARKET_CLOB_BASE_URL,
     POLYMARKET_DATA_BASE_URL,
     POLYMARKET_GAMMA_BASE_URL,
     PROJECT_NAME,
     PROJECT_VERSION,
+    STORAGE_CACHE_MIN_AGE_SECONDS,
+    STORAGE_CLEANUP_DRY_RUN,
+    STORAGE_CLEANUP_ENABLED,
+    STORAGE_CLEANUP_LOCK_TTL_SECONDS,
+    STORAGE_CLEANUP_MAX_BYTES_PER_RUN,
+    STORAGE_CLEANUP_MAX_FILES_PER_RUN,
+    STORAGE_CLEANUP_MIN_AGE_SECONDS,
     STORAGE_CRITICAL_DB_GROWTH_BYTES,
     STORAGE_CRITICAL_FREE_BYTES,
     STORAGE_CRITICAL_FREE_PERCENT,
@@ -23,6 +32,11 @@ from app.config.constants import (
     STORAGE_DEGRADED_FREE_BYTES,
     STORAGE_DEGRADED_FREE_PERCENT,
     STORAGE_DEGRADED_WAL_BYTES,
+    STORAGE_FILE_LOGGING_ENABLED,
+    STORAGE_LOG_BACKUP_COUNT,
+    STORAGE_LOG_MAX_BYTES,
+    STORAGE_LOG_RETENTION_DAYS,
+    STORAGE_PROOF_MIN_AGE_SECONDS,
     WEATHER_GOV_BASE_URL,
 )
 
@@ -122,6 +136,20 @@ class Settings:
 
     storage_logs_dir: str
     storage_cache_dir: str
+    storage_proof_dir: str
+    storage_active_log_name: str
+    storage_file_logging_enabled: bool
+    storage_cleanup_enabled: bool
+    storage_cleanup_dry_run: bool
+    storage_log_max_bytes: int
+    storage_log_backup_count: int
+    storage_log_retention_days: int
+    storage_cleanup_min_age_seconds: int
+    storage_cache_min_age_seconds: int
+    storage_proof_min_age_seconds: int
+    storage_cleanup_max_files_per_run: int
+    storage_cleanup_max_bytes_per_run: int
+    storage_cleanup_lock_ttl_seconds: int
     storage_degraded_free_bytes: int
     storage_critical_free_bytes: int
     storage_degraded_free_percent: float
@@ -250,6 +278,71 @@ def load_settings() -> Settings:
         ),
         storage_logs_dir=os.getenv("STORAGE_LOGS_DIR", DEFAULT_STORAGE_LOGS_DIR).strip(),
         storage_cache_dir=os.getenv("STORAGE_CACHE_DIR", DEFAULT_STORAGE_CACHE_DIR).strip(),
+        storage_proof_dir=os.getenv("STORAGE_PROOF_DIR", DEFAULT_STORAGE_PROOF_DIR).strip(),
+        storage_active_log_name=os.getenv(
+            "STORAGE_ACTIVE_LOG_NAME", DEFAULT_STORAGE_ACTIVE_LOG_NAME
+        ).strip()
+        or DEFAULT_STORAGE_ACTIVE_LOG_NAME,
+        storage_file_logging_enabled=_parse_bool(
+            os.getenv("STORAGE_FILE_LOGGING_ENABLED", str(STORAGE_FILE_LOGGING_ENABLED).lower()),
+            default=STORAGE_FILE_LOGGING_ENABLED,
+        ),
+        storage_cleanup_enabled=_parse_bool(
+            os.getenv("STORAGE_CLEANUP_ENABLED", str(STORAGE_CLEANUP_ENABLED).lower()),
+            default=STORAGE_CLEANUP_ENABLED,
+        ),
+        storage_cleanup_dry_run=_parse_bool(
+            os.getenv("STORAGE_CLEANUP_DRY_RUN", str(STORAGE_CLEANUP_DRY_RUN).lower()),
+            default=STORAGE_CLEANUP_DRY_RUN,
+        ),
+        storage_log_max_bytes=max(
+            1024, int(os.getenv("STORAGE_LOG_MAX_BYTES", str(STORAGE_LOG_MAX_BYTES)))
+        ),
+        storage_log_backup_count=max(
+            1, int(os.getenv("STORAGE_LOG_BACKUP_COUNT", str(STORAGE_LOG_BACKUP_COUNT)))
+        ),
+        storage_log_retention_days=max(
+            1, int(os.getenv("STORAGE_LOG_RETENTION_DAYS", str(STORAGE_LOG_RETENTION_DAYS)))
+        ),
+        storage_cleanup_min_age_seconds=max(
+            0,
+            int(os.getenv("STORAGE_CLEANUP_MIN_AGE_SECONDS", str(STORAGE_CLEANUP_MIN_AGE_SECONDS))),
+        ),
+        storage_cache_min_age_seconds=max(
+            0,
+            int(os.getenv("STORAGE_CACHE_MIN_AGE_SECONDS", str(STORAGE_CACHE_MIN_AGE_SECONDS))),
+        ),
+        storage_proof_min_age_seconds=max(
+            0,
+            int(os.getenv("STORAGE_PROOF_MIN_AGE_SECONDS", str(STORAGE_PROOF_MIN_AGE_SECONDS))),
+        ),
+        storage_cleanup_max_files_per_run=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_CLEANUP_MAX_FILES_PER_RUN",
+                    str(STORAGE_CLEANUP_MAX_FILES_PER_RUN),
+                )
+            ),
+        ),
+        storage_cleanup_max_bytes_per_run=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_CLEANUP_MAX_BYTES_PER_RUN",
+                    str(STORAGE_CLEANUP_MAX_BYTES_PER_RUN),
+                )
+            ),
+        ),
+        storage_cleanup_lock_ttl_seconds=max(
+            1,
+            int(
+                os.getenv(
+                    "STORAGE_CLEANUP_LOCK_TTL_SECONDS",
+                    str(STORAGE_CLEANUP_LOCK_TTL_SECONDS),
+                )
+            ),
+        ),
         storage_degraded_free_bytes=max(
             1, int(os.getenv("STORAGE_DEGRADED_FREE_BYTES", str(STORAGE_DEGRADED_FREE_BYTES)))
         ),

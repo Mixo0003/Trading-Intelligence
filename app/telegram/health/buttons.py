@@ -15,6 +15,7 @@ CB_HEALTH_DB = "health:db"
 CB_HEALTH_INCIDENTS = "health:incidents"
 CB_HEALTH_SELFTEST = "health:selftest"
 CB_HEALTH_SETTINGS = "health:settings"
+CB_HEALTH_RETENTION = "health:retention"
 CB_HEALTH_REBUILD_BASELINES = "health:rebuild_baselines"
 CB_HEALTH_REBUILD_CONFIRM = "health:rebuild_confirm"
 CB_HEALTH_REBUILD_CANCEL = "health:rebuild_cancel"
@@ -32,6 +33,7 @@ HEALTH_CALLBACKS = frozenset(
         CB_HEALTH_INCIDENTS,
         CB_HEALTH_SELFTEST,
         CB_HEALTH_SETTINGS,
+        CB_HEALTH_RETENTION,
         CB_HEALTH_REBUILD_BASELINES,
         CB_HEALTH_REBUILD_CONFIRM,
         CB_HEALTH_REBUILD_CANCEL,
@@ -50,6 +52,11 @@ def health_inline_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("⏱ Jobs & Scheduler", callback_data=CB_HEALTH_JOBS),
                 InlineKeyboardButton("🗄 Database & Cache", callback_data=CB_HEALTH_DB),
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 Retention Dry-Run", callback_data=CB_HEALTH_RETENTION
+                ),
             ],
             [
                 InlineKeyboardButton("🚨 Recent Incidents", callback_data=CB_HEALTH_INCIDENTS),
