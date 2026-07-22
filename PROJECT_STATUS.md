@@ -223,6 +223,12 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 Complete final documentation review for V2.1.1 on `feature/v2.1.1-storage-retention`, then open the PR for review and merge. Do not implement V2.2 until V2.1.1 is merged. After merge, the next bounded product work follows the V2.2.1+ sequence in `ROADMAP.md` (separate small version branches).
 
+## V2.2.1 Editable Copy Settings (in progress on branch)
+
+Branch: `feature/v2.2.1-copy-settings`.
+
+Implemented: per-user editable Copy Settings (nine fields), Edit/Reset Telegram UX with preview-confirm and stale tokens, JSON load migration for `max_event_age_seconds`, per-user poll skip (global job floor), per-subscriber max event age and alert-mode filtering. See `docs/COPY_SETTINGS.md`.
+
 ## Fresh Cursor context startup prompt
 
 ```text

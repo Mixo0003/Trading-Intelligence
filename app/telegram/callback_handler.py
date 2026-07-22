@@ -194,4 +194,10 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await apply_settings_callback(update, context, data)
         return
 
+    if data.startswith("cset:"):
+        from app.telegram.copy_intel.handlers import handle_copy_settings_flow
+
+        await handle_copy_settings_flow(update, context, data)
+        return
+
     logger.info("Unhandled callback data: %s", data)

@@ -193,11 +193,14 @@ def format_trader_list(scores: list[DiscoveryScore], *, title: str) -> list[str]
     return chunks
 
 
-def format_settings_card(user: CopyUserSettings) -> str:
+def format_settings_card(user: CopyUserSettings, *, modified: bool = False) -> str:
+    profile_line = f"Profile: {user.profile}"
+    if modified:
+        profile_line += " (Modified)"
     return "\n".join(
         [
             "Copy Settings (no secrets)",
-            f"Profile: {user.profile}",
+            profile_line,
             f"Min resolved markets: {user.min_resolved_markets}",
             f"Min active days: {user.min_active_days}",
             f"Max drawdown: {user.max_drawdown_pct:.0%}",
@@ -205,10 +208,67 @@ def format_settings_card(user: CopyUserSettings) -> str:
             f"Max category concentration: {user.max_category_concentration:.0%}",
             f"Min liquidity: ${user.min_liquidity_usd:,.0f}",
             f"Poll interval: {user.poll_interval_seconds}s",
+            f"Max event age: {user.max_event_age_seconds}s",
             f"Alert decisions: {user.alert_decisions}",
             "Default profile is Balanced.",
+            "Use Edit Settings to change one value, or Reset to Balanced.",
         ]
     )
+
+
+def format_settings_edit_list() -> str:
+    return "\n".join(
+        [
+            "Edit Copy Settings",
+            "Choose one setting to change.",
+            "You will preview and confirm before anything is saved.",
+        ]
+    )
+
+
+def format_settings_field_prompt(user: CopyUserSettings, key: str) -> str:
+    from app.copy_intel.settings_bounds import BOUNDS, format_setting_value
+
+    bound = BOUNDS[key]
+    current = getattr(user, key)
+    lines = [
+        f"Edit: {bound.label}",
+        f"Current: {format_setting_value(key, current)}",
+        f"Unit: {bound.unit}",
+    ]
+    if bound.min_value is not None and bound.max_value is not None:
+        lines.append(
+            f"Allowed: {format_setting_value(key, bound.min_value)}"
+            f" – {format_setting_value(key, bound.max_value)}"
+        )
+    lines.append("Tap a preset below, or type a new value in chat.")
+    return "\n".join(lines)
+
+
+def format_settings_preview(
+    *,
+    key: str,
+    old_display: str,
+    new_display: str,
+    effect: str,
+    warnings: list[str],
+) -> str:
+    from app.copy_intel.settings_bounds import BOUNDS
+
+    lines = [
+        "Preview change (not saved yet)",
+        f"Setting: {BOUNDS[key].label}",
+        f"Old: {old_display}",
+        f"New: {new_display}",
+        f"Effect: {effect}",
+    ]
+    if warnings:
+        lines.append("Warnings:")
+        lines.extend(f"- {w}" for w in warnings)
+    else:
+        lines.append("Warnings: none")
+    lines.append("Confirm to save, or Cancel to discard.")
+    return "\n".join(lines)
 
 
 def _money(value: float | None) -> str:

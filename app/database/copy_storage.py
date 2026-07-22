@@ -619,7 +619,14 @@ def get_poll_state(settings: Settings, key: str) -> str | None:
     return row["value"] if row else None
 
 
-def save_copy_user_settings(settings: Settings, *, telegram_id: int, payload: dict) -> None:
+def save_copy_user_settings(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    payload: dict,
+    audit_action: str = "copy_settings_save",
+    audit_extra: dict | None = None,
+) -> None:
     with get_connection(settings) as connection:
         connection.execute(
             """
@@ -637,11 +644,17 @@ def save_copy_user_settings(settings: Settings, *, telegram_id: int, payload: di
                 _now_iso(),
             ),
         )
+    audit_payload = {"profile": payload.get("profile")}
+    if audit_extra:
+        # Scalars / key lists only — never tokens, paths, or secrets.
+        for key in ("changed_keys", "old", "new", "settings_fingerprint"):
+            if key in audit_extra:
+                audit_payload[key] = audit_extra[key]
     write_audit_log(
         settings,
         actor=str(telegram_id),
-        action="copy_settings_save",
-        payload={"profile": payload.get("profile")},
+        action=audit_action,
+        payload=audit_payload,
     )
 
 

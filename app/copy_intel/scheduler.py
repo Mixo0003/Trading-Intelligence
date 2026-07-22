@@ -20,6 +20,7 @@ from app.copy_intel.freshness import (
 from app.copy_intel.ingestion import ingest_wallet
 from app.copy_intel.recommendation import build_recommendation
 from app.copy_intel.risk import assert_read_only, record_paper_copy
+from app.copy_intel.settings_profiles import get_user_settings
 from app.copy_intel.watchlist import list_enabled, list_entries
 from app.database import copy_storage
 from app.telegram.copy_intel.formatting import format_recommendation_card
@@ -28,6 +29,51 @@ logger = logging.getLogger(__name__)
 
 COPY_POLL_REGISTERED_KEY = "copy_intel_poll_registered"
 _COPY_POLL_LOCK = "copy_intel_poll"
+
+
+def _parse_iso_to_epoch(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        text = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def hard_filter_max_event_age_seconds(settings: Settings) -> int:
+    """Ceiling for permanent stale marks: max of admin subscribers' ages."""
+    if not settings.admin_ids:
+        return int(settings.copy_max_event_age_seconds)
+    ages = [
+        get_user_settings(settings, admin_id).max_event_age_seconds
+        for admin_id in settings.admin_ids
+    ]
+    return max(ages) if ages else int(settings.copy_max_event_age_seconds)
+
+
+def should_skip_wallet_poll(
+    settings: Settings,
+    wallet: str,
+    *,
+    owner_id: int | None,
+    now: float | None = None,
+) -> bool:
+    """
+    Per-user poll skip (V2.2.1). Global JobQueue interval remains the execution floor;
+    user interval can only make polling slower.
+    """
+    # Missing owner → Balanced defaults via get_user_settings (no row → Balanced).
+    user = get_user_settings(settings, int(owner_id) if owner_id is not None else 0)
+    interval = int(user.poll_interval_seconds)
+    state = copy_storage.get_wallet_monitor_state(settings, wallet)
+    if state is None or not state.last_polled_at:
+        return False
+    last = _parse_iso_to_epoch(state.last_polled_at)
+    if last is None:
+        return False
+    now_ts = time.time() if now is None else float(now)
+    return (now_ts - last) < interval
 
 
 async def copy_intel_poll_job(context) -> None:
@@ -60,13 +106,21 @@ async def copy_intel_poll_job(context) -> None:
     try:
         assert_read_only(settings)
         client = CopyDataClient(settings)
-        labels = {e.wallet: (e.label or e.wallet[:10]) for e in list_entries(settings)}
-        # (event_uid, wallet, recommendation) claimed at wallet level
-        pending_recs: list[tuple[str, str, object]] = []
+        entries = list_entries(settings)
+        labels = {e.wallet: (e.label or e.wallet[:10]) for e in entries}
+        owners = {e.wallet: e.added_by for e in entries}
+        hard_age = hard_filter_max_event_age_seconds(settings)
+        # (event_uid, wallet, recommendation, event_ts)
+        pending_recs: list[tuple[str, str, object, int | None]] = []
         last_error = None
         stale_rejects = 0
         for wallet in list_enabled(settings):
             try:
+                owner_id = owners.get(wallet)
+                if should_skip_wallet_poll(settings, wallet, owner_id=owner_id):
+                    logger.debug("Copy poll skip wallet %s (user interval)", wallet[:10])
+                    continue
+
                 # Outdated/missing baseline_version → MIGRATING; first cycle is baseline-only.
                 ensure_baseline_current(settings, wallet)
                 if not baseline_is_complete(settings, wallet):
@@ -78,8 +132,18 @@ async def copy_intel_poll_job(context) -> None:
 
                 events = ingest_wallet(settings, wallet, client=client)
                 copy_storage.touch_wallet_last_polled(settings, wallet)
-                alertable = filter_alertable_events(settings, wallet, events)
+                alertable = filter_alertable_events(
+                    settings,
+                    wallet,
+                    events,
+                    max_age_seconds=hard_age,
+                )
                 stale_rejects += max(0, len(events) - len(alertable))
+                owner_settings = (
+                    get_user_settings(settings, owner_id)
+                    if owner_id is not None
+                    else get_user_settings(settings, 0)
+                )
                 for event in alertable:
                     if event.event_type in {"open", "increase"}:
                         rec = build_recommendation(
@@ -87,9 +151,11 @@ async def copy_intel_poll_job(context) -> None:
                             event,
                             trader_label=labels.get(wallet),
                             client=client,
+                            min_liquidity_usd=owner_settings.min_liquidity_usd,
                         )
                         uid = event.event_uid or build_event_uid(event)
-                        pending_recs.append((uid, wallet, rec))
+                        event_ts = int(event.ts) if event.ts is not None else None
+                        pending_recs.append((uid, wallet, rec, event_ts))
                         if rec.action == "COPY" and rec.max_alloc > 0:
                             record_paper_copy(
                                 settings,
@@ -144,10 +210,31 @@ async def copy_intel_poll_job(context) -> None:
         copy_storage.release_job_lock(settings, job_name=_COPY_POLL_LOCK, owner=owner)
 
 
+def _subscriber_allows_recommendation(settings: Settings, subscriber_id: int, rec) -> bool:
+    user = get_user_settings(settings, subscriber_id)
+    if user.alert_decisions == "FOLLOW_ONLY" and getattr(rec, "action", None) == "WATCH":
+        return False
+    return True
+
+
+def _event_too_old_for_subscriber(
+    settings: Settings,
+    subscriber_id: int,
+    event_ts: int | None,
+    *,
+    now: int | None = None,
+) -> bool:
+    if event_ts is None:
+        return False
+    user = get_user_settings(settings, subscriber_id)
+    now_ts = int(time.time()) if now is None else int(now)
+    return (now_ts - int(event_ts)) > int(user.max_event_age_seconds)
+
+
 async def _deliver_pending_alerts(
     context,
     settings: Settings,
-    pending_recs: list[tuple[str, str, object]],
+    pending_recs: list[tuple[str, str, object, int | None]],
 ) -> None:
     if not pending_recs or not settings.admin_ids:
         return
@@ -155,7 +242,11 @@ async def _deliver_pending_alerts(
     for admin_id in settings.admin_ids:
         claimed_cards: list[str] = []
         claimed_keys: list[tuple[str, str]] = []
-        for event_uid, wallet, rec in pending_recs:
+        for event_uid, wallet, rec, event_ts in pending_recs:
+            if not _subscriber_allows_recommendation(settings, admin_id, rec):
+                continue
+            if _event_too_old_for_subscriber(settings, admin_id, event_ts):
+                continue
             card = format_recommendation_card(rec)  # type: ignore[arg-type]
             if not copy_storage.claim_copy_alert_delivery(
                 settings,
