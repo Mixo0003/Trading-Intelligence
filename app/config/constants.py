@@ -71,6 +71,9 @@ COPY_MAX_ALLOC_PER_MARKET = 0.05
 COPY_MAX_ALLOC_PER_WALLET = 0.03
 COPY_MAX_ALLOC_TOTAL = 0.15
 
+# V2.2.1 editable Copy Settings confirmation TTL.
+COPY_SETTINGS_CONFIRM_TTL_SECONDS = 120
+
 WEATHER_GOV_BASE_URL = "https://api.weather.gov"
 
 MAIN_MENU_IMAGE_PATH = "assets/ti_banner.jpg"

@@ -1,5 +1,22 @@
 # Changelog
 
+## V2.2.1 — Editable Copy Settings (2026-07-21)
+
+Branch: `feature/v2.2.1-copy-settings`.
+
+### Added
+
+- Per-user editable Copy Settings (nine fields) with centralized defaults and bounds.
+- Telegram Edit Settings flow: choose field → enter/select → validate → preview → confirm/cancel.
+- Reset to Balanced with preview/confirm and stale-token protection.
+- `max_event_age_seconds` on `CopyUserSettings` (migration default from global env).
+- Per-user poll skip (global JobQueue floor) and per-subscriber max-age / alert-mode filtering.
+- Audit payloads for settings save/reset (scalars only; no secrets).
+
+### Docs
+
+- `docs/COPY_SETTINGS.md`
+
 ## V2.1.1 — Storage retention (2026-07-21)
 
 Branch: `feature/v2.1.1-storage-retention` (completed — pending PR merge).

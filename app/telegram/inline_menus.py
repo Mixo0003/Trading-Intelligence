@@ -46,6 +46,13 @@ CB_SET_BALANCED = "cset:bal"
 CB_SET_EXPLORATORY = "cset:exp"
 CB_SET_ALERT_FOLLOW = "cset:af"
 CB_SET_ALERT_BOTH = "cset:ab"
+CB_SET_EDIT = "cset:edit"
+CB_SET_RESET = "cset:rst"
+CB_SET_CONFIRM = "cset:ok"
+CB_SET_CANCEL = "cset:no"
+CB_SET_RESET_OK = "cset:rok"
+CB_SET_RESET_NO = "cset:rno"
+# Dynamic: cset:f:<code>, cset:pv:<code>:<idx>
 
 # Dynamic: disc:add:<wallet> (wallet = 42 chars → ~50 total)
 
@@ -143,7 +150,69 @@ def copy_settings_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Alerts: FOLLOW only", callback_data=CB_SET_ALERT_FOLLOW),
                 InlineKeyboardButton("Alerts: FOLLOW+WATCH", callback_data=CB_SET_ALERT_BOTH),
             ],
+            [InlineKeyboardButton("✏️ Edit Settings", callback_data=CB_SET_EDIT)],
+            [InlineKeyboardButton("↩ Reset to Balanced", callback_data=CB_SET_RESET)],
             [InlineKeyboardButton("⬅️ Copy Menu", callback_data=CB_COPY)],
+        ]
+    )
+
+
+def copy_settings_edit_keyboard() -> InlineKeyboardMarkup:
+    from app.copy_intel.settings_bounds import BOUNDS, FIELD_BY_KEY
+
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for key, bound in BOUNDS.items():
+        code = FIELD_BY_KEY[key]
+        row.append(InlineKeyboardButton(bound.label, callback_data=f"cset:f:{code}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️ Settings", callback_data=CB_COPY_SETTINGS)])
+    return InlineKeyboardMarkup(rows)
+
+
+def copy_settings_field_keyboard(field_key: str) -> InlineKeyboardMarkup:
+    from app.copy_intel.settings_bounds import FIELD_BY_KEY, preset_chips
+
+    code = FIELD_BY_KEY[field_key]
+    rows: list[list[InlineKeyboardButton]] = []
+    chips = preset_chips(field_key)
+    chip_row: list[InlineKeyboardButton] = []
+    for idx, (label, _value) in enumerate(chips):
+        chip_row.append(
+            InlineKeyboardButton(label, callback_data=f"cset:pv:{code}:{idx}")
+        )
+        if len(chip_row) == 3:
+            rows.append(chip_row)
+            chip_row = []
+    if chip_row:
+        rows.append(chip_row)
+    rows.append([InlineKeyboardButton("⬅️ Edit Settings", callback_data=CB_SET_EDIT)])
+    rows.append([InlineKeyboardButton("⬅️ Settings", callback_data=CB_COPY_SETTINGS)])
+    return InlineKeyboardMarkup(rows)
+
+
+def copy_settings_confirm_keyboard(*, reset: bool = False) -> InlineKeyboardMarkup:
+    if reset:
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("✅ Confirm reset", callback_data=CB_SET_RESET_OK),
+                    InlineKeyboardButton("❌ Cancel", callback_data=CB_SET_RESET_NO),
+                ],
+                [InlineKeyboardButton("⬅️ Settings", callback_data=CB_COPY_SETTINGS)],
+            ]
+        )
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Confirm save", callback_data=CB_SET_CONFIRM),
+                InlineKeyboardButton("❌ Cancel", callback_data=CB_SET_CANCEL),
+            ],
+            [InlineKeyboardButton("⬅️ Settings", callback_data=CB_COPY_SETTINGS)],
         ]
     )
 

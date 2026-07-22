@@ -19,6 +19,7 @@ def build_recommendation(
     *,
     trader_label: str | None = None,
     client: CopyDataClient | None = None,
+    min_liquidity_usd: float | None = None,
 ) -> CopyRecommendation:
     client = client or CopyDataClient(settings)
     metrics = compute_trader_metrics(settings, event.wallet, client=client)
@@ -38,6 +39,7 @@ def build_recommendation(
         price_drift=price_drift,
         slippage_est=slippage_est,
         current_price=current_price,
+        min_liquidity_usd=min_liquidity_usd,
     )
 
     rec = CopyRecommendation(
@@ -82,6 +84,7 @@ def _decide_action(
     price_drift: float | None,
     slippage_est: float | None,
     current_price: float | None,
+    min_liquidity_usd: float | None = None,
 ) -> tuple[CopyAction, str, float]:
     bankroll = settings.copy_paper_bankroll_usd
     base_alloc = bankroll * 0.03
@@ -98,7 +101,11 @@ def _decide_action(
     if price_drift is not None and abs(price_drift) > settings.copy_max_slippage_pct:
         return "WATCH", f"price drift {price_drift:.1%} since entry", base_alloc * 0.5
 
-    liquidity_ok, liq_reason = _liquidity_ok(settings, slippage_est)
+    liquidity_ok, liq_reason = _liquidity_ok(
+        settings,
+        slippage_est,
+        min_liquidity_usd=min_liquidity_usd,
+    )
     if not liquidity_ok:
         return "SKIP", liq_reason, 0.0
 
@@ -123,11 +130,21 @@ def _decide_action(
     return "COPY", f"score {trader_score:.0f}; drift {price_drift or 0:.1%}", cap
 
 
-def _liquidity_ok(settings: Settings, slippage_est: float | None) -> tuple[bool, str]:
+def _liquidity_ok(
+    settings: Settings,
+    slippage_est: float | None,
+    *,
+    min_liquidity_usd: float | None = None,
+) -> tuple[bool, str]:
     if slippage_est is None:
         return True, ""
-    depth_proxy = (1.0 - min(1.0, slippage_est * 10)) * settings.copy_min_liquidity_usd
-    if depth_proxy < settings.copy_min_liquidity_usd * 0.25:
+    floor = (
+        float(min_liquidity_usd)
+        if min_liquidity_usd is not None
+        else settings.copy_min_liquidity_usd
+    )
+    depth_proxy = (1.0 - min(1.0, slippage_est * 10)) * floor
+    if depth_proxy < floor * 0.25:
         return False, "insufficient market liquidity"
     return True, ""
 

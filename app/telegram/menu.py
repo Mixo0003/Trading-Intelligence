@@ -1,4 +1,4 @@
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from app.config.settings import Settings
 from app.copy_intel.scheduler import schedule_copy_intel_jobs
@@ -14,6 +14,7 @@ from app.telegram.copy_intel.handlers import (
     copy_paper_command,
     copy_remove_command,
     copy_settings_command,
+    copy_settings_text_input,
     copy_status_command,
     copy_toggle_command,
 )
@@ -72,6 +73,11 @@ def build_telegram_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("copy_settings", copy_settings_command))
     # Single callback router — avoids duplicate/conflicting callback handlers.
     app.add_handler(CallbackQueryHandler(inline_callback_handler))
+    # Gated Copy Settings numeric/text input (only acts when edit field pending).
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, copy_settings_text_input),
+        group=1,
+    )
     app.add_error_handler(error_handler)
 
     schedule_report_jobs(app, settings)

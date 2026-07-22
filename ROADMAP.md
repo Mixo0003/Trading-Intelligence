@@ -46,16 +46,16 @@ Defaults remain non-destructive: no automatic VACUUM or `journal_mode` changes; 
 Before starting V2.2.x implementation:
 
 - [ ] Official Polymarket API research
-- [ ] Editable-settings specification
+- [x] Editable-settings specification
 - [ ] Paper-copy architecture
 - [ ] Security threat model
 - [ ] Limited Grill Me review for Copy Settings
 
-## V2.2.x — Copy Intelligence expansion (not started)
+## V2.2.x — Copy Intelligence expansion
 
 Use a separate small version branch per item. Do not start until V2.1.1 is merged and pre-V2.2 requirements above are satisfied.
 
-- [ ] **V2.2.1** Editable Copy Settings
+- [x] **V2.2.1** Editable Copy Settings (implemented on `feature/v2.2.1-copy-settings`)
 - [ ] **V2.2.2** Improved Copy Alerts and Position Intent
 - [ ] **V2.2.3** Advanced Trader Scoring
 - [ ] **V2.2.4** Trader Comparison

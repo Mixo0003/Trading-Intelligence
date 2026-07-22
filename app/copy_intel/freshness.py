@@ -429,10 +429,14 @@ def filter_alertable_events(
     *,
     now: int | None = None,
     market_resolved: dict[str, bool] | None = None,
+    max_age_seconds: int | None = None,
 ) -> list[TradeEvent]:
     """
     Return only genuinely new, actionable events after a COMPLETE baseline.
     Never treats observed_at / poll time as proof of newness.
+
+    max_age_seconds: optional override (V2.2.1 per-user ceiling). When omitted,
+    uses global settings.copy_max_event_age_seconds.
     """
     if not baseline_is_complete(settings, wallet):
         return []
@@ -445,7 +449,11 @@ def filter_alertable_events(
     sub_start = _parse_iso_ts(state.subscription_started_at)
     watermark_ts = state.newest_event_ts
     lag = CLOCK_LAG_TOLERANCE_SECONDS
-    max_age = settings.copy_max_event_age_seconds
+    max_age = (
+        int(max_age_seconds)
+        if max_age_seconds is not None
+        else settings.copy_max_event_age_seconds
+    )
     resolved_map = market_resolved or {}
     source_cutoff = sub_start - lag
 

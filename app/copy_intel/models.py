@@ -164,3 +164,4 @@ class CopyUserSettings:
     min_liquidity_usd: float
     poll_interval_seconds: int
     alert_decisions: AlertDecisions
+    max_event_age_seconds: int

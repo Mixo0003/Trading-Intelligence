@@ -241,10 +241,37 @@ def test_single_callback_handler_registered(tmp_path):
         h for h in app.handlers[0] if h.__class__.__name__ == "CallbackQueryHandler"
     ]
     assert len(callback_handlers) == 1
+    # V2.2.1: gated Copy Settings text input lives in handler group 1.
     message_handlers = [
-        h for h in app.handlers[0] if h.__class__.__name__ == "MessageHandler"
+        h
+        for group in app.handlers.values()
+        for h in group
+        if h.__class__.__name__ == "MessageHandler"
     ]
-    assert message_handlers == []
+    assert len(message_handlers) == 1
+
+
+def test_copy_settings_callbacks_under_64_bytes():
+    from app.telegram.inline_menus import (
+        CB_SET_EDIT,
+        CB_SET_RESET,
+        CB_SET_CONFIRM,
+        copy_settings_edit_keyboard,
+        copy_settings_field_keyboard,
+        copy_settings_inline_keyboard,
+    )
+
+    datas = []
+    for kb in (
+        copy_settings_inline_keyboard(),
+        copy_settings_edit_keyboard(),
+        copy_settings_field_keyboard("min_resolved_markets"),
+    ):
+        for row in kb.inline_keyboard:
+            for btn in row:
+                datas.append(btn.callback_data)
+    datas.extend([CB_SET_EDIT, CB_SET_RESET, CB_SET_CONFIRM])
+    assert all(len(d.encode("utf-8")) <= 64 for d in datas)
 
 
 def test_no_duplicate_callback_data_in_menus():
