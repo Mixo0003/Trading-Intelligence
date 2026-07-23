@@ -102,10 +102,11 @@ def can_manage_entry(
     *,
     is_admin: bool,
 ) -> bool:
+    """Row operations require admin AND exact added_by ownership (V2.2.2)."""
     if entry is None or user_id is None:
         return False
-    if is_admin:
-        return True
+    if not is_admin:
+        return False
     return entry.added_by == user_id
 
 
@@ -115,15 +116,14 @@ def list_entries_for_user(
     *,
     is_admin: bool,
 ) -> list[copy_storage.WatchlistEntry]:
-    entries = copy_storage.list_watchlist(settings)
-    if is_admin:
-        return entries
-    if user_id is None:
+    """User-facing watchlist is always owner-scoped; admin flag is access gate only."""
+    if user_id is None or not is_admin:
         return []
-    return [entry for entry in entries if entry.added_by == user_id]
+    return copy_storage.list_watchlist_for_owner(settings, int(user_id))
 
 
 def list_entries(settings: Settings) -> list[copy_storage.WatchlistEntry]:
+    """Internal/global listing (health/maintenance). Prefer list_entries_for_user in handlers."""
     return copy_storage.list_watchlist(settings)
 
 
@@ -132,7 +132,12 @@ def list_enabled(settings: Settings) -> list[str]:
 
 
 def profile_url(wallet: str) -> str:
-    return f"https://polymarket.com/profile/{wallet.lower()}"
+    from app.telegram.copy_intel.formatting import build_validated_trader_link
+
+    link = build_validated_trader_link(wallet)
+    if link is None:
+        raise ValueError("invalid wallet for profile link")
+    return link
 
 
 def _mark_monitoring_disabled(settings: Settings, wallet: str) -> None:

@@ -263,14 +263,34 @@ class TestLegacyMigration:
         client = _client(positions)
         ensure_baseline_current(settings, W1)
         assert run_baseline(settings, W1, client=client) == "COMPLETE"
-        # New market open via position-diff remains alertable (not size-churn).
+        # Checkpoint 5: unsigned open without matching trades → no accepted event.
         client2 = _client([_pos("cond-1", 100), _pos("cond-new", 40)])
         events = ingest_wallet(settings, W1, client=client2)
-        first = filter_alertable_events(settings, W1, events)
-        second = filter_alertable_events(settings, W1, events)
+        assert events == []
+        assert filter_alertable_events(settings, W1, events) == []
+        # Native-tx open remains alertable exactly once via the freshness gate.
+        now = int(time.time())
+        native = TradeEvent(
+            wallet=W1,
+            event_type="open",
+            condition_id="cond-new",
+            asset="asset-cond-new",
+            outcome="Yes",
+            side="BUY",
+            price=0.4,
+            size=40.0,
+            tx_hash="0xbrandnew",
+            ts=now - 5,
+            title="t",
+            slug="s",
+            dedup_key="dk",
+            prev_size=0.0,
+            new_size=40.0,
+        )
+        native = replace(native, event_uid=build_event_uid(native))
+        first = filter_alertable_events(settings, W1, [native], now=now)
+        second = filter_alertable_events(settings, W1, [native], now=now)
         assert len(first) == 1
-        assert first[0].condition_id == "cond-new"
-        assert first[0].event_type == "open"
         assert second == []
 
     def test_unsigned_increase_on_baselined_market_silent(self, settings):
@@ -281,8 +301,7 @@ class TestLegacyMigration:
         assert run_baseline(settings, W1, client=client) == "COMPLETE"
         client2 = _client([_pos("cond-1", 180)])
         events = ingest_wallet(settings, W1, client=client2)
-        assert len(events) == 1
-        assert events[0].event_type == "increase"
+        assert events == []
         assert filter_alertable_events(settings, W1, events) == []
 
     def test_restart_after_migrated_zero_replay(self, settings):

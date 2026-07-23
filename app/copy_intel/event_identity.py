@@ -36,8 +36,7 @@ def build_event_uid(event: TradeEvent, *, poll_seq: int = 0) -> str:
         tx = event.tx_hash.lower()
         return f"tx:{tx}:{action}:{condition}:{outcome}"
 
-    if event.trade_id:
-        return f"id:{str(event.trade_id).lower()}:{action}:{condition}:{outcome}"
+    # Undocumented trade_id / id fields are never trusted for native identity.
 
     size_delta = normalize_size(event.size)
     prev = normalize_size(event.prev_size) if event.prev_size is not None else None

@@ -9,10 +9,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.config.settings import Settings
+from app.copy_intel.api_result import unwrap_data_list
 from app.copy_intel.data_client import CopyDataClient, is_trade_activity
 from app.copy_intel.event_identity import build_event_uid, normalize_size
-from app.copy_intel.ingestion import parse_position, persist_snapshots
+from app.copy_intel.ingestion import _snapshots_to_v2_payload
 from app.copy_intel.models import PositionSnapshot, TradeEvent, TradeEventType
+from app.copy_intel.position_book import (
+    PositionBookFailure,
+    fetch_validated_position_book,
+)
 from app.database import copy_storage
 
 logger = logging.getLogger(__name__)
@@ -22,7 +27,7 @@ CLOCK_LAG_TOLERANCE_SECONDS = 120
 
 # Bump when baseline seeding / UID format changes. Legacy COMPLETE rows without
 # this version are treated as outdated and rebuilt before any live alerts.
-COPY_BASELINE_VERSION = 2
+COPY_BASELINE_VERSION = 3
 
 _SIZE_EPS = 1e-6
 
@@ -164,21 +169,25 @@ def run_baseline(settings: Settings, wallet: str, client: CopyDataClient | None 
     )
     run_id = copy_storage.start_baseline_run(settings, wallet)
     try:
-        # Fetch all comparison sources before any COMPLETE write.
-        raw_positions = _as_list(client.fetch_positions(wallet))
+        # Complete validated asset book first — fail closed before any COMPLETE write.
+        book = fetch_validated_position_book(client, wallet)
+        if isinstance(book, PositionBookFailure):
+            raise RuntimeError(f"baseline positions book failed: {book.code}")
+
+        # Historical trade/activity/closed seeds still use compatibility unwrap.
         raw_trades = _as_list(client.fetch_trades(wallet, limit=200))
         raw_activity = _as_list(client.fetch_activity(wallet, limit=200))
         raw_closed = _as_list(client.fetch_closed_positions(wallet, limit=200))
 
-        current = {
-            p.condition_id: p
-            for p in (parse_position(item, wallet) for item in raw_positions)
-            if p.condition_id and p.size > _SIZE_EPS
-        }
+        current = book.positions
 
-        # Persist exact book first so live diffs never treat baseline inventory as new.
-        copy_storage.clear_position_snapshots(settings, wallet)
-        persist_snapshots(settings, current)
+        # V3 baseline writes asset-keyed v2 snapshots only; legacy table untouched.
+        copy_storage.commit_complete_position_book_v2(
+            settings,
+            wallet,
+            _snapshots_to_v2_payload(current),
+            stamp_complete=True,
+        )
 
         state = copy_storage.get_wallet_monitor_state(settings, wallet)
         assert state is not None
@@ -188,7 +197,9 @@ def run_baseline(settings: Settings, wallet: str, client: CopyDataClient | None 
         newest_uid: str | None = None
 
         # Seed live-compatible UIDs for every current position (0 → size open).
-        for snap in sorted(current.values(), key=lambda s: s.condition_id):
+        for snap in sorted(
+            current.values(), key=lambda s: (s.asset or "", s.condition_id)
+        ):
             uid = _baseline_open_uid(wallet, snap)
             copy_storage.mark_processed_copy_event(
                 settings,
@@ -343,9 +354,9 @@ def _seed_native_trade_uid(
     *,
     observed_at: int,
 ) -> tuple[str | None, int | None]:
+    # Documented native identity only — ignore undocumented id / tradeId.
     tx_hash = raw.get("transactionHash") or raw.get("transaction_hash") or raw.get("txHash")
-    trade_id = raw.get("id") or raw.get("tradeId")
-    if not tx_hash and not trade_id:
+    if not tx_hash:
         return None, None
     side = (raw.get("side") or "").upper()
     condition = (raw.get("conditionId") or "").lower()
@@ -368,12 +379,12 @@ def _seed_native_trade_uid(
             side=side or None,
             price=_float_or_none(raw.get("price")),
             size=normalize_size(float(raw.get("size") or 0)),
-            tx_hash=str(tx_hash).lower() if tx_hash else None,
+            tx_hash=str(tx_hash).lower(),
             ts=event_ts,
             title=raw.get("title"),
             slug=raw.get("slug"),
             dedup_key="baseline-native",
-            trade_id=str(trade_id) if trade_id else None,
+            trade_id=None,
         )
         uid = build_event_uid(stub)
         copy_storage.mark_processed_copy_event(
@@ -400,7 +411,8 @@ def _float_or_none(value: Any) -> float | None:
 
 
 def _as_list(value: Any) -> list:
-    return value if isinstance(value, list) else []
+    # Accept ApiResult (Checkpoint 2) or plain lists (mocks / legacy).
+    return unwrap_data_list(value)
 
 
 def annotate_events(
@@ -512,13 +524,14 @@ def filter_alertable_events(
                 continue
 
         # Position-diff size churn has no source ts and no native trade id.
-        # Live proof: baseline seeds open 0→size, then increase A→B gets a new
-        # pd: UID with event_ts=observed_at (poll clock) and floods WATCH alerts.
-        has_native_id = bool(event.tx_hash or event.trade_id)
+        # Without authoritative trade correlation, unsigned
+        # open/increase/reduce/close must not become deliverable alerts.
+        # Checkpoint 5 attaches documented fill timestamps / tx hashes.
+        has_native_id = bool(event.tx_hash)
         if (
             event_ts is None
             and not has_native_id
-            and event.event_type in {"increase", "reduce", "close"}
+            and event.event_type in {"open", "increase", "reduce", "close"}
         ):
             copy_storage.mark_processed_copy_event(
                 settings,

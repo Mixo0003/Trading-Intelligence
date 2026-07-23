@@ -64,16 +64,17 @@ def settings(tmp_path):
     return s
 
 
-def _mock_client(positions: list[dict]):
+def _mock_client(positions: list[dict], trades: list[dict] | None = None):
     client = MagicMock()
     client.fetch_positions.return_value = positions
+    client.fetch_trades.return_value = trades if trades is not None else []
     return client
 
 
 def _pos(condition_id: str = "cond-1", size: float = 100.0) -> dict:
     return {
         "conditionId": condition_id,
-        "asset": "token-1",
+        "asset": f"token-{condition_id}",
         "outcome": "Yes",
         "size": size,
         "avgPrice": 0.4,
@@ -265,15 +266,15 @@ class TestEventUid:
 
 
 class TestIngestAfterBaseline:
-    def test_new_position_after_baseline_is_alertable(self, settings):
+    def test_new_position_after_baseline_quarantined_without_trades(self, settings):
         add_wallet(settings, WALLET)
         run_baseline(settings, WALLET, client=_mock_client([_pos("cond-1")]))
-        # New condition appears
         events = ingest_wallet(
             settings,
             WALLET,
             client=_mock_client([_pos("cond-1"), _pos("cond-new", 25.0)]),
         )
-        assert any(e.condition_id == "cond-new" for e in events)
+        # Checkpoint 5: no matching trades → no accepted event.
+        assert events == []
         alertable = filter_alertable_events(settings, WALLET, events)
-        assert any(e.condition_id == "cond-new" for e in alertable)
+        assert alertable == []

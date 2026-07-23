@@ -1,14 +1,52 @@
 # Changelog
 
-## V2.2.1 — Editable Copy Settings (2026-07-21)
+## V2.2.2 — Trustworthy New/Increase Copy Alerts (2026-07-23)
 
-Branch: `feature/v2.2.1-copy-settings`.
+**Status:** implementation and automated verification complete on `feature/v2.2.2-trustworthy-copy-alerts`; **live Telegram verification still pending**; **not released**.
+
+### Added / changed
+
+- Fail-closed Data API / CLOB client (`ApiResult`), row validation, trade-row sanitization (documented tx-hash identity only).
+- Asset-keyed position snapshots (`copy_position_snapshots_v2`) with additive, idempotent migration; legacy table retained.
+- V3 baseline (`COPY_BASELINE_VERSION = 3`) seeds current book without historical alerts.
+- Bounded trade correlation with authoritative fill timestamps; SHA-256 correlated UIDs (`ff1:<hex>`).
+- Validated single-snapshot order book; Trader VWAP / midpoint / best ask / execution VWAP kept distinct.
+- Allocation-based slippage; configured paper-bankroll share only.
+- Recommendation decisions COPY / WATCH / SKIP for **open** and **increase** only (Reduce/Close deferred).
+- Atomic paper commit before COPY delivery; entry price = execution VWAP; **no 0.5 fallback**; `source_event_uid` exactly-once.
+- Owner-admin delivery routing (`added_by`); claim / retry / dead-letter; SKIP never delivered.
+- Plaintext Telegram FOLLOW/WATCH cards; validated `https://polymarket.com` Market/Trader links; no inline buttons.
+
+### Docs
+
+- `docs/COPY_ALERTS.md` (new)
+- Updates: `docs/COPY_EVENT_FRESHNESS.md`, `docs/COPY_SETTINGS.md`, `PROJECT_STATUS.md`, `ROADMAP.md`, `AGENTS.md`
+
+### Deferred
+
+- Reduce / Close alerts
+- Multi-user / non-admin subscriptions
+- Digest mode / mutating alert buttons
+- Real trading / authenticated CLOB order placement
+- Production DB migration / live Telegram verification (separate approved session)
+
+### Automated verification (2026-07-23)
+
+- Copy Intelligence: 422 passed.
+- Telegram regressions: 114 passed.
+- Health/storage/scheduler/safety: 136 passed, 2 skipped.
+- Full suite: **949 passed, 2 skipped**.
+- Checkpoint 11 also fixed `:memory:` schema init (migration on same connection) after full-suite exposure.
+## V2.2.1 — Editable Copy Settings (2026-07-22)
+
+**Status:** completed, merged to main (PR #9, merge `cf6d2f5`), live-verified.
 
 ### Added
 
 - Per-user editable Copy Settings (nine fields) with centralized defaults and bounds.
 - Telegram Edit Settings flow: choose field → enter/select → validate → preview → confirm/cancel.
 - Reset to Balanced with preview/confirm and stale-token protection.
+- Concurrent-edit protection on settings confirmation tokens.
 - `max_event_age_seconds` on `CopyUserSettings` (migration default from global env).
 - Per-user poll skip (global JobQueue floor) and per-subscriber max-age / alert-mode filtering.
 - Audit payloads for settings save/reset (scalars only; no secrets).
@@ -17,9 +55,19 @@ Branch: `feature/v2.2.1-copy-settings`.
 
 - `docs/COPY_SETTINGS.md`
 
+### Verification
+
+- Focused V2.2.1: 18 passed.
+- Copy Intelligence: 144 passed.
+- Telegram regressions: 67 passed.
+- Storage/health: 126 passed, 2 skipped.
+- Full suite: **671 passed, 2 skipped** (stable pre-V2.2.2 baseline).
+- Live Telegram verification: GO.
+- Note: formal Grill Me was not claimed for V2.2.1; permanent Grill Me policy applies from V2.2.2 onward.
+
 ## V2.1.1 — Storage retention (2026-07-21)
 
-Branch: `feature/v2.1.1-storage-retention` (completed — pending PR merge).
+**Status:** completed, merged to main (PR #8).
 
 ### Added
 
@@ -42,7 +90,7 @@ Branch: `feature/v2.1.1-storage-retention` (completed — pending PR merge).
 
 - Live Telegram verification passed.
 - Weather, Copy Intelligence, and scheduler regressions passed.
-- Full suite: 652 passed, 2 skipped.
+- Full suite at V2.1.1 completion: **652 passed, 2 skipped** (historical; later superseded by V2.2.1 **671 passed, 2 skipped**).
 - Strix: evaluated but unavailable locally; no scan executed; optional audit deferred (not a V2.1.1 PR blocker).
 
 ## 2026-07-02

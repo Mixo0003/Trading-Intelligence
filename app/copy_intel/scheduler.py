@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from app.config.settings import Settings
 from app.copy_intel.data_client import CopyDataClient
+from app.copy_intel.delivery import deliver_pending_alerts, retry_due_alert_deliveries
 from app.copy_intel.event_identity import build_event_uid
 from app.copy_intel.freshness import (
     baseline_is_complete,
@@ -18,12 +19,12 @@ from app.copy_intel.freshness import (
     run_baseline,
 )
 from app.copy_intel.ingestion import ingest_wallet
+from app.copy_intel.paper_commit import prepare_pending_recommendation
 from app.copy_intel.recommendation import build_recommendation
-from app.copy_intel.risk import assert_read_only, record_paper_copy
+from app.copy_intel.risk import assert_read_only
 from app.copy_intel.settings_profiles import get_user_settings
 from app.copy_intel.watchlist import list_enabled, list_entries
 from app.database import copy_storage
-from app.telegram.copy_intel.formatting import format_recommendation_card
 
 logger = logging.getLogger(__name__)
 
@@ -155,17 +156,23 @@ async def copy_intel_poll_job(context) -> None:
                         )
                         uid = event.event_uid or build_event_uid(event)
                         event_ts = int(event.ts) if event.ts is not None else None
+                        # Checkpoint 8: paper write only after immutable COPY;
+                        # failed paper write blocks later delivery eligibility.
+                        include, paper_result = prepare_pending_recommendation(
+                            settings,
+                            rec,
+                            condition_id=event.condition_id or "",
+                            asset=event.asset or "",
+                        )
+                        if not include:
+                            if paper_result is not None:
+                                logger.warning(
+                                    "Copy paper commit blocked delivery for %s: %s",
+                                    uid[:24],
+                                    paper_result.code,
+                                )
+                            continue
                         pending_recs.append((uid, wallet, rec, event_ts))
-                        if rec.action == "COPY" and rec.max_alloc > 0:
-                            record_paper_copy(
-                                settings,
-                                wallet=rec.wallet,
-                                condition_id=event.condition_id or "",
-                                market_slug=rec.market_slug,
-                                outcome=rec.outcome,
-                                notional=rec.max_alloc,
-                                entry_price=rec.current_price or rec.entry_price or 0.5,
-                            )
             except Exception as exc:
                 last_error = str(exc)
                 logger.exception("Copy intel poll failed for %s", wallet)
@@ -187,8 +194,8 @@ async def copy_intel_poll_job(context) -> None:
         else:
             copy_storage.set_poll_state(settings, "last_error", "")
 
-        await _deliver_pending_alerts(context, settings, pending_recs)
-        await _retry_failed_alert_deliveries(context, settings)
+        await deliver_pending_alerts(context, settings, pending_recs)
+        await retry_due_alert_deliveries(context, settings)
 
         finish_job_execution(
             settings,
@@ -211,10 +218,10 @@ async def copy_intel_poll_job(context) -> None:
 
 
 def _subscriber_allows_recommendation(settings: Settings, subscriber_id: int, rec) -> bool:
-    user = get_user_settings(settings, subscriber_id)
-    if user.alert_decisions == "FOLLOW_ONLY" and getattr(rec, "action", None) == "WATCH":
-        return False
-    return True
+    """Compatibility wrapper for tests — owner alert_mode soft filter."""
+    from app.copy_intel.delivery import owner_allows_recommendation
+
+    return owner_allows_recommendation(settings, subscriber_id, rec)
 
 
 def _event_too_old_for_subscriber(
@@ -224,119 +231,27 @@ def _event_too_old_for_subscriber(
     *,
     now: int | None = None,
 ) -> bool:
-    if event_ts is None:
-        return False
-    user = get_user_settings(settings, subscriber_id)
-    now_ts = int(time.time()) if now is None else int(now)
-    return (now_ts - int(event_ts)) > int(user.max_event_age_seconds)
+    from app.copy_intel.delivery import event_too_old_for_owner
+
+    return event_too_old_for_owner(
+        settings, subscriber_id, event_ts, now=float(now) if now is not None else None
+    )
 
 
-async def _deliver_pending_alerts(
-    context,
-    settings: Settings,
-    pending_recs: list[tuple[str, str, object, int | None]],
-) -> None:
-    if not pending_recs or not settings.admin_ids:
-        return
-    # Group cards by subscriber after per-subscriber atomic claim.
-    for admin_id in settings.admin_ids:
-        claimed_cards: list[str] = []
-        claimed_keys: list[tuple[str, str]] = []
-        for event_uid, wallet, rec, event_ts in pending_recs:
-            if not _subscriber_allows_recommendation(settings, admin_id, rec):
-                continue
-            if _event_too_old_for_subscriber(settings, admin_id, event_ts):
-                continue
-            card = format_recommendation_card(rec)  # type: ignore[arg-type]
-            if not copy_storage.claim_copy_alert_delivery(
-                settings,
-                subscriber_id=admin_id,
-                wallet=wallet,
-                event_uid=event_uid,
-                payload_text=card,
-            ):
-                continue
-            claimed_cards.append(card)
-            claimed_keys.append((wallet, event_uid))
-        if not claimed_cards:
-            continue
-        # Rebuild message batches from claimed cards only.
-        messages = _cards_to_messages(claimed_cards)
-        send_ok = True
-        for text in messages:
-            try:
-                await context.bot.send_message(chat_id=admin_id, text=text)
-            except Exception:
-                send_ok = False
-                logger.exception("Failed to send copy alert to %s", admin_id)
-                break
-        status = "sent" if send_ok else "failed"
-        for wallet, event_uid in claimed_keys:
-            copy_storage.mark_copy_alert_delivery(
-                settings,
-                subscriber_id=admin_id,
-                wallet=wallet,
-                event_uid=event_uid,
-                status=status,
-            )
+# Back-compat aliases used by characterization / settings tests.
+async def _deliver_pending_alerts(context, settings, pending_recs):
+    await deliver_pending_alerts(context, settings, pending_recs)
 
 
-async def _retry_failed_alert_deliveries(context, settings: Settings) -> None:
-    if not settings.admin_ids:
-        return
-    rows = copy_storage.list_failed_copy_alert_deliveries(settings, limit=50)
-    for row in rows:
-        subscriber_id = int(row["subscriber_id"])
-        wallet = row["wallet"]
-        event_uid = row["event_uid"]
-        payload = row["payload_text"]
-        if not payload:
-            continue
-        if not copy_storage.claim_copy_alert_delivery(
-            settings,
-            subscriber_id=subscriber_id,
-            wallet=wallet,
-            event_uid=event_uid,
-            payload_text=payload,
-        ):
-            continue
-        try:
-            await context.bot.send_message(chat_id=subscriber_id, text=payload)
-            copy_storage.mark_copy_alert_delivery(
-                settings,
-                subscriber_id=subscriber_id,
-                wallet=wallet,
-                event_uid=event_uid,
-                status="sent",
-            )
-        except Exception:
-            logger.exception("Retry send failed for subscriber %s", subscriber_id)
-            copy_storage.mark_copy_alert_delivery(
-                settings,
-                subscriber_id=subscriber_id,
-                wallet=wallet,
-                event_uid=event_uid,
-                status="failed",
-            )
+async def _retry_failed_alert_deliveries(context, settings):
+    await retry_due_alert_deliveries(context, settings)
 
 
 def _cards_to_messages(cards: list[str]) -> list[str]:
-    from app.telegram.copy_intel.formatting import TELEGRAM_MAX_MESSAGE_LENGTH
+    from app.copy_intel.delivery import cards_to_batches
 
-    if not cards:
-        return []
-    chunks: list[str] = []
-    current = "Copy Trading Alerts\n"
-    for card in cards:
-        piece = card + "\n\n"
-        if len(current) + len(piece) > TELEGRAM_MAX_MESSAGE_LENGTH:
-            chunks.append(current.rstrip())
-            current = "Copy Trading Alerts\n" + piece
-        else:
-            current += piece
-    if current.strip():
-        chunks.append(current.rstrip())
-    return chunks
+    keyed = [("w", f"u{i}", c) for i, c in enumerate(cards)]
+    return [b.text for b in cards_to_batches(keyed)]
 
 
 def schedule_copy_intel_jobs(application, settings: Settings) -> None:

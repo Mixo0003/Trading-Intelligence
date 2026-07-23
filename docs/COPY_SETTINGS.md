@@ -2,6 +2,8 @@
 
 Per-user editable Copy Intelligence settings via Telegram.
 
+**Status:** V2.2.1 completed, merged to main (PR #9), and live-verified. Remains in force for V2.2.2 delivery filters (`alert_decisions`, `max_event_age_seconds`, liquidity). See `docs/COPY_ALERTS.md` for the V2.2.2 alert contract.
+
 ## Defaults (Balanced)
 
 | Setting | Default | Unit | Min | Max |
@@ -32,4 +34,10 @@ Profiles Conservative / Balanced / Exploratory remain available as full replacem
 
 ## UX
 
-Copy Intelligence → Copy Settings → Edit Settings → choose field → preset or type value → preview → confirm/cancel. Reset to Balanced uses the same preview/confirm pattern with stale-token protection.
+Copy Intelligence → Copy Settings → Edit Settings → choose field → preset or type value → preview → confirm/cancel. Reset to Balanced uses the same preview/confirm pattern with stale-token and concurrent-edit protection.
+
+## Delivery modes (V2.2.2)
+
+- `FOLLOW_ONLY` — owner-admin receives FOLLOW (internal COPY) only.
+- `FOLLOW_AND_WATCH` — owner-admin receives FOLLOW and eligible WATCH.
+- SKIP is never delivered. Delivery is owner-scoped (`added_by`), not fan-out to all `ADMIN_IDS`.

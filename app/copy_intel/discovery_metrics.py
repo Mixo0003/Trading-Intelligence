@@ -7,6 +7,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from app.copy_intel.api_result import unwrap_data_list
 from app.copy_intel.data_client import CopyDataClient, is_trade_activity
 from app.copy_intel.models import DiscoveryCandidate, DiscoveryMetrics
 
@@ -21,10 +22,10 @@ def compute_discovery_metrics(
     trade_limit: int = 200,
 ) -> DiscoveryMetrics:
     wallet = candidate.wallet
-    closed = client.fetch_closed_positions(wallet, limit=closed_limit)
-    trades = client.fetch_trades(wallet, limit=trade_limit)
-    activity = client.fetch_activity(wallet, limit=trade_limit)
-    positions = client.fetch_positions(wallet, limit=100)
+    closed = unwrap_data_list(client.fetch_closed_positions(wallet, limit=closed_limit))
+    trades = unwrap_data_list(client.fetch_trades(wallet, limit=trade_limit))
+    activity = unwrap_data_list(client.fetch_activity(wallet, limit=trade_limit))
+    positions = unwrap_data_list(client.fetch_positions(wallet, limit=100))
 
     incomplete: list[str] = []
     resolved = [c for c in closed if c.get("realizedPnl") is not None]

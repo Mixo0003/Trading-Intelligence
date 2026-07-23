@@ -45,6 +45,13 @@ class TradeEvent:
     prev_size: float | None = None
     new_size: float | None = None
     trade_id: str | None = None
+    # Checkpoint 5 — authoritative multi-fill correlation (optional).
+    trader_vwap: float | None = None
+    first_fill_ts: int | None = None
+    last_fill_ts: int | None = None
+    matched_fill_count: int | None = None
+    matched_fill_size: float | None = None
+    detected_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +99,29 @@ class CopyRecommendation:
     max_alloc: float
     action: CopyAction
     reason: str
+    # V2.2.2 authoritative recommendation envelope fields (optional / additive).
+    event_uid: str | None = None
+    first_fill_ts: int | None = None
+    last_fill_ts: int | None = None
+    detected_at: int | None = None
+    event_age_seconds: float | None = None
+    trader_vwap: float | None = None
+    midpoint: float | None = None
+    best_bid: float | None = None
+    best_ask: float | None = None
+    execution_vwap: float | None = None
+    slippage: float | None = None
+    visible_ask_depth_usd: float | None = None
+    proposed_allocation_usd: float | None = None
+    paper_bankroll_usd: float | None = None
+    paper_bankroll_share: float | None = None
+    resulting_position_size: float | None = None
+    size_delta: float | None = None
+    matched_fill_count: int | None = None
+    quote_at: float | None = None
+    quote_age_seconds: float | None = None
+    reason_codes: tuple[str, ...] = ()
+    spread: float | None = None  # top-of-book ask−bid; never treated as slippage
 
 
 DiscoverySource = Literal["active", "profitable", "category", "rising"]
