@@ -311,7 +311,10 @@ class CopyDataClient:
         )
 
     def fetch_validated_order_book(
-        self, token_id: str
+        self,
+        token_id: str,
+        *,
+        max_quote_age_seconds: float | None = None,
     ) -> ApiResult[ValidatedOrderBook]:
         """Fetch one CLOB /book snapshot and validate fail-closed.
 
@@ -364,6 +367,7 @@ class CopyDataClient:
             requested_asset=token_id,
             received_at=received_at,
             request_count=request_count,
+            max_quote_age_seconds=max_quote_age_seconds,
         )
 
     def _data_get(

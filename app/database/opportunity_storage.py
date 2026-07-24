@@ -20,13 +20,18 @@ from app.opportunity_intel.models import (
     DeliveryStatus,
     ExecutionMetrics,
     LiveMode,
+    MovementDirection,
+    ObservationMode,
     OpportunityBaseline,
     OpportunityDelivery,
     OpportunityDiagnosticCode,
     OpportunityScannerState,
     OpportunitySignal,
     OpportunitySubscription,
+    OpportunityReasonCode,
     ScannerStatus,
+    SignalFamily,
+    SignalStatus,
     decimal_text,
 )
 from app.opportunity_intel.settings import (
@@ -162,6 +167,7 @@ def _initialize_on_connection(
         (MIGRATION_ID,),
     ).fetchone()
     if existing is not None:
+        _ensure_opportunity_columns(connection)
         _validate_schema(connection)
         return OpportunityMigrationResult(
             migration_id=MIGRATION_ID,
@@ -179,6 +185,7 @@ def _initialize_on_connection(
     for statement in _TRIGGER_DDL:
         connection.execute(statement)
     _failpoint("after_triggers")
+    _ensure_opportunity_columns(connection)
     _validate_schema(connection)
     _failpoint("before_marker")
     connection.execute(
@@ -195,6 +202,32 @@ def _initialize_on_connection(
         table_count=len(_TABLES),
         index_count=len(_INDEXES),
     )
+
+
+def _ensure_column(
+    connection: sqlite3.Connection, table: str, column: str, col_type: str
+) -> None:
+    rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
+    names = {row[1] for row in rows}
+    if column not in names:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+
+def _ensure_opportunity_columns(connection: sqlite3.Connection) -> None:
+    """Additive non-destructive columns for Checkpoint 4 hysteresis state."""
+    for column, col_type in (
+        ("score_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("safety_policy_version", "INTEGER NOT NULL DEFAULT 1"),
+        ("below_threshold_streak", "INTEGER NOT NULL DEFAULT 0"),
+        ("was_eligible_at_baseline", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_direction", "TEXT"),
+        ("pending_live_direction", "TEXT"),
+        ("last_absolute_move_pp", "TEXT"),
+        ("last_signal_at", "TEXT"),
+        ("identity_fingerprint", "TEXT"),
+        ("baseline_reset_code", "TEXT"),
+    ):
+        _ensure_column(connection, "opportunity_market_state", column, col_type)
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -605,6 +638,68 @@ def write_settings_audit(
         )
 
 
+@dataclass(frozen=True)
+class MarketStateRecord:
+    asset_id: str
+    condition_id: str
+    event_id: str
+    market_id: str
+    event_slug: str
+    question: str
+    outcome: str
+    category_ids: tuple[str, ...]
+    mode: ObservationMode
+    active: bool
+    end_at: datetime
+    metadata_at: datetime
+    baseline: OpportunityBaseline
+    last_midpoint: Decimal | None
+    last_score: Decimal | None
+    score_version: int
+    safety_policy_version: int
+    below_threshold_streak: int
+    was_eligible_at_baseline: bool
+    last_direction: MovementDirection | None
+    pending_live_direction: MovementDirection | None
+    last_absolute_move_pp: Decimal | None
+    last_signal_at: datetime | None
+    identity_fingerprint: str | None
+    baseline_reset_code: OpportunityDiagnosticCode | None
+
+
+@dataclass(frozen=True)
+class CycleAssetWrite:
+    baseline: OpportunityBaseline
+    condition_id: str
+    event_id: str
+    market_id: str
+    event_slug: str
+    question: str
+    outcome: str
+    category_ids: tuple[str, ...]
+    metadata_at: datetime
+    end_at: datetime
+    active: bool
+    observation: CanonicalObservation | None
+    bucket_at: datetime | None
+    canonical_score: Decimal | None
+    score_version: int
+    execution_metrics: tuple[ExecutionMetrics, ...]
+    last_midpoint: Decimal | None
+    last_score: Decimal | None
+    safety_policy_version: int
+    below_threshold_streak: int
+    was_eligible_at_baseline: bool
+    last_direction: MovementDirection | None
+    pending_live_direction: MovementDirection | None
+    last_absolute_move_pp: Decimal | None
+    last_signal_at: datetime | None
+    identity_fingerprint: str
+    baseline_reset_code: OpportunityDiagnosticCode | None
+    signals_to_expire: tuple[str, ...]
+    signals_to_insert: tuple[OpportunitySignal, ...]
+
+
 def upsert_market_state(
     settings: Settings,
     *,
@@ -619,103 +714,229 @@ def upsert_market_state(
     metadata_at: datetime,
     end_at: datetime,
     active: bool = True,
+    last_midpoint: Decimal | None = None,
+    last_score: Decimal | None = None,
+    score_version: int = 1,
+    safety_policy_version: int = 1,
+    below_threshold_streak: int = 0,
+    was_eligible_at_baseline: bool = False,
+    last_direction: MovementDirection | None = None,
+    pending_live_direction: MovementDirection | None = None,
+    last_absolute_move_pp: Decimal | None = None,
+    last_signal_at: datetime | None = None,
+    identity_fingerprint: str | None = None,
+    baseline_reset_code: OpportunityDiagnosticCode | None = None,
+) -> None:
+    with _opportunity_connection(settings) as connection:
+        _upsert_market_state_on_connection(
+            connection,
+            baseline=baseline,
+            condition_id=condition_id,
+            event_id=event_id,
+            market_id=market_id,
+            event_slug=event_slug,
+            question=question,
+            outcome=outcome,
+            category_ids=category_ids,
+            metadata_at=metadata_at,
+            end_at=end_at,
+            active=active,
+            last_midpoint=last_midpoint,
+            last_score=last_score,
+            score_version=score_version,
+            safety_policy_version=safety_policy_version,
+            below_threshold_streak=below_threshold_streak,
+            was_eligible_at_baseline=was_eligible_at_baseline,
+            last_direction=last_direction,
+            pending_live_direction=pending_live_direction,
+            last_absolute_move_pp=last_absolute_move_pp,
+            last_signal_at=last_signal_at,
+            identity_fingerprint=identity_fingerprint,
+            baseline_reset_code=baseline_reset_code,
+        )
+
+
+def _upsert_market_state_on_connection(
+    connection: sqlite3.Connection,
+    *,
+    baseline: OpportunityBaseline,
+    condition_id: str,
+    event_id: str,
+    market_id: str,
+    event_slug: str,
+    question: str,
+    outcome: str,
+    category_ids: Iterable[str],
+    metadata_at: datetime,
+    end_at: datetime,
+    active: bool = True,
+    last_midpoint: Decimal | None = None,
+    last_score: Decimal | None = None,
+    score_version: int = 1,
+    safety_policy_version: int = 1,
+    below_threshold_streak: int = 0,
+    was_eligible_at_baseline: bool = False,
+    last_direction: MovementDirection | None = None,
+    pending_live_direction: MovementDirection | None = None,
+    last_absolute_move_pp: Decimal | None = None,
+    last_signal_at: datetime | None = None,
+    identity_fingerprint: str | None = None,
+    baseline_reset_code: OpportunityDiagnosticCode | None = None,
 ) -> None:
     categories = tuple(sorted(set(category_ids)))
     if not categories:
         raise ValueError("market state requires categories")
+    if below_threshold_streak not in (0, 1, 2):
+        raise ValueError("below_threshold_streak must be 0, 1, or 2")
     now = _iso(_now())
-    with _opportunity_connection(settings) as connection:
-        connection.execute(
-            """
-            INSERT INTO opportunity_market_state (
-                asset_id, condition_id, event_id, market_id, event_slug,
-                question, outcome, category_ids_json, mode, active,
-                end_at, metadata_at, baseline_version, baseline_count,
-                baseline_ready, last_complete_cycle_id, last_observed_at,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(asset_id) DO UPDATE SET
-                condition_id = excluded.condition_id,
-                event_id = excluded.event_id,
-                market_id = excluded.market_id,
-                event_slug = excluded.event_slug,
-                question = excluded.question,
-                outcome = excluded.outcome,
-                category_ids_json = excluded.category_ids_json,
-                mode = excluded.mode,
-                active = excluded.active,
-                end_at = excluded.end_at,
-                metadata_at = excluded.metadata_at,
-                baseline_version = excluded.baseline_version,
-                baseline_count = excluded.baseline_count,
-                baseline_ready = excluded.baseline_ready,
-                last_complete_cycle_id = excluded.last_complete_cycle_id,
-                last_observed_at = excluded.last_observed_at,
-                updated_at = excluded.updated_at
-            """,
-            (
-                baseline.asset_id,
-                condition_id,
-                event_id,
-                market_id,
-                event_slug,
-                question,
-                outcome,
-                json.dumps(categories, separators=(",", ":")),
-                baseline.mode.value,
-                int(active),
-                _iso(end_at),
-                _iso(metadata_at),
-                baseline.baseline_version,
-                baseline.consecutive_complete_cycles,
-                int(baseline.ready),
-                baseline.last_complete_cycle_id,
-                (
-                    _iso(baseline.last_observed_at)
-                    if baseline.last_observed_at is not None
-                    else None
-                ),
-                now,
-                now,
-            ),
+    connection.execute(
+        """
+        INSERT INTO opportunity_market_state (
+            asset_id, condition_id, event_id, market_id, event_slug,
+            question, outcome, category_ids_json, mode, active,
+            end_at, metadata_at, baseline_version, baseline_count,
+            baseline_ready, last_complete_cycle_id, last_observed_at,
+            last_midpoint, last_score, score_version, safety_policy_version,
+            below_threshold_streak, was_eligible_at_baseline, last_direction,
+            pending_live_direction, last_absolute_move_pp, last_signal_at,
+            identity_fingerprint, baseline_reset_code, created_at, updated_at
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
+        ON CONFLICT(asset_id) DO UPDATE SET
+            condition_id = excluded.condition_id,
+            event_id = excluded.event_id,
+            market_id = excluded.market_id,
+            event_slug = excluded.event_slug,
+            question = excluded.question,
+            outcome = excluded.outcome,
+            category_ids_json = excluded.category_ids_json,
+            mode = excluded.mode,
+            active = excluded.active,
+            end_at = excluded.end_at,
+            metadata_at = excluded.metadata_at,
+            baseline_version = excluded.baseline_version,
+            baseline_count = excluded.baseline_count,
+            baseline_ready = excluded.baseline_ready,
+            last_complete_cycle_id = excluded.last_complete_cycle_id,
+            last_observed_at = excluded.last_observed_at,
+            last_midpoint = excluded.last_midpoint,
+            last_score = excluded.last_score,
+            score_version = excluded.score_version,
+            safety_policy_version = excluded.safety_policy_version,
+            below_threshold_streak = excluded.below_threshold_streak,
+            was_eligible_at_baseline = excluded.was_eligible_at_baseline,
+            last_direction = excluded.last_direction,
+            pending_live_direction = excluded.pending_live_direction,
+            last_absolute_move_pp = excluded.last_absolute_move_pp,
+            last_signal_at = excluded.last_signal_at,
+            identity_fingerprint = excluded.identity_fingerprint,
+            baseline_reset_code = excluded.baseline_reset_code,
+            updated_at = excluded.updated_at
+        """,
+        (
+            baseline.asset_id,
+            condition_id,
+            event_id,
+            market_id,
+            event_slug,
+            question,
+            outcome,
+            json.dumps(categories, separators=(",", ":")),
+            baseline.mode.value,
+            int(active),
+            _iso(end_at),
+            _iso(metadata_at),
+            baseline.baseline_version,
+            baseline.consecutive_complete_cycles,
+            int(baseline.ready),
+            baseline.last_complete_cycle_id,
+            (
+                _iso(baseline.last_observed_at)
+                if baseline.last_observed_at is not None
+                else None
+            ),
+            decimal_text(last_midpoint) if last_midpoint is not None else None,
+            decimal_text(last_score) if last_score is not None else None,
+            score_version,
+            safety_policy_version,
+            below_threshold_streak,
+            int(was_eligible_at_baseline),
+            last_direction.value if last_direction is not None else None,
+            (
+                pending_live_direction.value
+                if pending_live_direction is not None
+                else None
+            ),
+            (
+                decimal_text(last_absolute_move_pp)
+                if last_absolute_move_pp is not None
+                else None
+            ),
+            _iso(last_signal_at) if last_signal_at is not None else None,
+            identity_fingerprint,
+            baseline_reset_code.value if baseline_reset_code is not None else None,
+            now,
+            now,
+        ),
+    )
 
 
 def save_signal(settings: Settings, signal: OpportunitySignal) -> None:
     with _opportunity_connection(settings) as connection:
-        connection.execute(
-            """
-            INSERT INTO opportunity_signals (
-                opportunity_uid, opportunity_key, asset_id, episode_sequence,
-                material_change_sequence, family, direction, mode, score,
-                reason_codes_json, signal_at, first_seen_at, last_seen_at,
-                expires_at, source_observed_at, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                signal.opportunity_uid,
-                signal.opportunity_key,
-                signal.asset_id,
-                signal.episode_sequence,
-                signal.material_change_sequence,
-                signal.family.value,
-                signal.direction.value,
-                signal.mode.value,
-                decimal_text(signal.score),
-                json.dumps(
-                    [code.value for code in signal.reason_codes],
-                    separators=(",", ":"),
-                ),
-                _iso(signal.signal_at),
-                _iso(signal.first_seen_at),
-                _iso(signal.last_seen_at),
-                _iso(signal.expires_at),
-                _iso(signal.source_observed_at),
-                signal.status.value,
-                _iso(_now()),
-                _iso(_now()),
+        _insert_signal_on_connection(connection, signal)
+
+
+def _insert_signal_on_connection(
+    connection: sqlite3.Connection, signal: OpportunitySignal
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO opportunity_signals (
+            opportunity_uid, opportunity_key, asset_id, episode_sequence,
+            material_change_sequence, family, direction, mode, score,
+            reason_codes_json, signal_at, first_seen_at, last_seen_at,
+            expires_at, source_observed_at, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            signal.opportunity_uid,
+            signal.opportunity_key,
+            signal.asset_id,
+            signal.episode_sequence,
+            signal.material_change_sequence,
+            signal.family.value,
+            signal.direction.value,
+            signal.mode.value,
+            decimal_text(signal.score),
+            json.dumps(
+                [code.value for code in signal.reason_codes],
+                separators=(",", ":"),
             ),
-        )
+            _iso(signal.signal_at),
+            _iso(signal.first_seen_at),
+            _iso(signal.last_seen_at),
+            _iso(signal.expires_at),
+            _iso(signal.source_observed_at),
+            signal.status.value,
+            _iso(_now()),
+            _iso(_now()),
+        ),
+    )
+
+
+def _expire_signal_on_connection(
+    connection: sqlite3.Connection, opportunity_uid: str, *, expired_at: datetime
+) -> None:
+    connection.execute(
+        """
+        UPDATE opportunity_signals
+        SET status = 'expired', expires_at = ?, updated_at = ?
+        WHERE opportunity_uid = ? AND status = 'active'
+        """,
+        (_iso(expired_at), _iso(_now()), opportunity_uid),
+    )
 
 
 def save_observation_metrics(
@@ -728,6 +949,26 @@ def save_observation_metrics(
     execution_metrics: Iterable[ExecutionMetrics],
 ) -> None:
     """Persist only derived metrics from one canonical observation."""
+    with _opportunity_connection(settings) as connection:
+        _save_observation_metrics_on_connection(
+            connection,
+            observation=observation,
+            bucket_at=bucket_at,
+            canonical_score=canonical_score,
+            score_version=score_version,
+            execution_metrics=execution_metrics,
+        )
+
+
+def _save_observation_metrics_on_connection(
+    connection: sqlite3.Connection,
+    *,
+    observation: CanonicalObservation,
+    bucket_at: datetime,
+    canonical_score: Decimal,
+    score_version: int,
+    execution_metrics: Iterable[ExecutionMetrics],
+) -> None:
     if bucket_at.tzinfo is None or bucket_at.utcoffset() is None:
         raise ValueError("bucket_at must be timezone-aware")
     if (
@@ -751,141 +992,146 @@ def save_observation_metrics(
             raise ValueError("execution metric does not match observation")
 
     created_at = _iso(_now())
-    with _opportunity_connection(settings) as connection:
+    connection.execute(
+        """
+        INSERT INTO opportunity_metric_buckets (
+            asset_id, bucket_at, observed_at, mode, best_bid, best_ask,
+            midpoint, absolute_spread, relative_spread, liquidity_usd,
+            volume_24h_usd, move_5m, move_15m, move_1h,
+            visible_bid_depth_usd, visible_ask_depth_usd,
+            book_at, history_at, canonical_score, score_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(asset_id, bucket_at) DO UPDATE SET
+            observed_at = excluded.observed_at,
+            mode = excluded.mode,
+            best_bid = excluded.best_bid,
+            best_ask = excluded.best_ask,
+            midpoint = excluded.midpoint,
+            absolute_spread = excluded.absolute_spread,
+            relative_spread = excluded.relative_spread,
+            liquidity_usd = excluded.liquidity_usd,
+            volume_24h_usd = excluded.volume_24h_usd,
+            move_5m = excluded.move_5m,
+            move_15m = excluded.move_15m,
+            move_1h = excluded.move_1h,
+            visible_bid_depth_usd = excluded.visible_bid_depth_usd,
+            visible_ask_depth_usd = excluded.visible_ask_depth_usd,
+            book_at = excluded.book_at,
+            history_at = excluded.history_at,
+            canonical_score = excluded.canonical_score,
+            score_version = excluded.score_version
+        """,
+        (
+            observation.asset_id,
+            _iso(bucket_at),
+            _iso(observation.observed_at),
+            observation.mode.value,
+            decimal_text(observation.best_bid),
+            decimal_text(observation.best_ask),
+            decimal_text(observation.midpoint),
+            decimal_text(observation.absolute_spread),
+            decimal_text(observation.relative_spread),
+            decimal_text(observation.liquidity_usd),
+            decimal_text(observation.volume_24h_usd),
+            decimal_text(observation.move_5m),
+            decimal_text(observation.move_15m),
+            decimal_text(observation.move_1h),
+            decimal_text(observation.visible_bid_depth_usd),
+            decimal_text(observation.visible_ask_depth_usd),
+            _iso(observation.book_at),
+            _iso(observation.history_at),
+            decimal_text(canonical_score),
+            score_version,
+        ),
+    )
+    for metric in metrics:
         connection.execute(
             """
-            INSERT INTO opportunity_metric_buckets (
-                asset_id, bucket_at, observed_at, mode, best_bid, best_ask,
-                midpoint, absolute_spread, relative_spread, liquidity_usd,
-                volume_24h_usd, move_5m, move_15m, move_1h,
-                visible_bid_depth_usd, visible_ask_depth_usd,
-                book_at, history_at, canonical_score, score_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(asset_id, bucket_at) DO UPDATE SET
-                observed_at = excluded.observed_at,
-                mode = excluded.mode,
-                best_bid = excluded.best_bid,
-                best_ask = excluded.best_ask,
-                midpoint = excluded.midpoint,
-                absolute_spread = excluded.absolute_spread,
-                relative_spread = excluded.relative_spread,
-                liquidity_usd = excluded.liquidity_usd,
-                volume_24h_usd = excluded.volume_24h_usd,
-                move_5m = excluded.move_5m,
-                move_15m = excluded.move_15m,
-                move_1h = excluded.move_1h,
-                visible_bid_depth_usd = excluded.visible_bid_depth_usd,
-                visible_ask_depth_usd = excluded.visible_ask_depth_usd,
-                book_at = excluded.book_at,
-                history_at = excluded.history_at,
-                canonical_score = excluded.canonical_score,
-                score_version = excluded.score_version
+            INSERT INTO opportunity_execution_metrics (
+                asset_id, observed_at, allocation_usd, fully_executable,
+                execution_vwap, slippage, quantity, consumed_ask_usd,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(asset_id, observed_at, allocation_usd) DO UPDATE SET
+                fully_executable = excluded.fully_executable,
+                execution_vwap = excluded.execution_vwap,
+                slippage = excluded.slippage,
+                quantity = excluded.quantity,
+                consumed_ask_usd = excluded.consumed_ask_usd
             """,
             (
-                observation.asset_id,
-                _iso(bucket_at),
-                _iso(observation.observed_at),
-                observation.mode.value,
-                decimal_text(observation.best_bid),
-                decimal_text(observation.best_ask),
-                decimal_text(observation.midpoint),
-                decimal_text(observation.absolute_spread),
-                decimal_text(observation.relative_spread),
-                decimal_text(observation.liquidity_usd),
-                decimal_text(observation.volume_24h_usd),
-                decimal_text(observation.move_5m),
-                decimal_text(observation.move_15m),
-                decimal_text(observation.move_1h),
-                decimal_text(observation.visible_bid_depth_usd),
-                decimal_text(observation.visible_ask_depth_usd),
-                _iso(observation.book_at),
-                _iso(observation.history_at),
-                decimal_text(canonical_score),
-                score_version,
+                metric.asset_id,
+                _iso(metric.observed_at),
+                decimal_text(metric.allocation_usd),
+                int(metric.fully_executable),
+                (
+                    decimal_text(metric.execution_vwap)
+                    if metric.execution_vwap is not None
+                    else None
+                ),
+                (
+                    decimal_text(metric.slippage)
+                    if metric.slippage is not None
+                    else None
+                ),
+                decimal_text(metric.quantity),
+                decimal_text(metric.consumed_ask_usd),
+                created_at,
             ),
         )
-        for metric in metrics:
-            connection.execute(
-                """
-                INSERT INTO opportunity_execution_metrics (
-                    asset_id, observed_at, allocation_usd, fully_executable,
-                    execution_vwap, slippage, quantity, consumed_ask_usd,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(asset_id, observed_at, allocation_usd) DO UPDATE SET
-                    fully_executable = excluded.fully_executable,
-                    execution_vwap = excluded.execution_vwap,
-                    slippage = excluded.slippage,
-                    quantity = excluded.quantity,
-                    consumed_ask_usd = excluded.consumed_ask_usd
-                """,
-                (
-                    metric.asset_id,
-                    _iso(metric.observed_at),
-                    decimal_text(metric.allocation_usd),
-                    int(metric.fully_executable),
-                    (
-                        decimal_text(metric.execution_vwap)
-                        if metric.execution_vwap is not None
-                        else None
-                    ),
-                    (
-                        decimal_text(metric.slippage)
-                        if metric.slippage is not None
-                        else None
-                    ),
-                    decimal_text(metric.quantity),
-                    decimal_text(metric.consumed_ask_usd),
-                    created_at,
-                ),
-            )
 
 
 def save_scanner_state(
     settings: Settings, state: OpportunityScannerState
 ) -> None:
     with _opportunity_connection(settings) as connection:
-        connection.execute(
-            """
-            INSERT INTO opportunity_scanner_state (
-                state_key, status, schema_version, baseline_version,
-                score_version, global_baseline_cycles, discovery_complete,
-                last_complete_discovery_at, last_complete_cycle_at,
-                diagnostic_code, request_count, failure_count, updated_at
-            ) VALUES ('scanner', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-            ON CONFLICT(state_key) DO UPDATE SET
-                status = excluded.status,
-                schema_version = excluded.schema_version,
-                baseline_version = excluded.baseline_version,
-                score_version = excluded.score_version,
-                global_baseline_cycles = excluded.global_baseline_cycles,
-                discovery_complete = excluded.discovery_complete,
-                last_complete_discovery_at = excluded.last_complete_discovery_at,
-                last_complete_cycle_at = excluded.last_complete_cycle_at,
-                diagnostic_code = excluded.diagnostic_code,
-                updated_at = excluded.updated_at
-            """,
+        _save_scanner_state_on_connection(connection, state)
+
+
+def _save_scanner_state_on_connection(
+    connection: sqlite3.Connection, state: OpportunityScannerState
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO opportunity_scanner_state (
+            state_key, status, schema_version, baseline_version,
+            score_version, global_baseline_cycles, discovery_complete,
+            last_complete_discovery_at, last_complete_cycle_at,
+            diagnostic_code, request_count, failure_count, updated_at
+        ) VALUES ('scanner', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+        ON CONFLICT(state_key) DO UPDATE SET
+            status = excluded.status,
+            schema_version = excluded.schema_version,
+            baseline_version = excluded.baseline_version,
+            score_version = excluded.score_version,
+            global_baseline_cycles = excluded.global_baseline_cycles,
+            discovery_complete = excluded.discovery_complete,
+            last_complete_discovery_at = excluded.last_complete_discovery_at,
+            last_complete_cycle_at = excluded.last_complete_cycle_at,
+            diagnostic_code = excluded.diagnostic_code,
+            updated_at = excluded.updated_at
+        """,
+        (
+            state.status.value,
+            state.schema_version,
+            state.baseline_version,
+            state.score_version,
+            state.global_baseline_cycles,
+            int(state.discovery_complete),
             (
-                state.status.value,
-                state.schema_version,
-                state.baseline_version,
-                state.score_version,
-                state.global_baseline_cycles,
-                int(state.discovery_complete),
-                (
-                    _iso(state.last_complete_discovery_at)
-                    if state.last_complete_discovery_at
-                    else None
-                ),
-                (
-                    _iso(state.last_complete_cycle_at)
-                    if state.last_complete_cycle_at
-                    else None
-                ),
-                state.diagnostic_code.value if state.diagnostic_code else None,
-                _iso(state.updated_at),
+                _iso(state.last_complete_discovery_at)
+                if state.last_complete_discovery_at
+                else None
             ),
-        )
+            (
+                _iso(state.last_complete_cycle_at)
+                if state.last_complete_cycle_at
+                else None
+            ),
+            state.diagnostic_code.value if state.diagnostic_code else None,
+            _iso(state.updated_at),
+        ),
+    )
 
 
 def load_scanner_state(
@@ -984,6 +1230,226 @@ def get_delivery(
         ).fetchone()
 
 
+def _parse_market_row(row: sqlite3.Row) -> MarketStateRecord:
+    categories = tuple(json.loads(row["category_ids_json"]))
+    last_direction = (
+        MovementDirection(row["last_direction"])
+        if row["last_direction"]
+        else None
+    )
+    pending = (
+        MovementDirection(row["pending_live_direction"])
+        if row["pending_live_direction"]
+        else None
+    )
+    reset_code = (
+        OpportunityDiagnosticCode(row["baseline_reset_code"])
+        if row["baseline_reset_code"]
+        else None
+    )
+    return MarketStateRecord(
+        asset_id=row["asset_id"],
+        condition_id=row["condition_id"],
+        event_id=row["event_id"],
+        market_id=row["market_id"],
+        event_slug=row["event_slug"],
+        question=row["question"],
+        outcome=row["outcome"],
+        category_ids=categories,
+        mode=ObservationMode(row["mode"]),
+        active=bool(row["active"]),
+        end_at=datetime.fromisoformat(row["end_at"]),
+        metadata_at=datetime.fromisoformat(row["metadata_at"]),
+        baseline=OpportunityBaseline(
+            asset_id=row["asset_id"],
+            mode=ObservationMode(row["mode"]),
+            baseline_version=int(row["baseline_version"]),
+            consecutive_complete_cycles=int(row["baseline_count"]),
+            last_complete_cycle_id=row["last_complete_cycle_id"],
+            last_observed_at=(
+                datetime.fromisoformat(row["last_observed_at"])
+                if row["last_observed_at"]
+                else None
+            ),
+            ready=bool(row["baseline_ready"]),
+        ),
+        last_midpoint=(
+            Decimal(row["last_midpoint"]) if row["last_midpoint"] else None
+        ),
+        last_score=Decimal(row["last_score"]) if row["last_score"] else None,
+        score_version=int(row["score_version"] or 1),
+        safety_policy_version=int(row["safety_policy_version"] or 1),
+        below_threshold_streak=int(row["below_threshold_streak"] or 0),
+        was_eligible_at_baseline=bool(row["was_eligible_at_baseline"] or 0),
+        last_direction=last_direction,
+        pending_live_direction=pending,
+        last_absolute_move_pp=(
+            Decimal(row["last_absolute_move_pp"])
+            if row["last_absolute_move_pp"]
+            else None
+        ),
+        last_signal_at=(
+            datetime.fromisoformat(row["last_signal_at"])
+            if row["last_signal_at"]
+            else None
+        ),
+        identity_fingerprint=row["identity_fingerprint"],
+        baseline_reset_code=reset_code,
+    )
+
+
+def load_market_state(
+    settings: Settings, asset_id: str
+) -> MarketStateRecord | None:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            "SELECT * FROM opportunity_market_state WHERE asset_id = ?",
+            (asset_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _parse_market_row(row)
+
+
+def load_all_market_states(settings: Settings) -> tuple[MarketStateRecord, ...]:
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            "SELECT * FROM opportunity_market_state ORDER BY asset_id"
+        ).fetchall()
+    return tuple(_parse_market_row(row) for row in rows)
+
+
+def _parse_signal_row(row: sqlite3.Row) -> OpportunitySignal:
+    codes = tuple(
+        OpportunityReasonCode(code) for code in json.loads(row["reason_codes_json"])
+    )
+    return OpportunitySignal(
+        opportunity_uid=row["opportunity_uid"],
+        opportunity_key=row["opportunity_key"],
+        asset_id=row["asset_id"],
+        episode_sequence=int(row["episode_sequence"]),
+        material_change_sequence=int(row["material_change_sequence"]),
+        family=SignalFamily(row["family"]),
+        direction=MovementDirection(row["direction"]),
+        mode=ObservationMode(row["mode"]),
+        score=Decimal(row["score"]),
+        reason_codes=codes,
+        signal_at=datetime.fromisoformat(row["signal_at"]),
+        first_seen_at=datetime.fromisoformat(row["first_seen_at"]),
+        last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
+        expires_at=datetime.fromisoformat(row["expires_at"]),
+        source_observed_at=datetime.fromisoformat(row["source_observed_at"]),
+        status=SignalStatus(row["status"]),
+    )
+
+
+def load_active_signals_for_asset(
+    settings: Settings, asset_id: str
+) -> tuple[OpportunitySignal, ...]:
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_signals
+            WHERE asset_id = ? AND status = 'active'
+            ORDER BY episode_sequence DESC, material_change_sequence DESC
+            """,
+            (asset_id,),
+        ).fetchall()
+    return tuple(_parse_signal_row(row) for row in rows)
+
+
+def load_active_signal_by_key(
+    settings: Settings, opportunity_key: str
+) -> OpportunitySignal | None:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM opportunity_signals
+            WHERE opportunity_key = ? AND status = 'active'
+            ORDER BY episode_sequence DESC, material_change_sequence DESC
+            LIMIT 1
+            """,
+            (opportunity_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _parse_signal_row(row)
+
+
+def next_episode_sequence(settings: Settings, opportunity_key: str) -> int:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT COALESCE(MAX(episode_sequence), 0) AS max_episode
+            FROM opportunity_signals
+            WHERE opportunity_key = ?
+            """,
+            (opportunity_key,),
+        ).fetchone()
+    return int(row["max_episode"]) + 1
+
+
+def commit_scanner_cycle(
+    settings: Settings,
+    *,
+    asset_writes: Iterable[CycleAssetWrite],
+    scanner_state: OpportunityScannerState,
+    now: datetime,
+) -> None:
+    """Atomically persist one scanner cycle write set.
+
+    Callers must complete all HTTP work before invoking this function.
+    """
+    writes = tuple(asset_writes)
+    with _opportunity_connection(settings) as connection:
+        for write in writes:
+            _upsert_market_state_on_connection(
+                connection,
+                baseline=write.baseline,
+                condition_id=write.condition_id,
+                event_id=write.event_id,
+                market_id=write.market_id,
+                event_slug=write.event_slug,
+                question=write.question,
+                outcome=write.outcome,
+                category_ids=write.category_ids,
+                metadata_at=write.metadata_at,
+                end_at=write.end_at,
+                active=write.active,
+                last_midpoint=write.last_midpoint,
+                last_score=write.last_score,
+                score_version=write.score_version,
+                safety_policy_version=write.safety_policy_version,
+                below_threshold_streak=write.below_threshold_streak,
+                was_eligible_at_baseline=write.was_eligible_at_baseline,
+                last_direction=write.last_direction,
+                pending_live_direction=write.pending_live_direction,
+                last_absolute_move_pp=write.last_absolute_move_pp,
+                last_signal_at=write.last_signal_at,
+                identity_fingerprint=write.identity_fingerprint,
+                baseline_reset_code=write.baseline_reset_code,
+            )
+            if (
+                write.observation is not None
+                and write.bucket_at is not None
+                and write.canonical_score is not None
+                and write.execution_metrics
+            ):
+                _save_observation_metrics_on_connection(
+                    connection,
+                    observation=write.observation,
+                    bucket_at=write.bucket_at,
+                    canonical_score=write.canonical_score,
+                    score_version=write.score_version,
+                    execution_metrics=write.execution_metrics,
+                )
+            for uid in write.signals_to_expire:
+                _expire_signal_on_connection(connection, uid, expired_at=now)
+            for signal in write.signals_to_insert:
+                _insert_signal_on_connection(connection, signal)
+        _save_scanner_state_on_connection(connection, scanner_state)
+
+
 _TABLE_DDL = (
     """
     CREATE TABLE IF NOT EXISTS opportunity_market_state (
@@ -1006,6 +1472,24 @@ _TABLE_DDL = (
         last_observed_at TEXT,
         last_midpoint TEXT,
         last_score TEXT,
+        score_version INTEGER NOT NULL DEFAULT 1 CHECK(score_version >= 1),
+        safety_policy_version INTEGER NOT NULL DEFAULT 1
+            CHECK(safety_policy_version >= 1),
+        below_threshold_streak INTEGER NOT NULL DEFAULT 0
+            CHECK(below_threshold_streak BETWEEN 0 AND 2),
+        was_eligible_at_baseline INTEGER NOT NULL DEFAULT 0
+            CHECK(was_eligible_at_baseline IN (0, 1)),
+        last_direction TEXT CHECK(
+            last_direction IS NULL OR last_direction IN ('UP', 'DOWN')
+        ),
+        pending_live_direction TEXT CHECK(
+            pending_live_direction IS NULL
+            OR pending_live_direction IN ('UP', 'DOWN')
+        ),
+        last_absolute_move_pp TEXT,
+        last_signal_at TEXT,
+        identity_fingerprint TEXT,
+        baseline_reset_code TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         CHECK(

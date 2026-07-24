@@ -1,0 +1,30 @@
+"""Version constants for Market Opportunity Scanner policy gates."""
+
+from __future__ import annotations
+
+from app.database.opportunity_storage import SCHEMA_VERSION
+from app.opportunity_intel.scoring import SCORE_VERSION
+
+BASELINE_VERSION = 1
+SAFETY_POLICY_VERSION = 1
+OPPORTUNITY_SCHEMA_VERSION = SCHEMA_VERSION
+OPPORTUNITY_SCORE_VERSION = SCORE_VERSION
+
+# Absence from complete discovery beyond this window resets baseline.
+MARKET_ABSENCE_RESET_SECONDS = 3600
+
+# Signal card default lifetime floor when market end is far away.
+SIGNAL_MAX_TTL_SECONDS = 7 * 24 * 3600
+
+NORMAL_MATERIAL_INTERVAL_SECONDS = 15 * 60
+STRICT_MATERIAL_INTERVAL_SECONDS = 60 * 60
+NORMAL_MATERIAL_MOVE_PP = 2
+STRICT_MATERIAL_MOVE_PP = 4
+NORMAL_MATERIAL_SCORE_DELTA = 10
+STRICT_MATERIAL_SCORE_DELTA = 15
+
+STRICT_LIVE_CONFIRM_DELAY_SECONDS = 3
+STRICT_LIVE_CONFIRM_DELAY_MIN_SECONDS = 2
+STRICT_LIVE_CONFIRM_DELAY_MAX_SECONDS = 5
+
+SCANNER_HTTP_CONCURRENCY = 8
