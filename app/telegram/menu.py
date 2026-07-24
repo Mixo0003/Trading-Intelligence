@@ -18,6 +18,10 @@ from app.telegram.copy_intel.handlers import (
     copy_status_command,
     copy_toggle_command,
 )
+from app.telegram.opportunity_intel.handlers import (
+    opportunities_command,
+    opportunity_settings_text_input,
+)
 from app.telegram.handlers import (
     analyze_command,
     error_handler,
@@ -71,11 +75,12 @@ def build_telegram_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("copy_paper", copy_paper_command))
     app.add_handler(CommandHandler("copy_discover", copy_discover_command))
     app.add_handler(CommandHandler("copy_settings", copy_settings_command))
+    app.add_handler(CommandHandler("opportunities", opportunities_command))
     # Single callback router — avoids duplicate/conflicting callback handlers.
     app.add_handler(CallbackQueryHandler(inline_callback_handler))
-    # Gated Copy Settings numeric/text input (only acts when edit field pending).
+    # Gated settings numeric/text input (only acts when edit field pending).
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, copy_settings_text_input),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, _settings_text_router),
         group=1,
     )
     app.add_error_handler(error_handler)
@@ -84,3 +89,9 @@ def build_telegram_application(settings: Settings) -> Application:
     schedule_copy_intel_jobs(app, settings)
     schedule_health_jobs(app, settings)
     return app
+
+
+async def _settings_text_router(update, context):
+    if await opportunity_settings_text_input(update, context):
+        return
+    await copy_settings_text_input(update, context)

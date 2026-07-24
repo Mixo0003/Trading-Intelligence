@@ -1953,6 +1953,51 @@ def load_active_signals_for_asset(
     return tuple(_parse_signal_row(row) for row in rows)
 
 
+def list_active_signals(
+    settings: Settings, *, limit: int = 50
+) -> tuple[OpportunitySignal, ...]:
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_signals
+            WHERE status = 'active'
+            ORDER BY CAST(score AS REAL) DESC, signal_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    return tuple(_parse_signal_row(row) for row in rows)
+
+
+def list_recent_signals(
+    settings: Settings, *, limit: int = 10
+) -> tuple[OpportunitySignal, ...]:
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_signals
+            ORDER BY signal_at DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    return tuple(_parse_signal_row(row) for row in rows)
+
+
+def count_active_signals(settings: Settings) -> int:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS n FROM opportunity_signals WHERE status = 'active'
+            """
+        ).fetchone()
+    return int(row["n"] if row is not None else 0)
+
+
 def load_active_signal_by_key(
     settings: Settings, opportunity_key: str
 ) -> OpportunitySignal | None:

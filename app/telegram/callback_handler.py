@@ -26,6 +26,7 @@ from app.telegram.inline_menus import (
     CB_DISC_RISK,
     CB_DISC_TOP,
     CB_MAIN,
+    CB_OPP,
     CB_SET_ALERT_BOTH,
     CB_SET_ALERT_FOLLOW,
     CB_SET_BALANCED,
@@ -123,6 +124,11 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         return
     if data == CB_WEATHER:
         await edit_or_reply(update, WEATHER_MENU_TEXT, reply_markup=weather_inline_keyboard())
+        return
+    if data == CB_OPP or data.startswith("opp:") or data.startswith("oset:"):
+        from app.telegram.opportunity_intel.handlers import handle_opportunity_callback
+
+        await handle_opportunity_callback(update, context, data)
         return
 
     if _is_copy_callback(data):
