@@ -12,7 +12,6 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import quote
 
 from app.copy_intel.models import CopyRecommendation, CopyUserSettings, DiscoveryScore
 from app.copy_intel.recommendation import (
@@ -21,12 +20,11 @@ from app.copy_intel.recommendation import (
     REASON_SCORE_BELOW_THRESHOLD,
     REASON_SLIPPAGE_LIMIT_EXCEEDED,
 )
+from app.polymarket.links import build_validated_market_link
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 POLYMARKET_HTTPS_HOST = "https://polymarket.com"
 _WALLET_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
-# Event slug: single path segment; no separators that create extra path/query/fragment.
-_SLUG_FORBIDDEN_RE = re.compile(r"[/?#\\\s]|[\x00-\x1f\x7f]|%2[fF]|%5[cC]|\.\.")
 _MAX_LABEL_LEN = 96
 _MAX_TITLE_LEN = 120
 _MAX_REASON_LEN = 200
@@ -56,27 +54,6 @@ class AlertFormatResult:
     text: str | None = None
     code: str | None = None
     message: str = ""
-
-
-def build_validated_market_link(slug: str | None) -> str | None:
-    """Build ``https://polymarket.com/event/{slug}`` or None if slug is unsafe."""
-    if slug is None:
-        return None
-    raw = str(slug).strip()
-    if not raw:
-        return None
-    if _SLUG_FORBIDDEN_RE.search(raw):
-        return None
-    if any(unicodedata.category(ch).startswith("C") for ch in raw):
-        return None
-    # Reject already-absolute / foreign URLs.
-    lowered = raw.lower()
-    if lowered.startswith("http://") or lowered.startswith("https://"):
-        return None
-    encoded = quote(raw, safe="-._~")
-    if "/" in encoded or "?" in encoded or "#" in encoded:
-        return None
-    return f"{POLYMARKET_HTTPS_HOST}/event/{encoded}"
 
 
 def build_validated_trader_link(wallet: str | None) -> str | None:
