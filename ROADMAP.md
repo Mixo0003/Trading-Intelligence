@@ -64,15 +64,31 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
   - per-user poll interval behavior
   - per-user maximum event age
   - Verification: focused 18 passed; Copy Intelligence 144 passed; Telegram 67 passed; Storage/health 126 passed, 2 skipped; full suite **671 passed, 2 skipped**; live Telegram **GO**
-- [ ] **V2.2.2** Trustworthy New/Increase Copy Alerts — implementation + automated verification on `feature/v2.2.2-trustworthy-copy-alerts`; **live Telegram verification still pending**; not released
+- [ ] **V2.2.2** Trustworthy New/Increase Copy Alerts
+  - **Implementation and automated verification complete.**
+  - **Live infrastructure verified.**
+  - **Genuine supported-wallet event proof pending.**
+  - **Large-wallet pagination support deferred.**
+  - Not full Live Telegram GO and not released
   - New Position and Increase only (Reduce/Close deferred)
   - fail-closed APIs, asset-keyed snapshots, bounded trade correlation, SHA-256 fill UIDs (`ff1:`)
   - validated order book; allocation-based slippage; distinct VWAP/mid/ask/execution prices
   - owner-admin delivery; paper commit before COPY alert; execution VWAP entry (no 0.5 fallback)
   - plaintext FOLLOW/WATCH cards; validated Polymarket Market/Trader links; no inline buttons
   - Automated verification (2026-07-23): Copy 422 passed; Telegram 114 passed; health/storage/scheduler/safety 136 passed, 2 skipped; full suite **949 passed, 2 skipped**
+  - Live infrastructure: verified production backup; additive migration; production DB integrity `ok`; one logical poller; `wallet_2` V3-complete; zero historical alert, paper, or delivery side effects
+  - `wallet_1` and `wallet_3`: complete public positions book cannot be proven inside the legal pagination window; snapshots preserved; alert paths fail-closed
   - See `docs/COPY_ALERTS.md`
-- [ ] **V2.2.3** Advanced Trader Scoring
+- [ ] **V2.2.3** Market Opportunity Scanner
+  - discover active Polymarket markets
+  - filter by liquidity, volume, and freshness
+  - detect meaningful price movement and spread
+  - inspect executable order-book depth
+  - rank opportunities
+  - send useful Telegram alerts or digests
+  - store signal history
+  - later measure post-signal outcomes
+  - remain read-only and paper-only
 - [ ] **V2.2.4** Trader Comparison
 - [ ] **V2.2.5** Paper Copy Portfolio
 - [ ] **V2.2.6** Full Polymarket Discovery and Market Normalization
@@ -81,10 +97,25 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
 
 ## Later (not started)
 
+- [ ] Large-wallet position-window support (deferred from V2.2.2)
+- [ ] Accounting-snapshot source research
+- [ ] Thresholded position universe and versioning
+- [ ] `UNIVERSE_ENTRY` / threshold-crossing semantics
+- [ ] Advanced Trader Scoring
 - [ ] Optional AI Incident Explainer (sanitized, non-controlling)
 - [ ] Reduce / Close copy-alert intent (deferred from V2.2.2)
 - [ ] Multi-user / non-admin Copy subscriptions (deferred)
 - [ ] Live execution (explicitly out of scope until approved)
+
+## Product development gate
+
+Before starting a major version or feature, ask:
+
+1. Does it provide visible new user value?
+2. Does it move the product toward paid subscriptions or revenue?
+3. Does it create something meaningful to announce or demonstrate to the user community?
+
+If all three answers are no, normally move the work to backlog unless it addresses critical safety, data loss, security, or materially incorrect financial output.
 
 ## Permanent workflow
 

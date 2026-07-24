@@ -2,7 +2,14 @@
 
 Contract for deliverable Copy Intelligence alerts on branch `feature/v2.2.2-trustworthy-copy-alerts`.
 
-**Status (2026-07-23):** implementation and automated verification complete (full suite **949 passed, 2 skipped**); **live Telegram verification still pending**; **not released**.
+**Approved status:**
+
+- **Implementation and automated verification complete.**
+- **Live infrastructure verified.**
+- **Genuine supported-wallet event proof pending.**
+- **Large-wallet pagination support deferred.**
+
+Automated verification: **949 passed, 2 skipped**. This is **not** full Live Telegram GO, **not** genuine FOLLOW-event verification, and **not released**.
 
 ## Supported events
 
@@ -44,6 +51,15 @@ Quarantined events are marked processed where appropriate so they do not reappea
 - Signal age on the card is derived from authoritative **`last_fill_ts`**, not `detected_at`.
 - Hard / soft max-age gates still respect per-user `max_event_age_seconds` (see `docs/COPY_SETTINGS.md`).
 - Baseline V3 must complete before any live alerts (`COPY_BASELINE_VERSION = 3`).
+
+## Position-universe limitation
+
+- A wallet must produce a provably complete, validated public positions book before V3 baseline completion.
+- `wallet_2` completed V3 baseline during controlled live infrastructure verification.
+- `wallet_1` and `wallet_3` exceeded the provable public offset-pagination window. Their previous snapshots remained preserved and their alert paths remained disabled.
+- V2.2.2 does not support oversized wallets whose complete positions book cannot be proven.
+- Large-wallet pagination support, accounting-snapshot research, thresholded-universe design, and `UNIVERSE_ENTRY` semantics are deferred.
+- Do not reinterpret a partial book as complete and do not fabricate New Position or Increase events.
 
 ## Price labels (must stay distinct)
 
@@ -116,27 +132,38 @@ WATCH never opens paper.
 
 - Additive `copy_position_snapshots_v2` (asset-keyed); legacy `copy_position_snapshots` retained.
 - Migration is transactional and idempotent; rollback tests cover failpoints.
-- Production migration must not run until a verified backup gate in a separately approved live session.
+- A verified production backup was created and integrity-checked before migration.
+- The production migration was applied through the approved migration path and verified idempotent.
+- Production DB integrity remained `ok`.
 - Destructive cleanup / prune is **not** part of V2.2.2.
 
 ## Deferred scope
 
+- Large-wallet position-window support
+- Accounting-snapshot source research
+- Thresholded position universe
+- `UNIVERSE_ENTRY` / threshold-crossing semantics
 - Reduce / Close alerts
 - Digest mode
 - Inline Open Market / Open Trader / paper / mute / pause buttons
 - Non-admin subscriptions
 - Authenticated CLOB / real trading
 
-## Rollback / live-verification prerequisites
+## Controlled live evidence and remaining acceptance
 
-Before live verification:
+Verified:
 
-1. Verified production DB backup + integrity check.
-2. Confirm single Telegram poller (no second process).
-3. Controlled restart only if separately authorized.
-4. Successful additive migration after backup gate.
-5. V3 baseline-only cycle with **zero historical alerts**.
-6. Observe a genuine New Position or Increase (cannot be fabricated).
-7. Verify fills, timestamps, VWAP, single book snapshot metrics, owner-only delivery, exactly one paper row for COPY, no duplicate on next poll, WATCH creates no paper row, sanitized logs/request counters.
+1. Verified production DB backup and integrity check.
+2. Successful additive migration after the backup gate.
+3. Production DB integrity `ok`.
+4. Exactly one logical Telegram poller during controlled verification.
+5. `wallet_2` V3 baseline completion.
+6. Zero historical recommendation, paper, or delivery side effects during baseline.
+7. Controlled graceful bot shutdown after verification.
 
-Do not mark V2.2.2 released until live Telegram verification is GO.
+Still pending:
+
+1. Observe a genuine supported-wallet New Position or Increase; it cannot be fabricated.
+2. Verify the resulting fills, timestamps, VWAP, single-book metrics, owner-only delivery, exactly one paper row for FOLLOW, duplicate suppression on the next poll, and WATCH-without-paper behavior.
+
+Do not claim full Live Telegram GO, genuine FOLLOW-event verification, oversized-wallet support, or production release until the applicable evidence exists.

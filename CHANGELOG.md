@@ -2,20 +2,28 @@
 
 ## V2.2.2 — Trustworthy New/Increase Copy Alerts (2026-07-23)
 
-**Status:** implementation and automated verification complete on `feature/v2.2.2-trustworthy-copy-alerts`; **live Telegram verification still pending**; **not released**.
+**Approved status:**
+
+- **Implementation and automated verification complete.**
+- **Live infrastructure verified.**
+- **Genuine supported-wallet event proof pending.**
+- **Large-wallet pagination support deferred.**
+
+This is **not** full Live Telegram GO, **not** genuine FOLLOW-event verification, and **not released**.
 
 ### Added / changed
 
 - Fail-closed Data API / CLOB client (`ApiResult`), row validation, trade-row sanitization (documented tx-hash identity only).
 - Asset-keyed position snapshots (`copy_position_snapshots_v2`) with additive, idempotent migration; legacy table retained.
 - V3 baseline (`COPY_BASELINE_VERSION = 3`) seeds current book without historical alerts.
-- Bounded trade correlation with authoritative fill timestamps; SHA-256 correlated UIDs (`ff1:<hex>`).
+- Bounded authoritative BUY-fill correlation with authoritative fill timestamps; SHA-256 correlated UIDs (`ff1:<hex>`).
+- Asset identity validation; duplicate-event, duplicate-paper, and exactly-once delivery protections.
 - Validated single-snapshot order book; Trader VWAP / midpoint / best ask / execution VWAP kept distinct.
-- Allocation-based slippage; configured paper-bankroll share only.
+- Allocation-based order-book impact, slippage, and liquidity; configured paper-bankroll share only.
 - Recommendation decisions COPY / WATCH / SKIP for **open** and **increase** only (Reduce/Close deferred).
 - Atomic paper commit before COPY delivery; entry price = execution VWAP; **no 0.5 fallback**; `source_event_uid` exactly-once.
-- Owner-admin delivery routing (`added_by`); claim / retry / dead-letter; SKIP never delivered.
-- Plaintext Telegram FOLLOW/WATCH cards; validated `https://polymarket.com` Market/Trader links; no inline buttons.
+- Owner-admin delivery routing (`added_by`) with cross-user/admin isolation; claim / retry / dead-letter; SKIP never delivered.
+- Deterministic plaintext Telegram FOLLOW/WATCH cards; validated `https://polymarket.com` Market/Trader links; no inline buttons.
 
 ### Docs
 
@@ -24,11 +32,13 @@
 
 ### Deferred
 
+- Large-wallet position-window support
+- Accounting-snapshot source research
+- Thresholded position universe and `UNIVERSE_ENTRY` semantics
 - Reduce / Close alerts
 - Multi-user / non-admin subscriptions
 - Digest mode / mutating alert buttons
 - Real trading / authenticated CLOB order placement
-- Production DB migration / live Telegram verification (separate approved session)
 
 ### Automated verification (2026-07-23)
 
@@ -37,6 +47,23 @@
 - Health/storage/scheduler/safety: 136 passed, 2 skipped.
 - Full suite: **949 passed, 2 skipped**.
 - Checkpoint 11 also fixed `:memory:` schema init (migration on same connection) after full-suite exposure.
+
+### Controlled live infrastructure verification
+
+- Created and integrity-checked a verified production backup.
+- Applied the additive production migration through the approved entry point and verified idempotency.
+- Production DB integrity remained `ok`.
+- Used exactly one logical Telegram poller.
+- `wallet_2` completed V3 baseline.
+- Baseline initialization created zero historical Copy recommendations, paper positions, or delivery claims.
+- `wallet_1` and `wallet_3` remained fail-closed because a complete public positions book could not be proven inside the legal offset-pagination window.
+- Stopped the bot through a controlled graceful shutdown after verification.
+- A genuine supported-wallet New Position / Increase FOLLOW event was not observed; that proof remains pending.
+
+### Next candidate
+
+- **V2.2.3 — Market Opportunity Scanner:** active-market discovery; liquidity, volume, and freshness filters; price-movement and spread detection; executable order-book depth; ranked opportunities; Telegram alerts or digests; signal history; later post-signal outcome measurement; read-only and paper-only.
+
 ## V2.2.1 — Editable Copy Settings (2026-07-22)
 
 **Status:** completed, merged to main (PR #9, merge `cf6d2f5`), live-verified.

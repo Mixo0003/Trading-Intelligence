@@ -29,6 +29,16 @@ It must:
 10. **Stabilize before expanding** — Do not add arbitrage, copy trading, exchanges, coins, resale scanners, wallet integration, or automatic execution until the weather MVP is accepted.
 11. **Document every accepted stage** — After each accepted stage, update `PROJECT_STATUS.md` with verified behavior, evidence, limitations, and the next bounded task.
 
+## Product development gate
+
+Before starting a major version or feature, evaluate:
+
+1. Does it provide visible new user value?
+2. Does it move the product toward paid subscriptions or revenue?
+3. Does it create something meaningful to announce or demonstrate to the user community?
+
+Work that answers **no** to all three normally belongs in the backlog unless it addresses critical safety, data loss, security, or materially incorrect financial output.
+
 ## Permanent workflow
 
 Every feature follows this sequence:
@@ -123,10 +133,15 @@ Do not perform broad refactors without a proven failing acceptance test.
 - Health: deterministic probes, admin-only System Health UX (`ADMIN_IDS`), deduplicated incidents; AI explainer off by default.
 - The real `.env` was not modified as part of V2.1 / V2.1.1 / V2.2.1 / V2.2.2 source work.
 
-### V2.2.2 — Trustworthy New/Increase Copy Alerts (implementation complete; live verification pending)
+### V2.2.2 — Trustworthy New/Increase Copy Alerts
 
-- Branch: `feature/v2.2.2-trustworthy-copy-alerts` (uncommitted implementation as of documentation update **2026-07-23**).
-- Status: **implementation and automated verification complete; live Telegram verification still pending**. **Not released.** Do not mark complete until live verification GO.
+- Branch: `feature/v2.2.2-trustworthy-copy-alerts`; documentation finalization is pending review and commit.
+- Approved status:
+  - **Implementation and automated verification complete.**
+  - **Live infrastructure verified.**
+  - **Genuine supported-wallet event proof pending.**
+  - **Large-wallet pagination support deferred.**
+- This is **not** full Live Telegram GO and **not** a production release. Genuine FOLLOW-event delivery has not been verified.
 - Automated verification (2026-07-23, Checkpoint 11):
   - `pytest -q tests/copy_intel` → **422 passed**;
   - Telegram regressions (commands/inline/scan/workflow/reply-keyboard + Copy formatting/delivery/watchlist) → **114 passed**;
@@ -142,6 +157,18 @@ Do not perform broad refactors without a proven failing acceptance test.
 - Paper entry uses execution VWAP; **no 0.5 fallback**.
 - Telegram: plaintext FOLLOW/WATCH cards; validated `https://polymarket.com` Market/Trader links; **no inline buttons**.
 - Paper-only / read-only boundary preserved; real trading not enabled; no authenticated CLOB trading calls.
+- Live infrastructure evidence:
+  - verified production backup and production/backup integrity checks;
+  - additive production migration completed through the approved migration path and verified idempotent;
+  - production DB integrity remained `ok`;
+  - exactly one logical Telegram poller was used during controlled verification;
+  - `wallet_2` completed the V3 baseline;
+  - baseline verification created zero historical Copy recommendations, paper positions, or delivery claims;
+  - the bot was stopped through a controlled graceful shutdown after verification.
+- Live limitation:
+  - `wallet_1` and `wallet_3` cannot prove a complete positions book through the public API offset-pagination window;
+  - their snapshots remained preserved and their alert paths remained fail-closed;
+  - oversized-wallet support, accounting-snapshot research, thresholded-universe design, and `UNIVERSE_ENTRY` semantics are deferred.
 - See `docs/COPY_ALERTS.md`, `docs/COPY_EVENT_FRESHNESS.md`, `ROADMAP.md`, `CHANGELOG.md`.
 
 ### Version naming (V2.2.x)
@@ -255,7 +282,7 @@ Current result: one active USA event satisfies this acceptance card.
 - [x] Copy event freshness / baseline protection (V2.1);
 - [x] Storage metrics, cleanup, backup, retention pruning, admin Storage UX (V2.1.1 — merged);
 - [x] Editable Copy Settings (V2.2.1 — merged, live-verified);
-- [ ] Trustworthy New/Increase Copy Alerts (V2.2.2 — implementation + automated tests complete; live Telegram verification pending).
+- [ ] Trustworthy New/Increase Copy Alerts (V2.2.2 — implementation and automated verification complete; live infrastructure verified; genuine supported-wallet event proof pending; large-wallet pagination support deferred).
 
 ### Phase 4 — Telegram UX
 
@@ -271,6 +298,8 @@ Current result: one active USA event satisfies this acceptance card.
 Only after weather MVP acceptance, evaluate separate modules for arbitrage detection, exchange comparison, crypto market scanning, coin monitoring, public-wallet and trader analytics, copy-trader research, and resale opportunity scanning.
 
 Each future module must have a separate collector, normalizer, signal engine, cache, tests, and Telegram view.
+
+Next candidate: **V2.2.3 — Market Opportunity Scanner**. Candidate outcomes are active-market discovery; liquidity, volume, and freshness filters; meaningful price-movement and spread detection; executable order-book depth inspection; opportunity ranking; useful Telegram alerts or digests; stored signal history; and later post-signal outcome measurement. It remains read-only and paper-only.
 
 ### Phase 6 — Financial validation
 
@@ -295,7 +324,7 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-Complete **separately approved live Telegram verification** for V2.2.2 on `feature/v2.2.2-trustworthy-copy-alerts` (see live-verification checklist in Checkpoint 11 report / `docs/COPY_ALERTS.md`). Do not commit, push, or open a PR until live verification is GO and an explicit release prompt is given. After V2.2.2 release, continue with V2.2.3+ on separate version branches per `ROADMAP.md`.
+After V2.2.2 documentation finalization is explicitly approved, begin Plan / Research and Grill Me for **V2.2.3 — Market Opportunity Scanner** on a separate version branch. Keep the genuine supported-wallet V2.2.2 FOLLOW-event proof open as an evidence task; do not reinterpret it as full Live Telegram GO or release evidence. Oversized-wallet pagination support remains deferred.
 
 ## Fresh Cursor context startup prompt
 
