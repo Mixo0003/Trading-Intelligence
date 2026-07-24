@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Iterable
 
@@ -56,6 +56,7 @@ _TABLES = frozenset(
         "opportunity_setting_edits",
         "opportunity_settings_audit",
         "opportunity_deliveries",
+        "opportunity_delivery_gates",
         "opportunity_scanner_state",
     }
 )
@@ -73,6 +74,7 @@ _INDEXES = frozenset(
         "idx_opportunity_settings_audit_user_time",
         "idx_opportunity_deliveries_status_retry",
         "idx_opportunity_deliveries_signal_wave",
+        "idx_opportunity_deliveries_recipient_status",
     }
 )
 _TRIGGERS = frozenset({"trg_opportunity_delivery_payload_immutable"})
@@ -168,6 +170,7 @@ def _initialize_on_connection(
     ).fetchone()
     if existing is not None:
         _ensure_opportunity_columns(connection)
+        _ensure_delivery_foundations(connection)
         _validate_schema(connection)
         return OpportunityMigrationResult(
             migration_id=MIGRATION_ID,
@@ -186,6 +189,7 @@ def _initialize_on_connection(
         connection.execute(statement)
     _failpoint("after_triggers")
     _ensure_opportunity_columns(connection)
+    _ensure_delivery_foundations(connection)
     _validate_schema(connection)
     _failpoint("before_marker")
     connection.execute(
@@ -228,6 +232,36 @@ def _ensure_opportunity_columns(connection: sqlite3.Connection) -> None:
         ("baseline_reset_code", "TEXT"),
     ):
         _ensure_column(connection, "opportunity_market_state", column, col_type)
+
+
+def _ensure_delivery_foundations(connection: sqlite3.Connection) -> None:
+    """Idempotent gates table + delivery lookup index for Checkpoint 5."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_delivery_gates (
+            gate_key TEXT PRIMARY KEY CHECK(gate_key = 'gates'),
+            admin_delivery_enabled INTEGER NOT NULL
+                CHECK(admin_delivery_enabled IN (0, 1)),
+            user_delivery_enabled INTEGER NOT NULL
+                CHECK(user_delivery_enabled IN (0, 1)),
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO opportunity_delivery_gates (
+            gate_key, admin_delivery_enabled, user_delivery_enabled, updated_at
+        ) VALUES ('gates', 1, 0, ?)
+        """,
+        (_iso(_now()),),
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_opportunity_deliveries_recipient_status
+        ON opportunity_deliveries(telegram_id, status, updated_at)
+        """
+    )
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -467,41 +501,7 @@ def load_subscription(
         ).fetchone()
     if row is None:
         return None
-    categories = json.loads(row["category_ids_json"])
-    quiet = (
-        None
-        if row["quiet_start"] is None
-        else {
-            "start": row["quiet_start"],
-            "end": row["quiet_end"],
-        }
-    )
-    scanner = _settings_from_payload(
-        {
-            "revision": row["revision"],
-            "minimum_score": row["minimum_score"],
-            "minimum_liquidity_usd": row["minimum_liquidity_usd"],
-            "minimum_24h_volume_usd": row["minimum_24h_volume_usd"],
-            "maximum_relative_spread": row["maximum_relative_spread"],
-            "maximum_absolute_spread": row["maximum_absolute_spread"],
-            "maximum_slippage": row["maximum_slippage"],
-            "paper_allocation_usd": row["paper_allocation_usd"],
-            "categories": {
-                "all_categories": bool(row["all_categories"]),
-                "category_ids": categories,
-            },
-            "live_mode": row["live_mode"],
-            "cooldown_seconds": row["cooldown_seconds"],
-            "alert_mode": row["alert_mode"],
-            "quiet_hours": quiet,
-            "timezone_name": row["timezone_name"],
-        }
-    )
-    return OpportunitySubscription(
-        telegram_id=int(row["telegram_id"]),
-        enabled=bool(row["enabled"]),
-        settings=scanner,
-    )
+    return _subscription_from_row(row)
 
 
 def save_setting_edit(
@@ -1230,6 +1230,601 @@ def get_delivery(
         ).fetchone()
 
 
+def load_delivery(
+    settings: Settings, telegram_id: int, opportunity_uid: str
+) -> OpportunityDelivery | None:
+    row = get_delivery(settings, telegram_id, opportunity_uid)
+    if row is None:
+        return None
+    return _parse_delivery_row(row)
+
+
+def _parse_delivery_row(row: sqlite3.Row) -> OpportunityDelivery:
+    return OpportunityDelivery(
+        telegram_id=int(row["telegram_id"]),
+        opportunity_uid=row["opportunity_uid"],
+        status=DeliveryStatus(row["status"]),
+        payload_text=row["payload_text"],
+        signal_at=datetime.fromisoformat(row["signal_at"]),
+        wave_at=datetime.fromisoformat(row["wave_at"]),
+        settings_revision=int(row["settings_revision"]),
+        claim_id=row["claim_id"],
+        claimed_at=(
+            datetime.fromisoformat(row["claimed_at"]) if row["claimed_at"] else None
+        ),
+        claim_expires_at=(
+            datetime.fromisoformat(row["claim_expires_at"])
+            if row["claim_expires_at"]
+            else None
+        ),
+        attempt_count=int(row["attempt_count"] or 0),
+        next_attempt_at=(
+            datetime.fromisoformat(row["next_attempt_at"])
+            if row["next_attempt_at"]
+            else None
+        ),
+        last_error_code=(
+            OpportunityDiagnosticCode(row["last_error_code"])
+            if row["last_error_code"]
+            else None
+        ),
+    )
+
+
+def load_delivery_gates(settings: Settings) -> "OpportunityDeliveryGates":
+    from app.opportunity_intel.delivery_gates import OpportunityDeliveryGates
+
+    with _opportunity_connection(settings) as connection:
+        _ensure_delivery_foundations(connection)
+        row = connection.execute(
+            """
+            SELECT admin_delivery_enabled, user_delivery_enabled
+            FROM opportunity_delivery_gates
+            WHERE gate_key = 'gates'
+            """
+        ).fetchone()
+    if row is None:
+        return OpportunityDeliveryGates()
+    return OpportunityDeliveryGates(
+        admin_delivery_enabled=bool(row["admin_delivery_enabled"]),
+        user_delivery_enabled=bool(row["user_delivery_enabled"]),
+    )
+
+
+def save_delivery_gates(
+    settings: Settings,
+    gates: "OpportunityDeliveryGates",
+) -> None:
+    with _opportunity_connection(settings) as connection:
+        _ensure_delivery_foundations(connection)
+        connection.execute(
+            """
+            INSERT INTO opportunity_delivery_gates (
+                gate_key, admin_delivery_enabled, user_delivery_enabled, updated_at
+            ) VALUES ('gates', ?, ?, ?)
+            ON CONFLICT(gate_key) DO UPDATE SET
+                admin_delivery_enabled = excluded.admin_delivery_enabled,
+                user_delivery_enabled = excluded.user_delivery_enabled,
+                updated_at = excluded.updated_at
+            """,
+            (
+                int(gates.admin_delivery_enabled),
+                int(gates.user_delivery_enabled),
+                _iso(_now()),
+            ),
+        )
+
+
+def list_subscriptions(settings: Settings) -> tuple[OpportunitySubscription, ...]:
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            "SELECT * FROM opportunity_subscriptions ORDER BY telegram_id"
+        ).fetchall()
+    return tuple(_subscription_from_row(row) for row in rows)
+
+
+def _subscription_from_row(row: sqlite3.Row) -> OpportunitySubscription:
+    categories = json.loads(row["category_ids_json"])
+    quiet = (
+        None
+        if row["quiet_start"] is None
+        else {
+            "start": row["quiet_start"],
+            "end": row["quiet_end"],
+        }
+    )
+    scanner = _settings_from_payload(
+        {
+            "revision": row["revision"],
+            "minimum_score": row["minimum_score"],
+            "minimum_liquidity_usd": row["minimum_liquidity_usd"],
+            "minimum_24h_volume_usd": row["minimum_24h_volume_usd"],
+            "maximum_relative_spread": row["maximum_relative_spread"],
+            "maximum_absolute_spread": row["maximum_absolute_spread"],
+            "maximum_slippage": row["maximum_slippage"],
+            "paper_allocation_usd": row["paper_allocation_usd"],
+            "categories": {
+                "all_categories": bool(row["all_categories"]),
+                "category_ids": categories,
+            },
+            "live_mode": row["live_mode"],
+            "cooldown_seconds": row["cooldown_seconds"],
+            "alert_mode": row["alert_mode"],
+            "quiet_hours": quiet,
+            "timezone_name": row["timezone_name"],
+        }
+    )
+    return OpportunitySubscription(
+        telegram_id=int(row["telegram_id"]),
+        enabled=bool(row["enabled"]),
+        settings=scanner,
+    )
+
+
+def load_signal(
+    settings: Settings, opportunity_uid: str
+) -> OpportunitySignal | None:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM opportunity_signals
+            WHERE opportunity_uid = ?
+            """,
+            (opportunity_uid,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _parse_signal_row(row)
+
+
+@dataclass(frozen=True)
+class PersistedObservationBundle:
+    asset_id: str
+    observed_at: datetime
+    mode: ObservationMode
+    best_bid: Decimal
+    best_ask: Decimal
+    midpoint: Decimal
+    absolute_spread: Decimal
+    relative_spread: Decimal
+    liquidity_usd: Decimal
+    volume_24h_usd: Decimal
+    move_5m: Decimal
+    move_15m: Decimal
+    move_1h: Decimal
+    visible_bid_depth_usd: Decimal
+    visible_ask_depth_usd: Decimal
+    book_at: datetime
+    history_at: datetime
+    canonical_score: Decimal
+    score_version: int
+    execution_metrics: tuple[ExecutionMetrics, ...]
+    condition_id: str
+    event_id: str
+    market_id: str
+    event_slug: str
+    question: str
+    outcome: str
+    category_ids: tuple[str, ...]
+    end_at: datetime
+
+
+def load_persisted_observation_bundle(
+    settings: Settings,
+    *,
+    asset_id: str,
+    observed_at: datetime,
+) -> PersistedObservationBundle | None:
+    """Load metric bucket + execution rows + market identity for one observation."""
+    observed_iso = _iso(observed_at)
+    with _opportunity_connection(settings) as connection:
+        bucket = connection.execute(
+            """
+            SELECT * FROM opportunity_metric_buckets
+            WHERE asset_id = ? AND observed_at = ?
+            ORDER BY bucket_at DESC
+            LIMIT 1
+            """,
+            (asset_id, observed_iso),
+        ).fetchone()
+        if bucket is None:
+            return None
+        market = connection.execute(
+            "SELECT * FROM opportunity_market_state WHERE asset_id = ?",
+            (asset_id,),
+        ).fetchone()
+        if market is None:
+            return None
+        metric_rows = connection.execute(
+            """
+            SELECT * FROM opportunity_execution_metrics
+            WHERE asset_id = ? AND observed_at = ?
+            ORDER BY CAST(allocation_usd AS REAL)
+            """,
+            (asset_id, observed_iso),
+        ).fetchall()
+    metrics = tuple(
+        ExecutionMetrics(
+            asset_id=row["asset_id"],
+            observed_at=datetime.fromisoformat(row["observed_at"]),
+            allocation_usd=Decimal(row["allocation_usd"]),
+            fully_executable=bool(row["fully_executable"]),
+            execution_vwap=(
+                Decimal(row["execution_vwap"]) if row["execution_vwap"] else None
+            ),
+            slippage=Decimal(row["slippage"]) if row["slippage"] else None,
+            quantity=Decimal(row["quantity"]),
+            consumed_ask_usd=Decimal(row["consumed_ask_usd"]),
+        )
+        for row in metric_rows
+    )
+    return PersistedObservationBundle(
+        asset_id=bucket["asset_id"],
+        observed_at=datetime.fromisoformat(bucket["observed_at"]),
+        mode=ObservationMode(bucket["mode"]),
+        best_bid=Decimal(bucket["best_bid"]),
+        best_ask=Decimal(bucket["best_ask"]),
+        midpoint=Decimal(bucket["midpoint"]),
+        absolute_spread=Decimal(bucket["absolute_spread"]),
+        relative_spread=Decimal(bucket["relative_spread"]),
+        liquidity_usd=Decimal(bucket["liquidity_usd"]),
+        volume_24h_usd=Decimal(bucket["volume_24h_usd"]),
+        move_5m=Decimal(bucket["move_5m"]),
+        move_15m=Decimal(bucket["move_15m"]),
+        move_1h=Decimal(bucket["move_1h"]),
+        visible_bid_depth_usd=Decimal(bucket["visible_bid_depth_usd"]),
+        visible_ask_depth_usd=Decimal(bucket["visible_ask_depth_usd"]),
+        book_at=datetime.fromisoformat(bucket["book_at"]),
+        history_at=datetime.fromisoformat(bucket["history_at"]),
+        canonical_score=Decimal(bucket["canonical_score"]),
+        score_version=int(bucket["score_version"]),
+        execution_metrics=metrics,
+        condition_id=market["condition_id"],
+        event_id=market["event_id"],
+        market_id=market["market_id"],
+        event_slug=market["event_slug"],
+        question=market["question"],
+        outcome=market["outcome"],
+        category_ids=tuple(json.loads(market["category_ids_json"])),
+        end_at=datetime.fromisoformat(market["end_at"]),
+    )
+
+
+def last_sent_at_for_opportunity_key(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    opportunity_key: str,
+) -> datetime | None:
+    """Return the latest SENT delivery time for this recipient/family key."""
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT d.updated_at
+            FROM opportunity_deliveries d
+            INNER JOIN opportunity_signals s
+                ON s.opportunity_uid = d.opportunity_uid
+            WHERE d.telegram_id = ?
+              AND d.status = 'sent'
+              AND s.opportunity_key = ?
+            ORDER BY d.updated_at DESC
+            LIMIT 1
+            """,
+            (telegram_id, opportunity_key),
+        ).fetchone()
+    if row is None:
+        return None
+    return datetime.fromisoformat(row["updated_at"])
+
+
+def insert_delivery_wave(
+    settings: Settings,
+    deliveries: Iterable[OpportunityDelivery],
+) -> tuple[int, int]:
+    """Insert wave rows idempotently. Returns (inserted_count, ignored_count)."""
+    rows = tuple(deliveries)
+    inserted = 0
+    ignored = 0
+    with _opportunity_connection(settings) as connection:
+        for delivery in rows:
+            if delivery.status not in {
+                DeliveryStatus.PENDING,
+                DeliveryStatus.SUPPRESSED,
+            }:
+                raise ValueError("wave insert accepts only pending or suppressed rows")
+            if delivery.status == DeliveryStatus.PENDING and (
+                delivery.claim_id is not None
+                or delivery.claimed_at is not None
+                or delivery.claim_expires_at is not None
+            ):
+                raise ValueError("pending wave rows must not carry claim state")
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO opportunity_deliveries (
+                    telegram_id, opportunity_uid, status, payload_text,
+                    signal_at, wave_at, settings_revision, claim_id,
+                    claimed_at, claim_expires_at, attempt_count, next_attempt_at,
+                    last_error_code, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)
+                """,
+                (
+                    delivery.telegram_id,
+                    delivery.opportunity_uid,
+                    delivery.status.value,
+                    delivery.payload_text,
+                    _iso(delivery.signal_at),
+                    _iso(delivery.wave_at),
+                    delivery.settings_revision,
+                    delivery.attempt_count,
+                    (
+                        _iso(delivery.next_attempt_at)
+                        if delivery.next_attempt_at
+                        else None
+                    ),
+                    (
+                        delivery.last_error_code.value
+                        if delivery.last_error_code is not None
+                        else None
+                    ),
+                    _iso(_now()),
+                    _iso(_now()),
+                ),
+            )
+            if cursor.rowcount == 1:
+                inserted += 1
+            else:
+                ignored += 1
+    return inserted, ignored
+
+
+def claim_delivery_lease(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    opportunity_uid: str,
+    claim_id: str,
+    now: datetime,
+    lease_seconds: int = 120,
+    max_attempts: int = 3,
+) -> OpportunityDelivery | None:
+    """Atomically claim a pending/due/expired delivery for send preparation."""
+    now_utc = now.astimezone(timezone.utc)
+    now_iso = _iso(now_utc)
+    expires_iso = _iso(now_utc + timedelta(seconds=lease_seconds))
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM opportunity_deliveries
+            WHERE telegram_id = ? AND opportunity_uid = ?
+            """,
+            (telegram_id, opportunity_uid),
+        ).fetchone()
+        if row is None:
+            return None
+        status = DeliveryStatus(row["status"])
+        attempts = int(row["attempt_count"] or 0)
+        if status in {
+            DeliveryStatus.SENT,
+            DeliveryStatus.DEAD_LETTER,
+            DeliveryStatus.SUPPRESSED,
+        }:
+            return None
+        if status == DeliveryStatus.CLAIMED:
+            expires = (
+                datetime.fromisoformat(row["claim_expires_at"])
+                if row["claim_expires_at"]
+                else None
+            )
+            if expires is not None and expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if expires is None or expires > now_utc:
+                return None
+            new_attempts = attempts
+        elif status == DeliveryStatus.PENDING:
+            if attempts >= max_attempts:
+                return None
+            new_attempts = attempts + 1
+        elif status in {DeliveryStatus.RETRY_WAIT, DeliveryStatus.FAILED}:
+            if attempts >= max_attempts:
+                return None
+            next_at = (
+                datetime.fromisoformat(row["next_attempt_at"])
+                if row["next_attempt_at"]
+                else None
+            )
+            if next_at is not None:
+                if next_at.tzinfo is None:
+                    next_at = next_at.replace(tzinfo=timezone.utc)
+                if next_at > now_utc:
+                    return None
+            new_attempts = attempts + 1
+        else:
+            return None
+
+        cursor = connection.execute(
+            """
+            UPDATE opportunity_deliveries
+            SET status = 'claimed',
+                claim_id = ?,
+                claimed_at = ?,
+                claim_expires_at = ?,
+                attempt_count = ?,
+                next_attempt_at = NULL,
+                updated_at = ?
+            WHERE telegram_id = ? AND opportunity_uid = ?
+              AND status = ?
+              AND attempt_count = ?
+              AND (
+                    (? = 'claimed' AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?)
+                 OR (? = 'pending')
+                 OR (
+                        ? IN ('retry_wait', 'failed')
+                    AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                 )
+              )
+            """,
+            (
+                claim_id,
+                now_iso,
+                expires_iso,
+                new_attempts,
+                now_iso,
+                telegram_id,
+                opportunity_uid,
+                status.value,
+                attempts,
+                status.value,
+                now_iso,
+                status.value,
+                status.value,
+                now_iso,
+            ),
+        )
+        if cursor.rowcount != 1:
+            return None
+        updated = connection.execute(
+            """
+            SELECT * FROM opportunity_deliveries
+            WHERE telegram_id = ? AND opportunity_uid = ?
+            """,
+            (telegram_id, opportunity_uid),
+        ).fetchone()
+    return _parse_delivery_row(updated)
+
+
+def mark_delivery_terminal(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    opportunity_uid: str,
+    claim_id: str,
+    status: DeliveryStatus,
+    error_code: OpportunityDiagnosticCode | None = None,
+    next_attempt_at: datetime | None = None,
+) -> bool:
+    """Transition a claimed row to a terminal or retry_wait state (idempotent)."""
+    if status not in {
+        DeliveryStatus.SENT,
+        DeliveryStatus.SUPPRESSED,
+        DeliveryStatus.DEAD_LETTER,
+        DeliveryStatus.RETRY_WAIT,
+    }:
+        raise ValueError("unsupported terminal delivery status")
+    now_iso = _iso(_now())
+    with _opportunity_connection(settings) as connection:
+        existing = connection.execute(
+            """
+            SELECT status, claim_id FROM opportunity_deliveries
+            WHERE telegram_id = ? AND opportunity_uid = ?
+            """,
+            (telegram_id, opportunity_uid),
+        ).fetchone()
+        if existing is None:
+            return False
+        current = DeliveryStatus(existing["status"])
+        if current == status:
+            return True
+        if current in {
+            DeliveryStatus.SENT,
+            DeliveryStatus.DEAD_LETTER,
+            DeliveryStatus.SUPPRESSED,
+        }:
+            return False
+        if current != DeliveryStatus.CLAIMED or existing["claim_id"] != claim_id:
+            return False
+        cursor = connection.execute(
+            """
+            UPDATE opportunity_deliveries
+            SET status = ?,
+                last_error_code = ?,
+                next_attempt_at = ?,
+                claim_id = CASE WHEN ? IN ('sent', 'suppressed', 'dead_letter')
+                    THEN NULL ELSE claim_id END,
+                claimed_at = CASE WHEN ? IN ('sent', 'suppressed', 'dead_letter')
+                    THEN NULL ELSE claimed_at END,
+                claim_expires_at = CASE WHEN ? IN ('sent', 'suppressed', 'dead_letter')
+                    THEN NULL ELSE claim_expires_at END,
+                updated_at = ?
+            WHERE telegram_id = ? AND opportunity_uid = ?
+              AND status = 'claimed'
+              AND claim_id = ?
+            """,
+            (
+                status.value,
+                error_code.value if error_code is not None else None,
+                _iso(next_attempt_at) if next_attempt_at is not None else None,
+                status.value,
+                status.value,
+                status.value,
+                now_iso,
+                telegram_id,
+                opportunity_uid,
+                claim_id,
+            ),
+        )
+        return cursor.rowcount == 1
+
+
+def list_deliveries_for_opportunity(
+    settings: Settings, opportunity_uid: str
+) -> tuple[OpportunityDelivery, ...]:
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_deliveries
+            WHERE opportunity_uid = ?
+            ORDER BY telegram_id
+            """,
+            (opportunity_uid,),
+        ).fetchall()
+    return tuple(_parse_delivery_row(row) for row in rows)
+
+
+def list_due_delivery_retries(
+    settings: Settings,
+    *,
+    now: datetime,
+    limit: int = 50,
+    max_attempts: int = 3,
+) -> tuple[OpportunityDelivery, ...]:
+    now_iso = _iso(now.astimezone(timezone.utc))
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_deliveries
+            WHERE status IN ('retry_wait', 'failed')
+              AND attempt_count < ?
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+            ORDER BY updated_at ASC
+            LIMIT ?
+            """,
+            (max_attempts, now_iso, limit),
+        ).fetchall()
+    return tuple(_parse_delivery_row(row) for row in rows)
+
+
+def list_expired_claims(
+    settings: Settings,
+    *,
+    now: datetime,
+    limit: int = 50,
+) -> tuple[OpportunityDelivery, ...]:
+    now_iso = _iso(now.astimezone(timezone.utc))
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_deliveries
+            WHERE status = 'claimed'
+              AND claim_expires_at IS NOT NULL
+              AND claim_expires_at <= ?
+            ORDER BY claim_expires_at ASC
+            LIMIT ?
+            """,
+            (now_iso, limit),
+        ).fetchall()
+    return tuple(_parse_delivery_row(row) for row in rows)
+
+
 def _parse_market_row(row: sqlite3.Row) -> MarketStateRecord:
     categories = tuple(json.loads(row["category_ids_json"]))
     last_direction = (
@@ -1653,7 +2248,7 @@ _TABLE_DDL = (
         opportunity_uid TEXT NOT NULL,
         status TEXT NOT NULL CHECK(
             status IN (
-                'pending', 'claimed', 'failed', 'sent',
+                'pending', 'claimed', 'retry_wait', 'failed', 'sent',
                 'dead_letter', 'suppressed'
             )
         ),
@@ -1686,6 +2281,16 @@ _TABLE_DDL = (
                 AND claim_expires_at IS NOT NULL
             )
         )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS opportunity_delivery_gates (
+        gate_key TEXT PRIMARY KEY CHECK(gate_key = 'gates'),
+        admin_delivery_enabled INTEGER NOT NULL
+            CHECK(admin_delivery_enabled IN (0, 1)),
+        user_delivery_enabled INTEGER NOT NULL
+            CHECK(user_delivery_enabled IN (0, 1)),
+        updated_at TEXT NOT NULL
     )
     """,
     """
@@ -1754,6 +2359,10 @@ _INDEX_DDL = (
     """
     CREATE INDEX IF NOT EXISTS idx_opportunity_deliveries_signal_wave
     ON opportunity_deliveries(opportunity_uid, wave_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_opportunity_deliveries_recipient_status
+    ON opportunity_deliveries(telegram_id, status, updated_at)
     """,
 )
 
