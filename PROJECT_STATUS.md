@@ -2,7 +2,7 @@
 
 ## Product purpose
 
-Trading-Intelligence is an analysis-only Telegram bot for discovering and analyzing Polymarket weather markets.
+Trading-Intelligence is an analysis-only Telegram bot for discovering and analyzing Polymarket weather markets, plus read-only / paper-only Copy Intelligence and admin Health / Storage tooling.
 
 It must:
 
@@ -28,6 +28,55 @@ It must:
 9. **Review before commit** — Review intended diffs, run required tests, scan for secrets, and check `git diff` before commit or push.
 10. **Stabilize before expanding** — Do not add arbitrage, copy trading, exchanges, coins, resale scanners, wallet integration, or automatic execution until the weather MVP is accepted.
 11. **Document every accepted stage** — After each accepted stage, update `PROJECT_STATUS.md` with verified behavior, evidence, limitations, and the next bounded task.
+
+## Product development gate
+
+Before starting a major version or feature, evaluate:
+
+1. Does it provide visible new user value?
+2. Does it move the product toward paid subscriptions or revenue?
+3. Does it create something meaningful to announce or demonstrate to the user community?
+
+Work that answers **no** to all three normally belongs in the backlog unless it addresses critical safety, data loss, security, or materially incorrect financial output.
+
+## Permanent workflow
+
+Every feature follows this sequence:
+
+1. Plan / Research
+2. Grill Me
+3. Final Plan
+4. Build
+5. Debug
+6. Focused tests
+7. Full suite
+8. Live Telegram verification
+9. Release prep
+10. Commit and push
+11. PR and merge
+
+Do not skip stages. Do not commit or push without an explicit release prompt.
+
+**Grill Me policy:** the permanent formal Grill Me requirement applies from **V2.2.2 onward**. Do not claim retroactively that V2.2.1 completed a formal Grill Me unless repository evidence proves it.
+
+## Tool decisions
+
+| Tool | Role |
+|------|------|
+| Cursor | Primary development environment |
+| ChatGPT Project | Strategy and master context |
+| Codex Remote | First tested read-only only |
+| Strix | Deferred to an isolated VM or Docker environment |
+| Graphify | Tested separately; must not enter bot runtime |
+
+## Safety rules (always on)
+
+- Exactly one Telegram poller (one logical bot instance) during live verification.
+- Do not start, stop, or restart the bot unless the user explicitly asks.
+- Never commit the real `.env`.
+- Never commit runtime, database, WAL/SHM, backup, log, or cache artifacts.
+- No real trading unless explicitly approved.
+- No commit or push without an explicit release prompt.
 
 ## Mandatory working method
 
@@ -65,43 +114,93 @@ Do not perform broad refactors without a proven failing acceptance test.
 
 ## Current verified state
 
-- Product baseline on main: Weather Intelligence V1.1 + Trader Intelligence V2 (read-only / paper-only) + Health Monitor V2.1.
-- **V2.1.1 storage retention — implementation and live verification complete** on branch `feature/v2.1.1-storage-retention`.
-- V2.1.1 delivered and verified:
-  - storage metrics and disk / growth thresholds;
-  - explicit-path file cleanup with safe defaults (disabled + dry-run);
-  - SQLite retention audit and dry-run preview;
-  - verified online SQLite backup and integrity gate;
-  - verified-backup-gated bounded retention pruning (disabled + dry-run by default);
-  - admin Storage Telegram UX (Metrics, Backup, Cleanup, Retention, History);
-  - storage alerts and recovery deduplication;
-  - maintenance history;
-  - admin-only authorization on every storage callback.
-- Live Telegram verification passed; Weather, Copy Intelligence, and scheduler regressions passed.
-- Full suite: **652 passed, 2 skipped**.
+- Product baseline on **main**: Weather Intelligence V1.1 + Trader Intelligence V2 (read-only / paper-only) + Health Monitor V2.1 + Storage Retention **V2.1.1** + Editable Copy Settings **V2.2.1**.
+- **V2.1.1 storage retention — merged to main** (PR #8; merge commit `80bc4b5`, 2026-07 timeframe on main history).
+  - Live Telegram verification for V2.1.1: passed (historical).
+  - Full-suite baseline recorded at V2.1.1 completion: **652 passed, 2 skipped** (superseded by later V2.2.1 baseline below).
+- **V2.2.1 Editable Copy Settings — completed, merged to main, and live-verified** (PR #9 from `feature/v2.2.1-copy-settings`; merge commit `cf6d2f5`).
+  - Delivered: nine editable per-user settings; validation bounds; preview / cancel / confirm; Reset to Balanced; stale-token and concurrent-edit protection; per-user poll interval; per-user maximum event age.
+  - Verification (PR #9 / V2.2.1 release evidence):
+    - focused V2.2.1: **18 passed**;
+    - Copy Intelligence: **144 passed**;
+    - Telegram regressions: **67 passed**;
+    - Storage/health: **126 passed, 2 skipped**;
+    - full suite: **671 passed, 2 skipped**;
+    - live Telegram verification: **GO**.
+  - Formal Grill Me was **not** claimed for V2.2.1 (policy formalized from V2.2.2 onward).
 - Safety defaults unchanged: real cleanup and pruning remain disabled / dry-run; no automatic VACUUM or `journal_mode` changes; backup creation is explicit and admin-confirmed.
 - Copy freshness: baseline/watermarks/`processed_copy_events`; re-enable starts a new baseline; no alerts until baseline `COMPLETE`.
 - Health: deterministic probes, admin-only System Health UX (`ADMIN_IDS`), deduplicated incidents; AI explainer off by default.
-- The real `.env` was not modified as part of V2.1 / V2.1.1 source work.
-- **V2.1.1 is ready for PR review and merge after final documentation review.**
+- The real `.env` was not modified as part of V2.1 / V2.1.1 / V2.2.1 / V2.2.2 source work.
+
+### V2.2.2 — Trustworthy New/Increase Copy Alerts
+
+- Branch: `feature/v2.2.2-trustworthy-copy-alerts`; documentation finalization is pending review and commit.
+- Approved status:
+  - **Implementation and automated verification complete.**
+  - **Live infrastructure verified.**
+  - **Genuine supported-wallet event proof pending.**
+  - **Large-wallet pagination support deferred.**
+- This is **not** full Live Telegram GO and **not** a production release. Genuine FOLLOW-event delivery has not been verified.
+- Automated verification (2026-07-23, Checkpoint 11):
+  - `pytest -q tests/copy_intel` → **422 passed**;
+  - Telegram regressions (commands/inline/scan/workflow/reply-keyboard + Copy formatting/delivery/watchlist) → **114 passed**;
+  - health/storage/scheduler/readonly/weather-isolation → **136 passed, 2 skipped**;
+  - full suite `pytest -q` → **949 passed, 2 skipped**;
+  - Correction during Checkpoint 11: `:memory:` DB init must run V2.2.2 migration on the same connection as base schema (fixed and re-verified).
+- Supported event types: **New Position (`open`) and Increase only**. Reduce and Close remain deferred.
+- Authoritative trade timestamp required; missing/ambiguous correlation is quarantined and not alerted.
+- Distinct price concepts: Trader VWAP, Market midpoint, Executable best ask, Paper execution VWAP.
+- Slippage is allocation-based (execution VWAP vs midpoint from one validated book snapshot).
+- Paper bankroll share means configured paper-bankroll share only (not a trader-bankroll estimate).
+- Admin-only **owner-scoped** delivery (`added_by`); multi-user / non-admin subscriptions deferred.
+- Paper entry uses execution VWAP; **no 0.5 fallback**.
+- Telegram: plaintext FOLLOW/WATCH cards; validated `https://polymarket.com` Market/Trader links; **no inline buttons**.
+- Paper-only / read-only boundary preserved; real trading not enabled; no authenticated CLOB trading calls.
+- Live infrastructure evidence:
+  - verified production backup and production/backup integrity checks;
+  - additive production migration completed through the approved migration path and verified idempotent;
+  - production DB integrity remained `ok`;
+  - exactly one logical Telegram poller was used during controlled verification;
+  - `wallet_2` completed the V3 baseline;
+  - baseline verification created zero historical Copy recommendations, paper positions, or delivery claims;
+  - the bot was stopped through a controlled graceful shutdown after verification.
+- Live limitation:
+  - `wallet_1` and `wallet_3` cannot prove a complete positions book through the public API offset-pagination window;
+  - their snapshots remained preserved and their alert paths remained fail-closed;
+  - oversized-wallet support, accounting-snapshot research, thresholded-universe design, and `UNIVERSE_ENTRY` semantics are deferred.
+- See `docs/COPY_ALERTS.md`, `docs/COPY_EVENT_FRESHNESS.md`, `ROADMAP.md`, `CHANGELOG.md`.
+
+### Version naming (V2.2.x)
+
+V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3** — not “Phase”. Use a separate small version branch per version; never combine multiple V2.2.x scopes on one branch.
+
+### Pre-V2.2 / ongoing requirements (still open for later expansion)
+
+- official Polymarket API research (ongoing as needed per version);
+- broader paper-copy portfolio architecture (beyond V2.2.2 paper commit path);
+- security threat model (ongoing);
+- limited Grill Me per feature (**required from V2.2.2 onward**).
 
 ### Strix (optional external audit)
 
 - Strix was evaluated but unavailable locally; no Strix scan was executed and no findings were produced.
 - Audit deferred to a disposable VM or isolated Docker host.
 - Only a sanitized source-only worktree may be scanned; exclude `.env`, databases, backups, logs, caches, and runtime data.
-- Strix is **not a blocker** for the V2.1.1 PR — it was an optional external audit, not an existing release check.
+- Strix is **not a blocker** for merged V2.1.1 / V2.2.1 work — it remains an optional external audit.
 
-## V2.1 / V2.1.1 modules
+## V2.1 / V2.1.1 / V2.2.1 / V2.2.2 modules
 
 | Area | Path |
 |------|------|
 | Freshness | `app/copy_intel/freshness.py` |
+| Copy settings | `app/copy_intel/settings_*.py`, `app/telegram/copy_intel/*`, `docs/COPY_SETTINGS.md` |
+| Trustworthy alerts (V2.2.2) | `app/copy_intel/{api_result,data_client,position_book,trade_correlation,order_book,recommendation,paper_commit,delivery}.py`, `app/telegram/copy_intel/formatting.py`, `docs/COPY_ALERTS.md` |
 | Health core | `app/health/*` |
 | Storage metrics / cleanup / backup / prune | `app/storage/*`, `app/health/storage_metrics.py`, `app/health/storage_alerts.py` |
 | Admin auth | `app/telegram/auth.py` |
 | Health + Storage UX | `app/telegram/health/*` |
-| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `ROADMAP.md`, `CHANGELOG.md` |
+| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `docs/COPY_SETTINGS.md`, `docs/COPY_ALERTS.md`, `ROADMAP.md`, `CHANGELOG.md` |
 
 ## Latest live weather proof
 
@@ -181,7 +280,9 @@ Current result: one active USA event satisfies this acceptance card.
 - document VPS deployment;
 - [x] Health Monitor + admin diagnostics (V2.1);
 - [x] Copy event freshness / baseline protection (V2.1);
-- [x] Storage metrics, cleanup, backup, retention pruning, admin Storage UX (V2.1.1 — pending merge).
+- [x] Storage metrics, cleanup, backup, retention pruning, admin Storage UX (V2.1.1 — merged);
+- [x] Editable Copy Settings (V2.2.1 — merged, live-verified);
+- [ ] Trustworthy New/Increase Copy Alerts (V2.2.2 — implementation and automated verification complete; live infrastructure verified; genuine supported-wallet event proof pending; large-wallet pagination support deferred).
 
 ### Phase 4 — Telegram UX
 
@@ -197,6 +298,8 @@ Current result: one active USA event satisfies this acceptance card.
 Only after weather MVP acceptance, evaluate separate modules for arbitrage detection, exchange comparison, crypto market scanning, coin monitoring, public-wallet and trader analytics, copy-trader research, and resale opportunity scanning.
 
 Each future module must have a separate collector, normalizer, signal engine, cache, tests, and Telegram view.
+
+Next candidate: **V2.2.3 — Market Opportunity Scanner**. Candidate outcomes are active-market discovery; liquidity, volume, and freshness filters; meaningful price-movement and spread detection; executable order-book depth inspection; opportunity ranking; useful Telegram alerts or digests; stored signal history; and later post-signal outcome measurement. It remains read-only and paper-only.
 
 ### Phase 6 — Financial validation
 
@@ -221,13 +324,7 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-Complete final documentation review for V2.1.1 on `feature/v2.1.1-storage-retention`, then open the PR for review and merge. Do not implement V2.2 until V2.1.1 is merged. After merge, the next bounded product work follows the V2.2.1+ sequence in `ROADMAP.md` (separate small version branches).
-
-## V2.2.1 Editable Copy Settings (in progress on branch)
-
-Branch: `feature/v2.2.1-copy-settings`.
-
-Implemented: per-user editable Copy Settings (nine fields), Edit/Reset Telegram UX with preview-confirm and stale tokens, JSON load migration for `max_event_age_seconds`, per-user poll skip (global job floor), per-subscriber max event age and alert-mode filtering. See `docs/COPY_SETTINGS.md`.
+After V2.2.2 documentation finalization is explicitly approved, begin Plan / Research and Grill Me for **V2.2.3 — Market Opportunity Scanner** on a separate version branch. Keep the genuine supported-wallet V2.2.2 FOLLOW-event proof open as an evidence task; do not reinterpret it as full Live Telegram GO or release evidence. Oversized-wallet pagination support remains deferred.
 
 ## Fresh Cursor context startup prompt
 

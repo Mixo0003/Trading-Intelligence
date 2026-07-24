@@ -7,6 +7,7 @@ from collections import Counter
 from typing import Any
 
 from app.config.settings import Settings
+from app.copy_intel.api_result import unwrap_data_list
 from app.copy_intel.data_client import CopyDataClient, is_trade_activity
 from app.copy_intel.models import TraderMetrics
 from app.database import copy_storage
@@ -21,10 +22,10 @@ def compute_trader_metrics(
     client: CopyDataClient | None = None,
 ) -> TraderMetrics:
     client = client or CopyDataClient(settings)
-    closed = client.fetch_closed_positions(wallet, limit=500)
-    trades = client.fetch_trades(wallet, limit=500)
-    activity = client.fetch_activity(wallet, limit=500)
-    positions = client.fetch_positions(wallet, limit=100)
+    closed = unwrap_data_list(client.fetch_closed_positions(wallet, limit=500))
+    trades = unwrap_data_list(client.fetch_trades(wallet, limit=500))
+    activity = unwrap_data_list(client.fetch_activity(wallet, limit=500))
+    positions = unwrap_data_list(client.fetch_positions(wallet, limit=100))
 
     trade_activity = [a for a in activity if is_trade_activity(a.get("type"))]
     resolved = [c for c in closed if c.get("realizedPnl") is not None]

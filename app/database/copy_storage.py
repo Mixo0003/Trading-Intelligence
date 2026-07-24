@@ -7,6 +7,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from app.config.constants import (
+    COPY_MAX_ALLOC_PER_MARKET,
+    COPY_MAX_ALLOC_PER_WALLET,
+    COPY_MAX_ALLOC_TOTAL,
+)
 from app.config.settings import Settings
 from app.database.storage import get_connection
 
@@ -227,6 +232,10 @@ def initialize_copy_schema(settings: Settings) -> None:
             )
         """)
 
+        # Keep base DDL + V2.2.2 migration on one connection so ``:memory:``
+        # databases (default pytest settings) retain tables across steps.
+        _migrate_legacy_position_snapshots_to_v2_on_connection(connection)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -239,6 +248,673 @@ def _ensure_copy_column(
     names = {row[1] for row in rows}
     if column not in names:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+
+# V2.2.2 Checkpoint 3 — parallel asset-keyed snapshots + migration.
+MIGRATION_ID_POSITION_SNAPSHOTS_V2 = "v2.2.2_copy_position_snapshots_v2"
+
+# Named failpoints for focused tests only. Production always no-ops.
+# Points: during_legacy_row_migration | during_quarantine_insertion |
+#         during_validation | before_marker_write
+_MIGRATION_FAILPOINT_HOOK = None
+
+
+def _migration_failpoint(point: str) -> None:
+    hook = _MIGRATION_FAILPOINT_HOOK
+    if hook is not None:
+        hook(point)
+
+
+class CopySchemaMigrationError(RuntimeError):
+    """Raised when the additive snapshots v2 migration cannot complete safely."""
+
+
+@dataclass(frozen=True)
+class PositionSnapshotsV2MigrationResult:
+    migration_id: str
+    already_applied: bool
+    legacy_total: int
+    migrated: int
+    quarantined: int
+    applied_at: str | None
+
+
+def _valid_snapshot_asset(asset: object) -> str | None:
+    if asset is None:
+        return None
+    text = str(asset).strip()
+    return text if text else None
+
+
+def _ensure_v222_additive_schema(connection: sqlite3.Connection) -> None:
+    """Create additive V2.2.2 tables/columns/indexes inside the caller's transaction."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS copy_schema_migrations (
+            migration_id TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL,
+            details_json TEXT
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS copy_position_snapshots_v2 (
+            wallet TEXT NOT NULL,
+            asset TEXT NOT NULL,
+            condition_id TEXT NOT NULL,
+            outcome TEXT,
+            size REAL NOT NULL,
+            avg_price REAL,
+            cur_price REAL,
+            title TEXT,
+            slug TEXT,
+            event_slug TEXT,
+            snapshot_at TEXT NOT NULL,
+            PRIMARY KEY (wallet, asset)
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS copy_position_snapshots_migration_quarantine (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wallet TEXT NOT NULL,
+            condition_id TEXT,
+            asset TEXT,
+            outcome TEXT,
+            size REAL,
+            avg_price REAL,
+            cur_price REAL,
+            title TEXT,
+            slug TEXT,
+            event_slug TEXT,
+            snapshot_at TEXT,
+            legacy_row_id INTEGER,
+            reason TEXT NOT NULL,
+            quarantined_at TEXT NOT NULL,
+            diagnostic_json TEXT
+        )
+    """)
+    _ensure_copy_column(
+        connection, "wallet_monitor_state", "last_complete_positions_at", "TEXT"
+    )
+    _ensure_copy_column(
+        connection, "wallet_monitor_state", "last_correlated_trade_ts", "INTEGER"
+    )
+    _ensure_copy_column(
+        connection, "processed_copy_events", "diagnostic_json", "TEXT"
+    )
+    _ensure_copy_column(connection, "copy_paper_positions", "asset", "TEXT")
+    _ensure_copy_column(
+        connection, "copy_paper_positions", "source_event_uid", "TEXT"
+    )
+    _ensure_copy_column(
+        connection, "copy_alert_deliveries", "attempt_count", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _ensure_copy_column(
+        connection, "copy_alert_deliveries", "next_attempt_at", "TEXT"
+    )
+    _ensure_copy_column(
+        connection, "copy_alert_deliveries", "last_error_code", "TEXT"
+    )
+    _ensure_copy_column(connection, "copy_alert_deliveries", "claimed_at", "TEXT")
+    _ensure_copy_column(connection, "copy_alert_deliveries", "sent_at", "TEXT")
+    _ensure_copy_column(connection, "copy_alert_deliveries", "decision", "TEXT")
+    connection.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_copy_paper_positions_source_event_uid
+        ON copy_paper_positions(source_event_uid)
+        WHERE source_event_uid IS NOT NULL
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS copy_trade_correlation_quarantine (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wallet TEXT NOT NULL,
+            asset TEXT,
+            condition_id TEXT,
+            event_type TEXT,
+            reason TEXT NOT NULL,
+            prev_size REAL,
+            new_size REAL,
+            detected_at INTEGER,
+            diagnostic_json TEXT,
+            quarantined_at TEXT NOT NULL
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS copy_recommendations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wallet TEXT NOT NULL,
+            market_slug TEXT,
+            market_title TEXT,
+            outcome TEXT,
+            action TEXT NOT NULL,
+            trader_score REAL,
+            max_alloc REAL,
+            reason TEXT,
+            entry_price REAL,
+            current_price REAL,
+            price_drift REAL,
+            slippage_est REAL,
+            created_at TEXT NOT NULL,
+            event_uid TEXT,
+            envelope_json TEXT,
+            reason_codes_json TEXT
+        )
+    """)
+    _ensure_copy_column(connection, "copy_recommendations", "event_uid", "TEXT")
+    _ensure_copy_column(connection, "copy_recommendations", "envelope_json", "TEXT")
+    _ensure_copy_column(connection, "copy_recommendations", "reason_codes_json", "TEXT")
+    connection.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_copy_recommendations_event_uid
+        ON copy_recommendations(event_uid)
+        WHERE event_uid IS NOT NULL
+    """)
+
+
+def _already_applied_result(
+    applied_at: str | None, details_json: str | None
+) -> PositionSnapshotsV2MigrationResult:
+    details: dict = {}
+    if details_json:
+        try:
+            details = json.loads(details_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            details = {}
+    return PositionSnapshotsV2MigrationResult(
+        migration_id=MIGRATION_ID_POSITION_SNAPSHOTS_V2,
+        already_applied=True,
+        legacy_total=int(details.get("legacy_total", 0)),
+        migrated=int(details.get("migrated", 0)),
+        quarantined=int(details.get("quarantined", 0)),
+        applied_at=applied_at,
+    )
+
+
+def is_position_snapshots_v2_migration_applied(settings: Settings) -> bool:
+    with get_connection(settings) as connection:
+        try:
+            row = connection.execute(
+                """
+                SELECT 1 FROM copy_schema_migrations
+                WHERE migration_id = ?
+                LIMIT 1
+                """,
+                (MIGRATION_ID_POSITION_SNAPSHOTS_V2,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            # Additive schema rolled back with a failed single-transaction attempt.
+            return False
+    return row is not None
+
+
+def get_position_snapshots_v2_migration_status(
+    settings: Settings,
+) -> sqlite3.Row | None:
+    with get_connection(settings) as connection:
+        try:
+            return connection.execute(
+                """
+                SELECT migration_id, applied_at, details_json
+                FROM copy_schema_migrations
+                WHERE migration_id = ?
+                """,
+                (MIGRATION_ID_POSITION_SNAPSHOTS_V2,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+
+
+def migrate_legacy_position_snapshots_to_v2(
+    settings: Settings,
+) -> PositionSnapshotsV2MigrationResult:
+    """
+    Single-transaction, idempotent migration of legacy condition-keyed snapshots
+    into the parallel asset-keyed v2 table.
+
+    One SQLite transaction covers:
+      additive schema DDL → legacy read → migrate/quarantine → validation → marker.
+
+    Commit only after every step succeeds. Any error rolls back the entire attempt
+    (including additive schema created in this attempt). Legacy
+    ``copy_position_snapshots`` is read-only — never renamed, deleted, truncated,
+    or rewritten.
+    """
+    with get_connection(settings) as connection:
+        return _migrate_legacy_position_snapshots_to_v2_on_connection(connection)
+
+
+def _migrate_legacy_position_snapshots_to_v2_on_connection(
+    connection: sqlite3.Connection,
+) -> PositionSnapshotsV2MigrationResult:
+    """Run additive migration on an open connection (shared with schema init)."""
+    # Python sqlite3 default isolation_level '' autocommits DDL unless an
+    # explicit transaction is already open. BEGIN first so additive schema,
+    # data, validation, and marker share one commit/rollback unit when this
+    # runs as a standalone migrate call.
+    try:
+        connection.execute("BEGIN")
+    except sqlite3.OperationalError:
+        # Already inside a transaction (initialize_copy_schema same-connection path).
+        pass
+    _ensure_v222_additive_schema(connection)
+
+    existing = connection.execute(
+        """
+        SELECT applied_at, details_json FROM copy_schema_migrations
+        WHERE migration_id = ?
+        """,
+        (MIGRATION_ID_POSITION_SNAPSHOTS_V2,),
+    ).fetchone()
+    if existing is not None:
+        return _already_applied_result(
+            existing["applied_at"], existing["details_json"]
+        )
+
+    connection.execute("PRAGMA foreign_keys=ON")
+
+    # Incomplete prior attempts (e.g. pre-correction schema-first leftovers)
+    # leave no marker; reset v2/quarantine targets only — never legacy.
+    connection.execute("DELETE FROM copy_position_snapshots_v2")
+    connection.execute("DELETE FROM copy_position_snapshots_migration_quarantine")
+
+    legacy_rows = connection.execute(
+        "SELECT * FROM copy_position_snapshots ORDER BY id ASC"
+    ).fetchall()
+    legacy_total = len(legacy_rows)
+    migrated = 0
+    quarantined = 0
+    seen_wallet_asset: set[tuple[str, str]] = set()
+    now = _now_iso()
+
+    for row in legacy_rows:
+        wallet = str(row["wallet"] or "").lower()
+        asset = _valid_snapshot_asset(row["asset"])
+        if asset is None:
+            connection.execute(
+                """
+                INSERT INTO copy_position_snapshots_migration_quarantine (
+                    wallet, condition_id, asset, outcome, size, avg_price, cur_price,
+                    title, slug, event_slug, snapshot_at, legacy_row_id, reason,
+                    quarantined_at, diagnostic_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    wallet,
+                    row["condition_id"],
+                    row["asset"],
+                    row["outcome"],
+                    row["size"],
+                    row["avg_price"],
+                    row["cur_price"],
+                    row["title"],
+                    row["slug"],
+                    row["event_slug"],
+                    row["snapshot_at"],
+                    row["id"],
+                    "missing_or_invalid_asset",
+                    now,
+                    json.dumps(
+                        {
+                            "legacy_row_id": row["id"],
+                            "wallet": wallet,
+                            "condition_id": row["condition_id"],
+                            "asset": row["asset"],
+                            "reason": "missing_or_invalid_asset",
+                        }
+                    ),
+                ),
+            )
+            quarantined += 1
+            _migration_failpoint("during_quarantine_insertion")
+            continue
+
+        key = (wallet, asset)
+        if key in seen_wallet_asset:
+            raise CopySchemaMigrationError(
+                f"duplicate (wallet, asset) during snapshots v2 migration: {wallet}/{asset}"
+            )
+        seen_wallet_asset.add(key)
+
+        try:
+            connection.execute(
+                """
+                INSERT INTO copy_position_snapshots_v2 (
+                    wallet, asset, condition_id, outcome, size, avg_price, cur_price,
+                    title, slug, event_slug, snapshot_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    wallet,
+                    asset,
+                    row["condition_id"],
+                    row["outcome"],
+                    float(row["size"] or 0),
+                    row["avg_price"],
+                    row["cur_price"],
+                    row["title"],
+                    row["slug"],
+                    row["event_slug"],
+                    row["snapshot_at"] or now,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise CopySchemaMigrationError(
+                f"duplicate (wallet, asset) during snapshots v2 migration: {wallet}/{asset}"
+            ) from exc
+        migrated += 1
+        _migration_failpoint("during_legacy_row_migration")
+
+    _migration_failpoint("during_validation")
+
+    if legacy_total != migrated + quarantined:
+        raise CopySchemaMigrationError(
+            f"migration count mismatch: legacy_total={legacy_total} "
+            f"migrated={migrated} quarantined={quarantined}"
+        )
+
+    fk_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if fk_violations:
+        raise CopySchemaMigrationError(
+            f"foreign_key_check failed with {len(fk_violations)} violation(s)"
+        )
+
+    integrity = connection.execute("PRAGMA integrity_check").fetchone()
+    integrity_value = integrity[0] if integrity is not None else "failed"
+    if str(integrity_value).lower() != "ok":
+        raise CopySchemaMigrationError(
+            f"integrity_check failed: {integrity_value}"
+        )
+
+    _migration_failpoint("before_marker_write")
+
+    details = {
+        "legacy_total": legacy_total,
+        "migrated": migrated,
+        "quarantined": quarantined,
+    }
+    connection.execute(
+        """
+        INSERT INTO copy_schema_migrations (migration_id, applied_at, details_json)
+        VALUES (?, ?, ?)
+        """,
+        (MIGRATION_ID_POSITION_SNAPSHOTS_V2, now, json.dumps(details)),
+    )
+
+    return PositionSnapshotsV2MigrationResult(
+        migration_id=MIGRATION_ID_POSITION_SNAPSHOTS_V2,
+        already_applied=False,
+        legacy_total=legacy_total,
+        migrated=migrated,
+        quarantined=quarantined,
+        applied_at=now,
+    )
+
+
+def upsert_position_snapshot_v2(
+    settings: Settings,
+    wallet: str,
+    *,
+    asset: str,
+    condition_id: str,
+    outcome: str | None,
+    size: float,
+    avg_price: float | None,
+    cur_price: float | None,
+    title: str | None,
+    slug: str | None,
+    event_slug: str | None,
+) -> None:
+    cleaned_asset = _valid_snapshot_asset(asset)
+    if cleaned_asset is None:
+        raise ValueError("asset is required for v2 position snapshots")
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            INSERT INTO copy_position_snapshots_v2 (
+                wallet, asset, condition_id, outcome, size, avg_price, cur_price,
+                title, slug, event_slug, snapshot_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(wallet, asset) DO UPDATE SET
+                condition_id = excluded.condition_id,
+                outcome = excluded.outcome,
+                size = excluded.size,
+                avg_price = excluded.avg_price,
+                cur_price = excluded.cur_price,
+                title = excluded.title,
+                slug = excluded.slug,
+                event_slug = excluded.event_slug,
+                snapshot_at = excluded.snapshot_at
+            """,
+            (
+                wallet.lower(),
+                cleaned_asset,
+                condition_id,
+                outcome,
+                size,
+                avg_price,
+                cur_price,
+                title,
+                slug,
+                event_slug,
+                _now_iso(),
+            ),
+        )
+
+
+def load_position_snapshots_v2(
+    settings: Settings, wallet: str
+) -> dict[str, sqlite3.Row]:
+    """Load v2 snapshots keyed by asset."""
+    with get_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM copy_position_snapshots_v2 WHERE wallet = ?
+            """,
+            (wallet.lower(),),
+        ).fetchall()
+    return {row["asset"]: row for row in rows}
+
+
+def replace_wallet_snapshots_v2(
+    settings: Settings,
+    wallet: str,
+    positions_by_asset: dict[str, dict],
+) -> None:
+    """Replace the exact current v2 book for a wallet (does not touch legacy table)."""
+    commit_complete_position_book_v2(
+        settings,
+        wallet,
+        positions_by_asset,
+        stamp_complete=False,
+    )
+
+
+def commit_complete_position_book_v2(
+    settings: Settings,
+    wallet: str,
+    positions_by_asset: dict[str, dict],
+    *,
+    stamp_complete: bool = True,
+) -> None:
+    """
+    Atomically replace the v2 book and optionally stamp last_complete_positions_at.
+
+    Does not touch the legacy ``copy_position_snapshots`` table. Any error rolls
+    back both snapshot writes and the completeness stamp.
+    """
+    now = _now_iso()
+    wallet_l = wallet.lower()
+    with get_connection(settings) as connection:
+        connection.execute(
+            "DELETE FROM copy_position_snapshots_v2 WHERE wallet = ?",
+            (wallet_l,),
+        )
+        for asset, payload in positions_by_asset.items():
+            cleaned_asset = _valid_snapshot_asset(asset)
+            if cleaned_asset is None:
+                raise ValueError("asset is required for v2 position snapshots")
+            connection.execute(
+                """
+                INSERT INTO copy_position_snapshots_v2 (
+                    wallet, asset, condition_id, outcome, size, avg_price, cur_price,
+                    title, slug, event_slug, snapshot_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    wallet_l,
+                    cleaned_asset,
+                    payload["condition_id"],
+                    payload.get("outcome"),
+                    float(payload.get("size") or 0),
+                    payload.get("avg_price"),
+                    payload.get("cur_price"),
+                    payload.get("title"),
+                    payload.get("slug"),
+                    payload.get("event_slug"),
+                    payload.get("snapshot_at") or now,
+                ),
+            )
+        if stamp_complete:
+            connection.execute(
+                """
+                UPDATE wallet_monitor_state
+                SET last_complete_positions_at = ?, updated_at = ?
+                WHERE wallet = ?
+                """,
+                (now, now, wallet_l),
+            )
+
+
+def record_snapshot_migration_quarantine(
+    settings: Settings,
+    *,
+    wallet: str,
+    reason: str,
+    condition_id: str | None = None,
+    asset: str | None = None,
+    outcome: str | None = None,
+    size: float | None = None,
+    avg_price: float | None = None,
+    cur_price: float | None = None,
+    title: str | None = None,
+    slug: str | None = None,
+    event_slug: str | None = None,
+    snapshot_at: str | None = None,
+    legacy_row_id: int | None = None,
+    diagnostic: dict | None = None,
+) -> None:
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            INSERT INTO copy_position_snapshots_migration_quarantine (
+                wallet, condition_id, asset, outcome, size, avg_price, cur_price,
+                title, slug, event_slug, snapshot_at, legacy_row_id, reason,
+                quarantined_at, diagnostic_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                wallet.lower(),
+                condition_id,
+                asset,
+                outcome,
+                size,
+                avg_price,
+                cur_price,
+                title,
+                slug,
+                event_slug,
+                snapshot_at,
+                legacy_row_id,
+                reason,
+                _now_iso(),
+                json.dumps(diagnostic) if diagnostic is not None else None,
+            ),
+        )
+
+
+def list_snapshot_migration_quarantine(
+    settings: Settings, *, wallet: str | None = None
+) -> list[sqlite3.Row]:
+    with get_connection(settings) as connection:
+        if wallet is None:
+            rows = connection.execute(
+                """
+                SELECT * FROM copy_position_snapshots_migration_quarantine
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT * FROM copy_position_snapshots_migration_quarantine
+                WHERE wallet = ?
+                ORDER BY id ASC
+                """,
+                (wallet.lower(),),
+            ).fetchall()
+    return list(rows)
+
+
+def record_trade_correlation_quarantine(
+    settings: Settings,
+    *,
+    wallet: str,
+    reason: str,
+    asset: str | None = None,
+    condition_id: str | None = None,
+    event_type: str | None = None,
+    prev_size: float | None = None,
+    new_size: float | None = None,
+    detected_at: int | None = None,
+    diagnostic: dict | None = None,
+) -> None:
+    """Persist a sanitized trade-correlation quarantine row (no secrets/paths)."""
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            INSERT INTO copy_trade_correlation_quarantine (
+                wallet, asset, condition_id, event_type, reason,
+                prev_size, new_size, detected_at, diagnostic_json, quarantined_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                wallet.lower(),
+                asset,
+                condition_id,
+                event_type,
+                reason,
+                prev_size,
+                new_size,
+                detected_at,
+                json.dumps(diagnostic) if diagnostic is not None else None,
+                _now_iso(),
+            ),
+        )
+
+
+def list_trade_correlation_quarantine(
+    settings: Settings, *, wallet: str | None = None
+) -> list[sqlite3.Row]:
+    with get_connection(settings) as connection:
+        if wallet is None:
+            rows = connection.execute(
+                """
+                SELECT * FROM copy_trade_correlation_quarantine
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT * FROM copy_trade_correlation_quarantine
+                WHERE wallet = ?
+                ORDER BY id ASC
+                """,
+                (wallet.lower(),),
+            ).fetchall()
+    return list(rows)
 
 
 def add_watchlist_wallet(
@@ -477,15 +1153,16 @@ def load_trader_metrics(settings: Settings, wallet: str, window: str = "lifetime
 
 
 def save_recommendation(settings: Settings, rec: dict) -> int:
+    """Legacy insert helper. Prefer ``save_recommendation_envelope`` for V2.2.2."""
     with get_connection(settings) as connection:
         cursor = connection.execute(
             """
             INSERT INTO copy_recommendations (
                 wallet, market_slug, market_title, outcome, action, trader_score,
                 max_alloc, reason, entry_price, current_price, price_drift,
-                slippage_est, created_at
+                slippage_est, created_at, event_uid, envelope_json, reason_codes_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rec["wallet"].lower(),
@@ -501,9 +1178,81 @@ def save_recommendation(settings: Settings, rec: dict) -> int:
                 rec.get("price_drift"),
                 rec.get("slippage_est"),
                 _now_iso(),
+                rec.get("event_uid"),
+                rec.get("envelope_json"),
+                rec.get("reason_codes_json"),
             ),
         )
         return int(cursor.lastrowid)
+
+
+def save_recommendation_envelope(settings: Settings, rec: dict) -> bool:
+    """Persist a recommendation envelope idempotently by non-null ``event_uid``.
+
+    Returns True when a new row was inserted, False when an existing UID was kept.
+    Rows without ``event_uid`` always insert (legacy / non-authoritative path).
+    """
+    event_uid = rec.get("event_uid")
+    with get_connection(settings) as connection:
+        if event_uid:
+            existing = connection.execute(
+                """
+                SELECT id FROM copy_recommendations WHERE event_uid = ?
+                """,
+                (str(event_uid),),
+            ).fetchone()
+            if existing is not None:
+                return False
+        connection.execute(
+            """
+            INSERT INTO copy_recommendations (
+                wallet, market_slug, market_title, outcome, action, trader_score,
+                max_alloc, reason, entry_price, current_price, price_drift,
+                slippage_est, created_at, event_uid, envelope_json, reason_codes_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rec["wallet"].lower(),
+                rec.get("market_slug"),
+                rec.get("market_title"),
+                rec.get("outcome"),
+                rec["action"],
+                rec.get("trader_score"),
+                rec.get("max_alloc"),
+                rec.get("reason"),
+                rec.get("entry_price"),
+                rec.get("current_price"),
+                rec.get("price_drift"),
+                rec.get("slippage_est"),
+                _now_iso(),
+                str(event_uid) if event_uid else None,
+                rec.get("envelope_json"),
+                rec.get("reason_codes_json"),
+            ),
+        )
+        return True
+
+
+def count_recommendations_for_event_uid(settings: Settings, event_uid: str) -> int:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS c FROM copy_recommendations WHERE event_uid = ?
+            """,
+            (str(event_uid),),
+        ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def count_open_paper_positions(settings: Settings) -> int:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS c FROM copy_paper_positions WHERE status = 'open'
+            """
+        ).fetchone()
+    return int(row["c"] if row else 0)
 
 
 def get_recent_recommendations(settings: Settings, limit: int = 10) -> list[sqlite3.Row]:
@@ -528,26 +1277,349 @@ def open_paper_position(
     outcome: str | None,
     notional: float,
     entry_price: float,
-) -> None:
+    asset: str | None = None,
+    source_event_uid: str | None = None,
+) -> bool:
+    """
+    Open a paper position.
+
+    When ``source_event_uid`` is provided, persistence is idempotent: a second
+    insert with the same non-null UID is ignored and returns False.
+    Null ``source_event_uid`` remains backward compatible (multiple rows allowed).
+    """
     with get_connection(settings) as connection:
-        connection.execute(
-            """
-            INSERT INTO copy_paper_positions (
-                wallet, condition_id, market_slug, outcome, notional,
-                entry_price, status, opened_at
+        try:
+            connection.execute(
+                """
+                INSERT INTO copy_paper_positions (
+                    wallet, condition_id, market_slug, outcome, notional,
+                    entry_price, status, opened_at, asset, source_event_uid
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+                """,
+                (
+                    wallet.lower(),
+                    condition_id,
+                    market_slug,
+                    outcome,
+                    notional,
+                    entry_price,
+                    _now_iso(),
+                    asset,
+                    source_event_uid,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
+            return True
+        except sqlite3.IntegrityError:
+            if source_event_uid is None:
+                raise
+            return False
+
+
+@dataclass(frozen=True)
+class PaperCommitStorageResult:
+    ok: bool
+    inserted: bool
+    code: str
+    message: str
+    paper_id: int | None = None
+    recommendation_id: int | None = None
+
+
+# Test-only hook: callable(stage) may raise to force mid-transaction failures.
+_PAPER_COMMIT_TEST_HOOK = None
+
+
+def get_paper_position_by_source_event_uid(
+    settings: Settings, source_event_uid: str
+) -> sqlite3.Row | None:
+    with get_connection(settings) as connection:
+        return connection.execute(
+            """
+            SELECT * FROM copy_paper_positions
+            WHERE source_event_uid = ?
+            LIMIT 1
             """,
-            (
-                wallet.lower(),
-                condition_id,
-                market_slug,
-                outcome,
-                notional,
-                entry_price,
-                _now_iso(),
-            ),
+            (str(source_event_uid),),
+        ).fetchone()
+
+
+def commit_copy_recommendation_and_paper(
+    settings: Settings,
+    *,
+    recommendation: dict,
+    paper: dict,
+    audit_payload: dict | None = None,
+) -> PaperCommitStorageResult:
+    """Atomically insert COPY recommendation envelope + paper position.
+
+    Rechecks exposure inside the transaction for the exact proposed notional.
+    Does not silently resize. Idempotent on ``source_event_uid`` when payload matches.
+    Conflicting duplicate payload fails closed.
+    """
+    event_uid = str(paper["source_event_uid"])
+    wallet = str(paper["wallet"]).lower()
+    condition_id = str(paper["condition_id"])
+    notional = float(paper["notional"])
+    entry_price = float(paper["entry_price"])
+    bankroll = float(settings.copy_paper_bankroll_usd)
+
+    with get_connection(settings) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            existing_paper = connection.execute(
+                """
+                SELECT id, notional, entry_price, asset, status
+                FROM copy_paper_positions
+                WHERE source_event_uid = ?
+                LIMIT 1
+                """,
+                (event_uid,),
+            ).fetchone()
+            if existing_paper is not None:
+                if _paper_payload_matches(
+                    existing_paper, notional=notional, entry_price=entry_price, asset=paper.get("asset")
+                ):
+                    connection.execute("COMMIT")
+                    return PaperCommitStorageResult(
+                        ok=True,
+                        inserted=False,
+                        code="copy_paper_idempotent",
+                        message="paper already committed for event",
+                        paper_id=int(existing_paper["id"]),
+                    )
+                connection.execute("ROLLBACK")
+                return PaperCommitStorageResult(
+                    ok=False,
+                    inserted=False,
+                    code="conflicting_duplicate_paper",
+                    message="existing paper conflicts with proposed payload",
+                    paper_id=int(existing_paper["id"]),
+                )
+
+            remaining = _remaining_exposure_capacity_conn(
+                connection,
+                bankroll=bankroll,
+                wallet=wallet,
+                condition_id=condition_id,
+            )
+            if remaining <= 0:
+                connection.execute("ROLLBACK")
+                return PaperCommitStorageResult(
+                    ok=False,
+                    inserted=False,
+                    code="exposure_capacity_zero_at_commit",
+                    message="no exposure capacity at commit",
+                )
+            if remaining + 1e-9 < notional:
+                connection.execute("ROLLBACK")
+                return PaperCommitStorageResult(
+                    ok=False,
+                    inserted=False,
+                    code="exposure_changed_at_commit",
+                    message="exposure capacity below proposed allocation",
+                )
+
+            _maybe_paper_commit_test_hook("before_recommendation")
+
+            recommendation_id = _upsert_recommendation_envelope_conn(
+                connection, recommendation
+            )
+
+            _maybe_paper_commit_test_hook("after_recommendation")
+
+            try:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO copy_paper_positions (
+                        wallet, condition_id, market_slug, outcome, notional,
+                        entry_price, status, opened_at, asset, source_event_uid
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+                    """,
+                    (
+                        wallet,
+                        condition_id,
+                        paper.get("market_slug"),
+                        paper.get("outcome"),
+                        notional,
+                        entry_price,
+                        _now_iso(),
+                        paper.get("asset"),
+                        event_uid,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                # Concurrent winner inserted first — re-read and classify.
+                raced = connection.execute(
+                    """
+                    SELECT id, notional, entry_price, asset
+                    FROM copy_paper_positions
+                    WHERE source_event_uid = ?
+                    LIMIT 1
+                    """,
+                    (event_uid,),
+                ).fetchone()
+                if raced is not None and _paper_payload_matches(
+                    raced, notional=notional, entry_price=entry_price, asset=paper.get("asset")
+                ):
+                    connection.execute("COMMIT")
+                    return PaperCommitStorageResult(
+                        ok=True,
+                        inserted=False,
+                        code="copy_paper_idempotent",
+                        message="concurrent paper already committed",
+                        paper_id=int(raced["id"]),
+                        recommendation_id=recommendation_id,
+                    )
+                connection.execute("ROLLBACK")
+                return PaperCommitStorageResult(
+                    ok=False,
+                    inserted=False,
+                    code="conflicting_duplicate_paper",
+                    message="concurrent paper conflict",
+                    paper_id=int(raced["id"]) if raced is not None else None,
+                )
+
+            _maybe_paper_commit_test_hook("after_paper")
+
+            paper_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                INSERT INTO copy_audit_log (actor, action, payload_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    "paper_commit",
+                    "copy_paper_open",
+                    json.dumps(audit_payload) if audit_payload else None,
+                    _now_iso(),
+                ),
+            )
+            connection.execute("COMMIT")
+            return PaperCommitStorageResult(
+                ok=True,
+                inserted=True,
+                code="copy_paper_committed",
+                message="paper committed",
+                paper_id=paper_id,
+                recommendation_id=recommendation_id,
+            )
+        except Exception:
+            try:
+                connection.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+
+
+def _maybe_paper_commit_test_hook(stage: str) -> None:
+    hook = _PAPER_COMMIT_TEST_HOOK
+    if hook is not None:
+        hook(stage)
+
+
+def _paper_payload_matches(
+    row: sqlite3.Row,
+    *,
+    notional: float,
+    entry_price: float,
+    asset: str | None,
+) -> bool:
+    if abs(float(row["notional"]) - float(notional)) > 1e-9:
+        return False
+    if abs(float(row["entry_price"]) - float(entry_price)) > 1e-9:
+        return False
+    if asset is not None and row["asset"] is not None and str(row["asset"]) != str(asset):
+        return False
+    return True
+
+
+def _remaining_exposure_capacity_conn(
+    connection: sqlite3.Connection,
+    *,
+    bankroll: float,
+    wallet: str,
+    condition_id: str,
+) -> float:
+    totals = _paper_exposure_totals_conn(connection)
+    total_cap = bankroll * COPY_MAX_ALLOC_TOTAL
+    wallet_cap = bankroll * COPY_MAX_ALLOC_PER_WALLET
+    market_cap = bankroll * COPY_MAX_ALLOC_PER_MARKET
+    remaining_total = max(0.0, total_cap - totals["total"])
+    remaining_wallet = max(0.0, wallet_cap - totals["by_wallet"].get(wallet.lower(), 0.0))
+    remaining_market = max(
+        0.0, market_cap - totals["by_market"].get(condition_id, 0.0)
+    )
+    return min(remaining_total, remaining_wallet, remaining_market)
+
+
+def _paper_exposure_totals_conn(connection: sqlite3.Connection) -> dict[str, float | dict]:
+    total = connection.execute(
+        "SELECT COALESCE(SUM(notional), 0) AS s FROM copy_paper_positions WHERE status = 'open'"
+    ).fetchone()["s"]
+    by_wallet_rows = connection.execute(
+        """
+        SELECT wallet, COALESCE(SUM(notional), 0) AS s
+        FROM copy_paper_positions WHERE status = 'open'
+        GROUP BY wallet
+        """
+    ).fetchall()
+    by_market_rows = connection.execute(
+        """
+        SELECT condition_id, COALESCE(SUM(notional), 0) AS s
+        FROM copy_paper_positions WHERE status = 'open'
+        GROUP BY condition_id
+        """
+    ).fetchall()
+    return {
+        "total": float(total),
+        "by_wallet": {row["wallet"]: float(row["s"]) for row in by_wallet_rows},
+        "by_market": {row["condition_id"]: float(row["s"]) for row in by_market_rows},
+    }
+
+
+def _upsert_recommendation_envelope_conn(
+    connection: sqlite3.Connection, rec: dict
+) -> int | None:
+    """Insert recommendation idempotently by event_uid; never overwrite existing."""
+    event_uid = rec.get("event_uid")
+    if event_uid:
+        existing = connection.execute(
+            "SELECT id FROM copy_recommendations WHERE event_uid = ?",
+            (str(event_uid),),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+    cursor = connection.execute(
+        """
+        INSERT INTO copy_recommendations (
+            wallet, market_slug, market_title, outcome, action, trader_score,
+            max_alloc, reason, entry_price, current_price, price_drift,
+            slippage_est, created_at, event_uid, envelope_json, reason_codes_json
         )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            rec["wallet"].lower(),
+            rec.get("market_slug"),
+            rec.get("market_title"),
+            rec.get("outcome"),
+            rec["action"],
+            rec.get("trader_score"),
+            rec.get("max_alloc"),
+            rec.get("reason"),
+            rec.get("entry_price"),
+            rec.get("current_price"),
+            rec.get("price_drift"),
+            rec.get("slippage_est"),
+            _now_iso(),
+            str(event_uid) if event_uid else None,
+            rec.get("envelope_json"),
+            rec.get("reason_codes_json"),
+        ),
+    )
+    return int(cursor.lastrowid)
 
 
 def list_open_paper_positions(settings: Settings) -> list[sqlite3.Row]:
@@ -772,6 +1844,8 @@ class WalletMonitorState:
     updated_at: str
     last_polled_at: str | None = None
     baseline_version: int | None = None
+    last_complete_positions_at: str | None = None
+    last_correlated_trade_ts: int | None = None
 
 
 def get_watchlist_entry(settings: Settings, wallet: str) -> WatchlistEntry | None:
@@ -861,6 +1935,8 @@ def update_wallet_monitor_fields(
         "monitoring_enabled",
         "last_polled_at",
         "baseline_version",
+        "last_complete_positions_at",
+        "last_correlated_trade_ts",
     }
     cols = []
     values: list[object] = []
@@ -903,6 +1979,17 @@ def get_wallet_monitor_state(settings: Settings, wallet: str) -> WalletMonitorSt
         updated_at=row["updated_at"],
         last_polled_at=row["last_polled_at"] if "last_polled_at" in keys else None,
         baseline_version=row["baseline_version"] if "baseline_version" in keys else None,
+        last_complete_positions_at=(
+            row["last_complete_positions_at"]
+            if "last_complete_positions_at" in keys
+            else None
+        ),
+        last_correlated_trade_ts=(
+            int(row["last_correlated_trade_ts"])
+            if "last_correlated_trade_ts" in keys
+            and row["last_correlated_trade_ts"] is not None
+            else None
+        ),
     )
 
 
@@ -947,17 +2034,22 @@ def mark_processed_copy_event(
     is_baseline: bool = False,
     alertable: bool = False,
     reject_reason: str | None = None,
+    diagnostic_json: dict | str | None = None,
 ) -> bool:
     """Insert processed event marker. Returns False if already present."""
+    if isinstance(diagnostic_json, dict):
+        diagnostic_payload: str | None = json.dumps(diagnostic_json)
+    else:
+        diagnostic_payload = diagnostic_json
     with get_connection(settings) as connection:
         try:
             connection.execute(
                 """
                 INSERT INTO processed_copy_events (
                     event_uid, wallet, event_ts, observed_at, is_baseline,
-                    alertable, reject_reason, created_at
+                    alertable, reject_reason, created_at, diagnostic_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event_uid,
@@ -968,6 +2060,7 @@ def mark_processed_copy_event(
                     1 if alertable else 0,
                     reject_reason,
                     _now_iso(),
+                    diagnostic_payload,
                 ),
             )
             return True
@@ -1132,16 +2225,34 @@ def claim_copy_alert_delivery(
     wallet: str,
     event_uid: str,
     payload_text: str | None = None,
+    decision: str | None = None,
+    now: float | None = None,
+    allow_retry: bool = True,
+    max_attempts: int = 3,
 ) -> bool:
     """
     Atomically claim alert delivery for (subscriber, wallet, event_uid).
-    Returns True only for the successful claimant (or a failed→retry reclaim).
+
+    Returns True only for the successful claimant (new insert or due retry reclaim).
+    Never reclaims ``sent``, ``dead_letter``, ``suppressed``, or active ``claimed``.
     """
-    now = _now_iso()
+    from app.copy_intel.delivery import (
+        STATUS_CLAIMED,
+        STATUS_DEAD_LETTER,
+        STATUS_FAILED_LEGACY,
+        STATUS_RETRY_WAIT,
+        STATUS_SENT,
+        STATUS_SUPPRESSED,
+        to_iso,
+        utc_now,
+    )
+
+    now_dt = utc_now(now=now)
+    now_s = to_iso(now_dt)
     with get_connection(settings) as connection:
         row = connection.execute(
             """
-            SELECT status FROM copy_alert_deliveries
+            SELECT status, attempt_count, next_attempt_at FROM copy_alert_deliveries
             WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
             """,
             (subscriber_id, wallet.lower(), event_uid),
@@ -1152,35 +2263,72 @@ def claim_copy_alert_delivery(
                     """
                     INSERT INTO copy_alert_deliveries (
                         subscriber_id, wallet, event_uid, status, payload_text,
-                        created_at, updated_at
+                        created_at, updated_at, attempt_count, claimed_at, decision
                     )
-                    VALUES (?, ?, ?, 'claimed', ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                     """,
                     (
                         subscriber_id,
                         wallet.lower(),
                         event_uid,
+                        STATUS_CLAIMED,
                         payload_text,
-                        now,
-                        now,
+                        now_s,
+                        now_s,
+                        now_s,
+                        decision,
                     ),
                 )
                 return True
             except sqlite3.IntegrityError:
                 return False
-        if row["status"] == "failed":
-            cursor = connection.execute(
-                """
-                UPDATE copy_alert_deliveries
-                SET status = 'claimed', payload_text = COALESCE(?, payload_text),
-                    updated_at = ?
-                WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
-                  AND status = 'failed'
-                """,
-                (payload_text, now, subscriber_id, wallet.lower(), event_uid),
-            )
-            return cursor.rowcount > 0
-        return False
+
+        status = str(row["status"] or "")
+        if status in {STATUS_SENT, STATUS_DEAD_LETTER, STATUS_SUPPRESSED, STATUS_CLAIMED}:
+            return False
+        if status not in {STATUS_RETRY_WAIT, STATUS_FAILED_LEGACY}:
+            return False
+        if not allow_retry:
+            return False
+        keys = row.keys()
+        prior_attempts = int(row["attempt_count"] or 0) if "attempt_count" in keys else 0
+        if prior_attempts >= max_attempts:
+            return False
+        next_at = row["next_attempt_at"] if "next_attempt_at" in keys else None
+        if next_at:
+            try:
+                due = datetime.fromisoformat(str(next_at))
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=timezone.utc)
+                if due > now_dt:
+                    return False
+            except ValueError:
+                pass
+        cursor = connection.execute(
+            """
+            UPDATE copy_alert_deliveries
+            SET status = ?, payload_text = COALESCE(?, payload_text),
+                updated_at = ?, attempt_count = ?, claimed_at = ?,
+                decision = COALESCE(?, decision),
+                next_attempt_at = NULL
+            WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+              AND status IN (?, ?)
+            """,
+            (
+                STATUS_CLAIMED,
+                payload_text,
+                now_s,
+                prior_attempts + 1,
+                now_s,
+                decision,
+                subscriber_id,
+                wallet.lower(),
+                event_uid,
+                STATUS_RETRY_WAIT,
+                STATUS_FAILED_LEGACY,
+            ),
+        )
+        return cursor.rowcount > 0
 
 
 def mark_copy_alert_delivery(
@@ -1191,27 +2339,109 @@ def mark_copy_alert_delivery(
     event_uid: str,
     status: str,
     payload_text: str | None = None,
+    last_error_code: str | None = None,
+    next_attempt_at: str | None = None,
+    now: float | None = None,
 ) -> None:
-    now = _now_iso()
+    from app.copy_intel.delivery import STATUS_SENT, to_iso, utc_now
+
+    now_s = to_iso(utc_now(now=now))
+    sent_at = now_s if status == STATUS_SENT else None
     with get_connection(settings) as connection:
         if payload_text is not None:
             connection.execute(
                 """
                 UPDATE copy_alert_deliveries
-                SET status = ?, payload_text = ?, updated_at = ?
+                SET status = ?, payload_text = ?, updated_at = ?,
+                    last_error_code = COALESCE(?, last_error_code),
+                    next_attempt_at = ?,
+                    sent_at = COALESCE(?, sent_at)
                 WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
                 """,
-                (status, payload_text, now, subscriber_id, wallet.lower(), event_uid),
+                (
+                    status,
+                    payload_text,
+                    now_s,
+                    last_error_code,
+                    next_attempt_at,
+                    sent_at,
+                    subscriber_id,
+                    wallet.lower(),
+                    event_uid,
+                ),
             )
         else:
             connection.execute(
                 """
                 UPDATE copy_alert_deliveries
-                SET status = ?, updated_at = ?
+                SET status = ?, updated_at = ?,
+                    last_error_code = COALESCE(?, last_error_code),
+                    next_attempt_at = ?,
+                    sent_at = COALESCE(?, sent_at)
                 WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
                 """,
-                (status, now, subscriber_id, wallet.lower(), event_uid),
+                (
+                    status,
+                    now_s,
+                    last_error_code,
+                    next_attempt_at,
+                    sent_at,
+                    subscriber_id,
+                    wallet.lower(),
+                    event_uid,
+                ),
             )
+
+
+def update_copy_alert_delivery_retry(
+    settings: Settings,
+    *,
+    subscriber_id: int,
+    wallet: str,
+    event_uid: str,
+    attempt_count: int | None = None,
+    next_attempt_at: str | None = None,
+    last_error_code: str | None = None,
+) -> None:
+    """Update retry scheduling fields on an existing delivery row."""
+    assignments = ["updated_at = ?"]
+    values: list[object] = [_now_iso()]
+    if attempt_count is not None:
+        assignments.append("attempt_count = ?")
+        values.append(int(attempt_count))
+    if next_attempt_at is not None:
+        assignments.append("next_attempt_at = ?")
+        values.append(next_attempt_at)
+    if last_error_code is not None:
+        assignments.append("last_error_code = ?")
+        values.append(last_error_code)
+    values.extend([subscriber_id, wallet.lower(), event_uid])
+    with get_connection(settings) as connection:
+        connection.execute(
+            f"""
+            UPDATE copy_alert_deliveries
+            SET {', '.join(assignments)}
+            WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+            """,
+            values,
+        )
+
+
+def get_copy_alert_delivery(
+    settings: Settings,
+    *,
+    subscriber_id: int,
+    wallet: str,
+    event_uid: str,
+) -> sqlite3.Row | None:
+    with get_connection(settings) as connection:
+        return connection.execute(
+            """
+            SELECT * FROM copy_alert_deliveries
+            WHERE subscriber_id = ? AND wallet = ? AND event_uid = ?
+            """,
+            (subscriber_id, wallet.lower(), event_uid),
+        ).fetchone()
 
 
 def list_failed_copy_alert_deliveries(
@@ -1219,13 +2449,121 @@ def list_failed_copy_alert_deliveries(
     *,
     limit: int = 50,
 ) -> list[sqlite3.Row]:
+    """Legacy helper: failed/retry_wait rows with payload (no due-time filter)."""
     with get_connection(settings) as connection:
         return connection.execute(
             """
             SELECT * FROM copy_alert_deliveries
-            WHERE status = 'failed' AND payload_text IS NOT NULL
+            WHERE status IN ('failed', 'retry_wait') AND payload_text IS NOT NULL
             ORDER BY updated_at ASC
             LIMIT ?
             """,
             (limit,),
         ).fetchall()
+
+
+def list_due_copy_alert_retries(
+    settings: Settings,
+    *,
+    now: float | None = None,
+    limit: int = 50,
+    max_attempts: int = 3,
+) -> list[sqlite3.Row]:
+    """Rows due for bounded retry (retry_wait/failed, attempt_count < max, next_attempt due)."""
+    from app.copy_intel.delivery import to_iso, utc_now
+
+    now_s = to_iso(utc_now(now=now))
+    with get_connection(settings) as connection:
+        return connection.execute(
+            """
+            SELECT * FROM copy_alert_deliveries
+            WHERE status IN ('failed', 'retry_wait')
+              AND payload_text IS NOT NULL
+              AND COALESCE(attempt_count, 0) < ?
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+            ORDER BY updated_at ASC
+            LIMIT ?
+            """,
+            (max_attempts, now_s, limit),
+        ).fetchall()
+
+
+def get_recent_recommendations_for_owner(
+    settings: Settings,
+    owner_id: int,
+    *,
+    limit: int = 10,
+) -> list[sqlite3.Row]:
+    """User-facing: recommendations only for wallets owned by ``owner_id``."""
+    with get_connection(settings) as connection:
+        return connection.execute(
+            """
+            SELECT r.* FROM copy_recommendations r
+            INNER JOIN copy_watchlist w ON lower(w.wallet) = lower(r.wallet)
+            WHERE w.added_by = ?
+            ORDER BY r.id DESC
+            LIMIT ?
+            """,
+            (int(owner_id), limit),
+        ).fetchall()
+
+
+def paper_exposure_totals_for_owner(settings: Settings, owner_id: int) -> dict[str, float]:
+    """User-facing: open paper exposure limited to wallets owned by ``owner_id``."""
+    with get_connection(settings) as connection:
+        total = connection.execute(
+            """
+            SELECT COALESCE(SUM(p.notional), 0) AS s
+            FROM copy_paper_positions p
+            INNER JOIN copy_watchlist w ON lower(w.wallet) = lower(p.wallet)
+            WHERE p.status = 'open' AND w.added_by = ?
+            """,
+            (int(owner_id),),
+        ).fetchone()["s"]
+        by_wallet_rows = connection.execute(
+            """
+            SELECT p.wallet, COALESCE(SUM(p.notional), 0) AS s
+            FROM copy_paper_positions p
+            INNER JOIN copy_watchlist w ON lower(w.wallet) = lower(p.wallet)
+            WHERE p.status = 'open' AND w.added_by = ?
+            GROUP BY p.wallet
+            """,
+            (int(owner_id),),
+        ).fetchall()
+        by_market_rows = connection.execute(
+            """
+            SELECT p.condition_id, COALESCE(SUM(p.notional), 0) AS s
+            FROM copy_paper_positions p
+            INNER JOIN copy_watchlist w ON lower(w.wallet) = lower(p.wallet)
+            WHERE p.status = 'open' AND w.added_by = ?
+            GROUP BY p.condition_id
+            """,
+            (int(owner_id),),
+        ).fetchall()
+    return {
+        "total": float(total),
+        "by_wallet": {row["wallet"]: float(row["s"]) for row in by_wallet_rows},
+        "by_market": {row["condition_id"]: float(row["s"]) for row in by_market_rows},
+    }
+
+
+def list_open_paper_positions_for_owner(
+    settings: Settings, owner_id: int
+) -> list[sqlite3.Row]:
+    with get_connection(settings) as connection:
+        return connection.execute(
+            """
+            SELECT p.* FROM copy_paper_positions p
+            INNER JOIN copy_watchlist w ON lower(w.wallet) = lower(p.wallet)
+            WHERE p.status = 'open' AND w.added_by = ?
+            ORDER BY p.opened_at DESC
+            """,
+            (int(owner_id),),
+        ).fetchall()
+
+
+def list_watchlist_for_owner(settings: Settings, owner_id: int) -> list[WatchlistEntry]:
+    """Explicit owner-scoped watchlist (user-facing)."""
+    return [
+        e for e in list_watchlist(settings) if e.added_by == int(owner_id)
+    ]

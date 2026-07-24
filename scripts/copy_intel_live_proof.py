@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from app.config.settings import Settings
 from app.copy_intel.analytics import compute_trader_metrics
+from app.copy_intel.api_result import unwrap_data_list
 from app.copy_intel.data_client import CopyDataClient, normalize_wallet
 from app.copy_intel.ingestion import ingest_wallet
 from app.copy_intel.recommendation import build_recommendation
@@ -42,8 +43,8 @@ def main() -> int:
     client = CopyDataClient(settings)
 
     print("=== Live Data API probe ===")
-    positions = client.fetch_positions(wallet, limit=3)
-    trades = client.fetch_trades(wallet, limit=3)
+    positions = unwrap_data_list(client.fetch_positions(wallet, limit=3))
+    trades = unwrap_data_list(client.fetch_trades(wallet, limit=3))
     print(f"positions={len(positions)} trades={len(trades)}")
     if not positions:
         print("NO-GO: no positions returned")

@@ -257,35 +257,40 @@ class TestHistoricalBaseline:
         add_wallet(settings, WALLET)
         client = _client([_pos("cond-1", 100)])
         assert run_baseline(settings, WALLET, client=client) == "COMPLETE"
-        # Unsigned position-diff size churn must not alert (live historical flood).
+        # Unsigned position-diff without matching trades is quarantined (no accepted event).
         client_unsigned = _client([_pos("cond-1", 150)])
         unsigned = ingest_wallet(settings, WALLET, client=client_unsigned)
-        assert len(unsigned) == 1
-        assert unsigned[0].event_type == "increase"
-        assert filter_alertable_events(settings, WALLET, unsigned) == []
+        assert unsigned == []
 
-        # Reset book then apply a trade-backed increase.
+        # Reset book then apply another unsigned increase (still quarantined).
         client_reset = _client([_pos("cond-1", 150)])
         ingest_wallet(settings, WALLET, client=client_reset)
         now = int(time.time())
-        client_signed = _client(
-            [_pos("cond-1", 200)],
-            trades=[
-                _trade(
-                    tx="0xinc1",
-                    condition_id="cond-1",
-                    ts=now - 10,
-                    side="BUY",
-                    size=50.0,
-                )
-            ],
+        client_next = _client([_pos("cond-1", 200)])
+        events = ingest_wallet(settings, WALLET, client=client_next)
+        assert events == []
+        # Native-tx increase remains alertable via the freshness gate when provided directly.
+        from dataclasses import replace
+
+        signed = TradeEvent(
+            wallet=WALLET,
+            event_type="increase",
+            condition_id="cond-1",
+            asset="asset-cond-1",
+            outcome="Yes",
+            side="BUY",
+            price=0.5,
+            size=50.0,
+            tx_hash="0xinc1",
+            ts=now - 10,
+            title="t",
+            slug="s",
+            dedup_key="dk",
+            prev_size=150.0,
+            new_size=200.0,
         )
-        events = ingest_wallet(settings, WALLET, client=client_signed)
-        assert len(events) == 1
-        assert events[0].event_type == "increase"
-        assert events[0].tx_hash
-        assert events[0].ts is not None
-        alertable = filter_alertable_events(settings, WALLET, events, now=now)
+        signed = replace(signed, event_uid=build_event_uid(signed))
+        alertable = filter_alertable_events(settings, WALLET, [signed], now=now)
         assert len(alertable) == 1
 
     def test_unchanged_preexisting_position_silent(self, settings):

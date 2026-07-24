@@ -1,7 +1,11 @@
 import pytest
 
 from app.copy_intel.models import TradeEvent
-from app.copy_intel.recommendation import build_recommendation
+from app.copy_intel.recommendation import (
+    REASON_AUTHORITATIVE_EVENT_REQUIRED,
+    REASON_EVENT_TOO_OLD,
+    build_recommendation,
+)
 from app.copy_intel.risk import assert_read_only, check_exposure_limits, record_paper_copy
 from app.database.storage import initialize_database
 from tests.conftest import make_test_settings
@@ -57,7 +61,7 @@ class TestExposureLimits:
 
 
 class TestRecommendationDowngrades:
-    def test_stale_trade_skips(self, tmp_path, monkeypatch):
+    def test_non_authoritative_event_skips(self, tmp_path, monkeypatch):
         settings = make_test_settings(
             database_path=str(tmp_path / "rec.db"),
             copy_max_trade_age_min=30,
@@ -74,14 +78,6 @@ class TestRecommendationDowngrades:
             lambda *a, **k: FakeMetrics(),
         )
         monkeypatch.setattr("app.copy_intel.recommendation.score_trader", lambda m: 80.0)
-        monkeypatch.setattr(
-            "app.copy_intel.recommendation._resolve_current_price",
-            lambda *a, **k: 0.55,
-        )
-        monkeypatch.setattr(
-            "app.copy_intel.recommendation.estimate_slippage",
-            lambda *a, **k: 0.01,
-        )
 
         event = TradeEvent(
             wallet="0xee00ba338c59557141789b127927a55f5cc5cea1",
@@ -100,4 +96,43 @@ class TestRecommendationDowngrades:
         )
         rec = build_recommendation(settings, event, client=object())
         assert rec.action == "SKIP"
-        assert "stale" in rec.reason.lower()
+        assert REASON_AUTHORITATIVE_EVENT_REQUIRED in rec.reason_codes
+
+    def test_stale_authoritative_event_skips(self, tmp_path, monkeypatch):
+        settings = make_test_settings(
+            database_path=str(tmp_path / "rec2.db"),
+            copy_max_trade_age_min=30,
+            copy_max_event_age_seconds=600,
+            copy_min_resolved_trades=5,
+        )
+        initialize_database(settings)
+        monkeypatch.setattr(
+            "app.copy_intel.recommendation.compute_trader_metrics",
+            lambda *a, **k: type("M", (), {"eligible": True, "ineligible_reason": None})(),
+        )
+        monkeypatch.setattr("app.copy_intel.recommendation.score_trader", lambda m: 80.0)
+        now = 1_700_000_000
+        event = TradeEvent(
+            wallet="0xee00ba338c59557141789b127927a55f5cc5cea1",
+            event_type="open",
+            condition_id="0xabc",
+            asset="token",
+            outcome="Yes",
+            side="BUY",
+            price=0.5,
+            size=100.0,
+            tx_hash="0x1",
+            ts=now - 10_000,
+            title="Test market",
+            slug="test-market",
+            dedup_key="k1",
+            event_uid="ff1:" + ("11" * 32),
+            trader_vwap=0.5,
+            first_fill_ts=now - 10_000,
+            last_fill_ts=now - 10_000,
+            matched_fill_count=1,
+            detected_at=now,
+        )
+        rec = build_recommendation(settings, event, client=object(), now=float(now))
+        assert rec.action == "SKIP"
+        assert REASON_EVENT_TOO_OLD in rec.reason_codes

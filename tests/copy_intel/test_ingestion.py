@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from app.copy_intel.api_result import ApiSuccess
 from app.copy_intel.data_client import (
     CopyDataClient,
     build_dedup_key,
@@ -45,6 +46,10 @@ class TestActivityFilter:
 
     def test_redeem_excluded(self):
         assert is_trade_activity("REDEEM") is False
+
+    def test_unknown_type_excluded(self):
+        assert is_trade_activity("MAKER_REBATE") is False
+        assert is_trade_activity("SOMETHING_NEW") is False
 
 
 class TestIngestionDiff:
@@ -149,4 +154,6 @@ class TestDataClientMocked:
         monkeypatch.setattr("app.copy_intel.data_client.get_with_retry", fake_get)
         client = CopyDataClient(settings)
         result = client.fetch_positions(wallet)
-        assert len(result) == len(positions)
+        assert isinstance(result, ApiSuccess)
+        assert len(result.data) == len(positions)
+        assert result.non_empty is True

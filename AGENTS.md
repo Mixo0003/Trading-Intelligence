@@ -5,7 +5,32 @@
 - One task per branch (or one clearly bounded task per session).
 - Do not mix Weather Intelligence, Copy Intelligence, and Health Monitor changes unless the task explicitly requires a shared hook.
 - Prefer minimal verified patches over broad refactors.
-- Use separate small version branches for V2.2.1, V2.2.2, and later versioned work — never combine multiple V2.2.x scopes on one branch.
+- Use separate small version branches for V2.2.1, V2.2.2, V2.2.3, and later versioned work — never combine multiple V2.2.x scopes on one branch.
+- V2.2.x work uses numbered versions (V2.2.1, V2.2.2, V2.2.3…), not “Phase”.
+
+## Permanent workflow
+
+1. Plan / Research
+2. Grill Me
+3. Final Plan
+4. Build
+5. Debug
+6. Focused tests
+7. Full suite
+8. Live Telegram verification
+9. Release prep
+10. Commit and push
+11. PR and merge
+
+Do not skip stages. Limited Grill Me applies per feature from **V2.2.2 onward** (do not claim V2.2.1 completed a formal Grill Me without repository evidence). Implement only on small versioned branches.
+
+## Tool decisions
+
+- Cursor remains the primary development environment.
+- ChatGPT Project holds strategy and master context.
+- Codex Remote will first be tested read-only.
+- Strix is deferred to an isolated VM or Docker environment.
+- Graphify will be tested separately and must not enter bot runtime.
 
 ## Tests
 
@@ -34,7 +59,14 @@
 
 - No automatic commit or push during implementation or audits.
 - No commit or push before manual verification unless the user explicitly requests it.
+- No commit or push without an explicit release prompt.
 - Review `git diff` and scan for secrets before any commit.
+
+## Trading safety
+
+- No real trading unless explicitly approved.
+- Copy Intelligence remains read-only and paper-only unless explicitly redesigned.
+- V2.2.2 Copy alerts use public Data API / public CLOB book reads only — no authenticated order placement.
 
 ## Storage safety (V2.1.1)
 
@@ -57,6 +89,7 @@
 - New/re-enabled wallets require a successful baseline before any COPY/WATCH/SKIP/Telegram alerts.
 - Re-enable always starts a new baseline (safest).
 - Deduplicate by stable event UID; do not rely on timestamps alone.
+- V2.2.2 deliverable New/Increase alerts require authoritative fill correlation timestamps; unsigned position churn is quarantined.
 
 ## Health
 

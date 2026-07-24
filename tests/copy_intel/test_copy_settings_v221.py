@@ -294,7 +294,7 @@ class TestMaxEventAge:
                 """
                 UPDATE wallet_monitor_state
                 SET baseline_status = 'COMPLETE',
-                    baseline_version = 2,
+                    baseline_version = 3,
                     newest_event_ts = ?,
                     newest_event_uid = 'seed',
                     subscription_started_at = ?

@@ -44,7 +44,7 @@ def settings(tmp_path):
 def _pos(size: float = 100.0, condition_id: str = CID) -> dict:
     return {
         "conditionId": condition_id,
-        "asset": "token-1",
+        "asset": f"token-{condition_id}",
         "outcome": "Yes",
         "size": size,
         "avgPrice": 0.4,
@@ -58,7 +58,7 @@ def _pos(size: float = 100.0, condition_id: str = CID) -> dict:
 def _client(positions: list[dict], trades: list[dict] | None = None):
     client = MagicMock()
     client.fetch_positions.return_value = positions
-    client.fetch_trades.return_value = trades or []
+    client.fetch_trades.return_value = trades if trades is not None else []
     return client
 
 
@@ -66,7 +66,7 @@ def _snap(size: float, condition_id: str = CID) -> PositionSnapshot:
     return PositionSnapshot(
         wallet=WALLET,
         condition_id=condition_id,
-        asset="token-1",
+        asset=f"token-{condition_id}",
         outcome="Yes",
         size=size,
         avg_price=0.4,
@@ -82,7 +82,7 @@ def _event_with_uid(**kwargs) -> TradeEvent:
         wallet=WALLET,
         event_type="open",
         condition_id=CID,
-        asset="token-1",
+        asset=f"token-{CID}",
         outcome="Yes",
         side="BUY",
         price=0.5,
@@ -130,29 +130,10 @@ class TestPositionDiffDedup:
         add_wallet(settings, WALLET)
         run_baseline(settings, WALLET, client=_client([_pos(100)]))
         now = int(time.time())
-        client = _client(
-            [_pos(150)],
-            trades=[
-                {
-                    "transactionHash": "0xincdup",
-                    "conditionId": CID,
-                    "asset": "token-1",
-                    "outcome": "Yes",
-                    "side": "BUY",
-                    "size": 50.0,
-                    "price": 0.5,
-                    "timestamp": now - 15,
-                    "title": "T",
-                    "slug": "t",
-                    "type": "TRADE",
-                }
-            ],
-        )
+        # Checkpoint 5: without matching trades the increase is quarantined (no accepted event).
+        client = _client([_pos(150)])
         first = ingest_wallet(settings, WALLET, client=client)
-        assert len(first) == 1
-        alert1 = filter_alertable_events(settings, WALLET, first, now=now)
-        assert len(alert1) == 1
-        # Same book returned repeatedly (API replay / same size).
+        assert first == []
         for _ in range(10):
             again = ingest_wallet(settings, WALLET, client=client)
             assert again == []
@@ -163,11 +144,11 @@ class TestPositionDiffDedup:
         run_baseline(settings, WALLET, client=_client([_pos(100)]))
         client = _client([_pos(150)])
         events = ingest_wallet(settings, WALLET, client=client)
-        assert len(events) == 1
-        assert events[0].tx_hash is None
-        assert events[0].ts is None
+        assert events == []
         assert filter_alertable_events(settings, WALLET, events) == []
-        assert copy_storage.is_processed_copy_event(settings, events[0].event_uid or "")
+        from app.database.copy_storage import list_trade_correlation_quarantine
+
+        assert list_trade_correlation_quarantine(settings, wallet=WALLET)
 
 class TestExactlyOnceAcrossPolls:
     def test_same_api_event_across_10_polls(self, settings):

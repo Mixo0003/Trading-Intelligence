@@ -53,7 +53,7 @@ from app.telegram.inline_menus import (
     main_inline_keyboard,
     weather_inline_keyboard,
 )
-from app.telegram.auth import is_admin
+from app.telegram.auth import is_admin, require_admin
 from app.telegram.health.buttons import HEALTH_CALLBACKS
 from app.telegram.nav import answer_callback, edit_or_reply, open_main_menu
 
@@ -65,6 +65,40 @@ _SCAN_CB = {
     CB_WX_SCAN_ASIA: ScanRegion.ASIA,
     CB_WX_SCAN_ALL: ScanRegion.ALL,
 }
+
+
+def _is_copy_callback(data: str) -> bool:
+    if data in {
+        CB_COPY,
+        CB_COPY_DISCOVER,
+        CB_COPY_WATCHLIST,
+        CB_COPY_STATUS,
+        CB_COPY_ALERTS,
+        CB_COPY_PAPER,
+        CB_COPY_SETTINGS,
+        CB_WL_PREV,
+        CB_WL_NEXT,
+        CB_WL_BACK,
+        CB_DISC_TOP,
+        CB_DISC_FIND,
+        CB_DISC_CAT,
+        CB_DISC_RISING,
+        CB_DISC_RISK,
+        CB_DISC_PREV,
+        CB_DISC_NEXT,
+        CB_DISC_BACK,
+        CB_SET_CONSERVATIVE,
+        CB_SET_BALANCED,
+        CB_SET_EXPLORATORY,
+        CB_SET_ALERT_FOLLOW,
+        CB_SET_ALERT_BOTH,
+    }:
+        return True
+    return (
+        data.startswith("copy:")
+        or data.startswith("cset:")
+        or data.startswith("disc:")
+    )
 
 
 async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -90,6 +124,11 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if data == CB_WEATHER:
         await edit_or_reply(update, WEATHER_MENU_TEXT, reply_markup=weather_inline_keyboard())
         return
+
+    if _is_copy_callback(data):
+        if not await require_admin(update, settings, action=f"cb:{data}"):
+            return
+
     if data == CB_COPY:
         await edit_or_reply(update, COPY_MENU_TEXT, reply_markup=copy_inline_keyboard())
         return

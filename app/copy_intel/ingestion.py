@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime
 from typing import Any
 
 from app.config.settings import Settings
+from app.copy_intel.api_result import ApiFailure
 from app.copy_intel.data_client import CopyDataClient, build_dedup_key
 from app.copy_intel.event_identity import build_event_uid, normalize_size
 from app.copy_intel.models import PositionSnapshot, TradeEvent, TradeEventType
+from app.copy_intel.trade_correlation import (
+    TRADE_CORRELATION_OVERLAP_SECONDS,
+    correlate_transitions,
+    fetch_complete_trades,
+    sanitized_correlation_diagnostic,
+)
 from app.database import copy_storage
 
 logger = logging.getLogger(__name__)
@@ -36,11 +45,12 @@ def diff_positions(
     previous: dict[str, PositionSnapshot],
     current: dict[str, PositionSnapshot],
 ) -> list[TradeEvent]:
+    """Diff two position maps. Keys are opaque identity (asset for V2 path)."""
     events: list[TradeEvent] = []
     all_ids = set(previous) | set(current)
-    for condition_id in all_ids:
-        old = previous.get(condition_id)
-        new = current.get(condition_id)
+    for key in all_ids:
+        old = previous.get(key)
+        new = current.get(key)
         old_size = normalize_size(old.size if old else 0.0)
         new_size = normalize_size(new.size if new else 0.0)
         if old_size <= _SIZE_EPS and new_size > _SIZE_EPS:
@@ -60,7 +70,7 @@ def diff_positions(
         event = TradeEvent(
             wallet=wallet.lower(),
             event_type=event_type,
-            condition_id=condition_id,
+            condition_id=ref.condition_id,
             asset=ref.asset,
             outcome=ref.outcome,
             side="BUY" if event_type in {"open", "increase"} else "SELL",
@@ -110,10 +120,13 @@ def diff_positions(
 
 
 def parse_trade_event(raw: dict[str, Any], wallet: str) -> TradeEvent | None:
-    """Build a TradeEvent from Data API /trades row when a native ID exists."""
+    """Build a TradeEvent from Data API /trades row when a documented tx hash exists.
+
+    Native identity uses only documented fields (transactionHash variants).
+    Undocumented id / tradeId are ignored and never trusted.
+    """
     tx_hash = raw.get("transactionHash") or raw.get("transaction_hash") or raw.get("txHash")
-    trade_id = raw.get("id") or raw.get("tradeId")
-    if not tx_hash and not trade_id:
+    if not tx_hash:
         return None
     side = (raw.get("side") or "").upper()
     if side not in {"BUY", "SELL"}:
@@ -133,12 +146,12 @@ def parse_trade_event(raw: dict[str, Any], wallet: str) -> TradeEvent | None:
         side=side,
         price=_float_or_none(raw.get("price")),
         size=size,
-        tx_hash=str(tx_hash).lower() if tx_hash else None,
+        tx_hash=str(tx_hash).lower(),
         ts=ts,
         title=raw.get("title"),
         slug=raw.get("slug"),
         dedup_key="",
-        trade_id=str(trade_id) if trade_id else None,
+        trade_id=None,
         prev_size=None,
         new_size=None,
     )
@@ -167,7 +180,7 @@ def parse_trade_event(raw: dict[str, Any], wallet: str) -> TradeEvent | None:
         slug=event.slug,
         dedup_key=dedup,
         event_uid=uid,
-        trade_id=event.trade_id,
+        trade_id=None,
     )
 
 
@@ -195,7 +208,10 @@ def enrich_events_with_trade_ids(
             enriched.append(event)
             continue
         tx = match.get("transactionHash") or match.get("transaction_hash") or match.get("txHash")
-        trade_id = match.get("id") or match.get("tradeId")
+        # Undocumented id / tradeId are ignored; only documented tx hash is trusted.
+        if not tx:
+            enriched.append(event)
+            continue
         ts = int(match["timestamp"]) if match.get("timestamp") is not None else event.ts
         updated = TradeEvent(
             wallet=event.wallet,
@@ -206,7 +222,7 @@ def enrich_events_with_trade_ids(
             side=event.side,
             price=event.price,
             size=event.size,
-            tx_hash=str(tx).lower() if tx else None,
+            tx_hash=str(tx).lower(),
             ts=ts,
             title=event.title,
             slug=event.slug,
@@ -215,7 +231,7 @@ def enrich_events_with_trade_ids(
             event_uid=None,
             prev_size=event.prev_size,
             new_size=event.new_size,
-            trade_id=str(trade_id) if trade_id else None,
+            trade_id=None,
         )
         uid = build_event_uid(updated)
         dedup = build_dedup_key(
@@ -245,7 +261,7 @@ def enrich_events_with_trade_ids(
                 event_uid=uid,
                 prev_size=updated.prev_size,
                 new_size=updated.new_size,
-                trade_id=updated.trade_id,
+                trade_id=None,
             )
         )
     return enriched
@@ -296,6 +312,7 @@ def replace_wallet_snapshots(
 
 
 def load_snapshots_as_models(settings: Settings, wallet: str) -> dict[str, PositionSnapshot]:
+    """Load legacy condition-keyed snapshots (rollback / characterization only)."""
     rows = copy_storage.load_position_snapshots(settings, wallet)
     result: dict[str, PositionSnapshot] = {}
     for condition_id, row in rows.items():
@@ -315,6 +332,50 @@ def load_snapshots_as_models(settings: Settings, wallet: str) -> dict[str, Posit
             event_slug=row["event_slug"],
         )
     return result
+
+
+def load_snapshots_v2_as_models(
+    settings: Settings, wallet: str
+) -> dict[str, PositionSnapshot]:
+    """Load production V2 snapshots keyed by asset."""
+    rows = copy_storage.load_position_snapshots_v2(settings, wallet)
+    result: dict[str, PositionSnapshot] = {}
+    for asset, row in rows.items():
+        size = normalize_size(float(row["size"] or 0))
+        if size <= _SIZE_EPS:
+            continue
+        result[str(asset)] = PositionSnapshot(
+            wallet=wallet.lower(),
+            condition_id=row["condition_id"],
+            asset=str(asset),
+            outcome=row["outcome"],
+            size=size,
+            avg_price=row["avg_price"],
+            cur_price=row["cur_price"],
+            title=row["title"],
+            slug=row["slug"],
+            event_slug=row["event_slug"],
+        )
+    return result
+
+
+def _snapshots_to_v2_payload(
+    positions: dict[str, PositionSnapshot],
+) -> dict[str, dict]:
+    payload: dict[str, dict] = {}
+    for asset, snap in positions.items():
+        key = snap.asset or asset
+        payload[str(key)] = {
+            "condition_id": snap.condition_id,
+            "outcome": snap.outcome,
+            "size": snap.size,
+            "avg_price": snap.avg_price,
+            "cur_price": snap.cur_price,
+            "title": snap.title,
+            "slug": snap.slug,
+            "event_slug": snap.event_slug,
+        }
+    return payload
 
 
 def persist_trade_events(settings: Settings, events: list[TradeEvent]) -> list[TradeEvent]:
@@ -349,25 +410,182 @@ def persist_trade_events(settings: Settings, events: list[TradeEvent]) -> list[T
     return saved
 
 
-def ingest_wallet(settings: Settings, wallet: str, client: CopyDataClient | None = None) -> list[TradeEvent]:
-    client = client or CopyDataClient(settings)
-    raw_positions = client.fetch_positions(wallet)
-    current = {
-        p.condition_id: p
-        for p in (parse_position(item, wallet) for item in raw_positions)
-        if p.condition_id and p.size > _SIZE_EPS
-    }
-    previous = load_snapshots_as_models(settings, wallet)
-    events = diff_positions(wallet, previous, current)
+def _resolve_consistent_book(
+    wallet: str,
+    client: CopyDataClient,
+    previous: dict[str, PositionSnapshot],
+):
+    """Fetch a validated book and apply the approved second-read consistency control."""
+    from app.copy_intel.position_book import (
+        PositionBookFailure,
+        books_equal,
+        emit_book_diagnostic,
+        fetch_validated_position_book,
+        needs_consistency_second_read,
+        sanitized_book_diagnostic,
+    )
+
+    first = fetch_validated_position_book(client, wallet)
+    if isinstance(first, PositionBookFailure):
+        diagnostic = sanitized_book_diagnostic(
+            code=first.code, wallet=wallet, detail=first.message
+        )
+        emit_book_diagnostic(diagnostic)
+        return None, diagnostic
+
+    current = first.positions
+    if needs_consistency_second_read(
+        previous, current, was_multipage=first.was_multipage
+    ):
+        second = fetch_validated_position_book(client, wallet)
+        if isinstance(second, PositionBookFailure):
+            diagnostic = sanitized_book_diagnostic(
+                code=second.code,
+                wallet=wallet,
+                detail=f"second_read_failed:{second.message}",
+            )
+            emit_book_diagnostic(diagnostic)
+            return None, diagnostic
+        if not books_equal(current, second.positions):
+            diagnostic = sanitized_book_diagnostic(
+                code="inconsistent_second_read",
+                wallet=wallet,
+                detail="complete position reads disagreed; retained prior snapshot",
+            )
+            emit_book_diagnostic(diagnostic)
+            return None, diagnostic
+        current = second.positions
+    return current, None
+
+
+def _parse_iso_to_epoch(value: str | None) -> int | None:
+    if not value:
+        return None
     try:
-        trades = client.fetch_trades(wallet, limit=50)
-    except Exception:
-        logger.exception("Trade fetch failed for %s; continuing with position-diff only", wallet[:10])
-        trades = []
-    events = enrich_events_with_trade_ids(events, trades)
-    # Exact current book across polls/restarts — unchanged positions yield no events.
-    replace_wallet_snapshots(settings, wallet, current)
-    return persist_trade_events(settings, events)
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return int(datetime.fromisoformat(text).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
+def ingest_wallet(
+    settings: Settings, wallet: str, client: CopyDataClient | None = None
+) -> list[TradeEvent]:
+    """
+    Asset-keyed complete-book ingestion with Checkpoint 5 trade correlation.
+
+    - ApiFailure / malformed books do not mutate snapshots.
+    - Trade ApiFailure retains snapshots and yields no accepted events.
+    - Only correlated New/Increase events are returned/persisted.
+    - Reduce/Close remain suppressed.
+    """
+    client = client or CopyDataClient(settings)
+    previous = load_snapshots_v2_as_models(settings, wallet)
+    current, _diagnostic = _resolve_consistent_book(wallet, client, previous)
+    if current is None:
+        return []
+
+    all_events = diff_positions(wallet, previous, current)
+    open_increase = [e for e in all_events if e.event_type in {"open", "increase"}]
+
+    detected_at = int(time.time())
+    state = copy_storage.get_wallet_monitor_state(settings, wallet)
+    complete_epoch = (
+        _parse_iso_to_epoch(state.last_complete_positions_at) if state else None
+    )
+    if complete_epoch is not None:
+        lower_ts = complete_epoch - TRADE_CORRELATION_OVERLAP_SECONDS
+    else:
+        lower_ts = detected_at - max(
+            TRADE_CORRELATION_OVERLAP_SECONDS, settings.copy_max_event_age_seconds
+        )
+    upper_ts = detected_at
+    trade_watermark = state.last_correlated_trade_ts if state else None
+
+    if open_increase:
+        trades_result = fetch_complete_trades(
+            client,
+            wallet,
+            start_ts=lower_ts,
+            end_ts=upper_ts,
+        )
+        if isinstance(trades_result, ApiFailure):
+            logger.warning(
+                "trade correlation fetch failed for %s: code=%s",
+                wallet[:10],
+                trades_result.code,
+            )
+            # Retain prior snapshots; do not commit the new book or emit events.
+            return []
+
+        accepted, quarantines = correlate_transitions(
+            open_increase,
+            trades_result.data,
+            wallet=wallet,
+            lower_ts=lower_ts,
+            upper_ts=upper_ts,
+            trade_watermark_ts=trade_watermark,
+            detected_at=detected_at,
+        )
+        complexity_hit = any(
+            item.code == "correlation_complexity_exceeded" for item in quarantines
+        )
+        for item in quarantines:
+            diagnostic = sanitized_correlation_diagnostic(item)
+            copy_storage.record_trade_correlation_quarantine(
+                settings,
+                wallet=wallet,
+                reason=item.code,
+                asset=item.transition.asset,
+                condition_id=item.transition.condition_id,
+                event_type=item.transition.event_type,
+                prev_size=item.transition.prev_size,
+                new_size=item.transition.new_size,
+                detected_at=detected_at,
+                diagnostic=diagnostic,
+            )
+            # Complexity rejection must remain retryable: no processed mark, no commit.
+            if item.code == "correlation_complexity_exceeded":
+                continue
+            copy_storage.mark_processed_copy_event(
+                settings,
+                event_uid=(
+                    item.transition.event_uid
+                    or build_event_uid(item.transition)
+                ),
+                wallet=wallet,
+                event_ts=None,
+                observed_at=detected_at,
+                alertable=False,
+                reject_reason=item.code,
+                diagnostic_json=diagnostic,
+            )
+        if complexity_hit:
+            # Retain prior snapshots; no accepted events on this path.
+            return []
+    else:
+        accepted = []
+
+    copy_storage.commit_complete_position_book_v2(
+        settings,
+        wallet,
+        _snapshots_to_v2_payload(current),
+        stamp_complete=True,
+    )
+    if accepted:
+        max_fill_ts = max(
+            int(e.last_fill_ts)
+            for e in accepted
+            if e.last_fill_ts is not None
+        )
+        copy_storage.update_wallet_monitor_fields(
+            settings,
+            wallet,
+            last_correlated_trade_ts=max_fill_ts,
+        )
+    return persist_trade_events(settings, accepted)
 
 
 def _float_or_none(value: Any) -> float | None:

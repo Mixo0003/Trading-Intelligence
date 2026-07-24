@@ -36,8 +36,8 @@ from app.copy_intel.watchlist import (
     toggle_wallet,
 )
 from app.database import copy_storage
-from app.database.copy_storage import get_recent_recommendations
-from app.telegram.auth import is_admin
+from app.database.copy_storage import get_recent_recommendations_for_owner
+from app.telegram.auth import is_admin, require_admin
 from app.telegram.copy_intel.formatting import (
     format_copy_status,
     format_paper_portfolio,
@@ -115,7 +115,13 @@ def _settings_card_text(settings: Settings, telegram_id: int) -> str:
     return format_settings_card(user, modified=modified)
 
 
+async def _require_copy_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, *, action: str) -> bool:
+    return await require_admin(update, _settings(context), action=action)
+
+
 async def copy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy"):
+        return
     await update.effective_message.reply_text(
         COPY_MENU_TEXT,
         reply_markup=copy_inline_keyboard(),
@@ -123,6 +129,8 @@ async def copy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def copy_discover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_discover"):
+        return
     await update.effective_message.reply_text(
         DISCOVERY_MENU_TEXT,
         reply_markup=discovery_inline_keyboard(),
@@ -130,10 +138,14 @@ async def copy_discover_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def copy_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_list"):
+        return
     await show_watchlist(update, context, edit=False)
 
 
 async def copy_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_add"):
+        return
     settings = _settings(context)
     assert_read_only(settings)
     if not context.args:
@@ -151,6 +163,8 @@ async def copy_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def copy_remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_remove"):
+        return
     settings = _settings(context)
     if not context.args:
         await update.effective_message.reply_text("Usage: /copy_remove 0x…")
@@ -169,6 +183,8 @@ async def copy_remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def copy_toggle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_toggle"):
+        return
     settings = _settings(context)
     if not context.args:
         await update.effective_message.reply_text("Usage: /copy_toggle 0x…")
@@ -190,18 +206,26 @@ async def copy_toggle_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def copy_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_status"):
+        return
     await show_copy_status(update, context, edit=False)
 
 
 async def copy_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_alerts"):
+        return
     await show_copy_alerts(update, context, edit=False)
 
 
 async def copy_paper_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_paper"):
+        return
     await show_paper(update, context, edit=False)
 
 
 async def copy_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _require_copy_admin(update, context, action="cmd:/copy_settings"):
+        return
     await show_copy_settings(update, context, edit=False)
 
 
@@ -265,6 +289,8 @@ def _require_manageable_entry(
 
 
 async def show_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:
+    if not await _require_copy_admin(update, context, action="cb:copy_watchlist"):
+        return
     entries = _managed_entries(update, context)
     if not entries:
         text = format_watchlist_empty()
@@ -333,6 +359,8 @@ async def _render_watchlist_card(
 
 
 async def watchlist_nav(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if not await _require_copy_admin(update, context, action=f"cb:{data}"):
+        return
     if data == CB_WL_BACK:
         await edit_or_reply(update, COPY_MENU_TEXT, reply_markup=copy_inline_keyboard())
         return
@@ -354,6 +382,8 @@ async def watchlist_action(
     data: str,
 ) -> None:
     """Handle pause / resume / unsubscribe confirm flow callbacks."""
+    if not await _require_copy_admin(update, context, action=f"cb:{data}"):
+        return
     settings = _settings(context)
     actor = str(_user_id(update) or "system")
 
@@ -437,6 +467,8 @@ async def watchlist_action(
 
 
 async def show_copy_status(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:
+    if not await _require_copy_admin(update, context, action="cb:copy_status"):
+        return
     settings = _settings(context)
     poll_state = {
         "last_poll_at": copy_storage.get_poll_state(settings, "last_poll_at"),
@@ -456,7 +488,10 @@ async def show_copy_status(update: Update, context: ContextTypes.DEFAULT_TYPE, *
 
 
 async def show_copy_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:
-    rows = get_recent_recommendations(_settings(context), limit=10)
+    if not await _require_copy_admin(update, context, action="cb:copy_alerts"):
+        return
+    owner_id = _user_id(update) or 0
+    rows = get_recent_recommendations_for_owner(_settings(context), owner_id, limit=10)
     text = format_recent_alerts(rows)
     markup = copy_inline_keyboard()
     if edit:
@@ -466,8 +501,11 @@ async def show_copy_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE, *
 
 
 async def show_paper(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:
+    if not await _require_copy_admin(update, context, action="cb:copy_paper"):
+        return
     settings = _settings(context)
-    exposure = copy_storage.paper_exposure_totals(settings)
+    owner_id = _user_id(update) or 0
+    exposure = copy_storage.paper_exposure_totals_for_owner(settings, owner_id)
     text = format_paper_portfolio(settings.copy_paper_bankroll_usd, exposure)
     markup = copy_inline_keyboard()
     if edit:
@@ -477,6 +515,8 @@ async def show_paper(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit
 
 
 async def show_copy_settings(update: Update, context: ContextTypes.DEFAULT_TYPE, *, edit: bool) -> None:
+    if not await _require_copy_admin(update, context, action="cb:copy_settings"):
+        return
     settings = _settings(context)
     telegram_id = update.effective_user.id if update.effective_user else 0
     _clear_settings_edit_state(context, telegram_id)
@@ -493,6 +533,8 @@ async def apply_settings_callback(
     context: ContextTypes.DEFAULT_TYPE,
     data: str,
 ) -> None:
+    if not await _require_copy_admin(update, context, action=f"cb:{data}"):
+        return
     settings = _settings(context)
     telegram_id = update.effective_user.id if update.effective_user else 0
     _clear_settings_edit_state(context, telegram_id)
@@ -518,6 +560,8 @@ async def handle_copy_settings_flow(
     context: ContextTypes.DEFAULT_TYPE,
     data: str,
 ) -> None:
+    if not await _require_copy_admin(update, context, action=f"cb:{data}"):
+        return
     settings = _settings(context)
     telegram_id = update.effective_user.id if update.effective_user else 0
 
@@ -675,6 +719,8 @@ async def copy_settings_text_input(
     key = context.user_data.get(_SETTINGS_EDIT_KEY)
     if not key or key not in FIELD_CODES.values():
         return
+    if not await _require_copy_admin(update, context, action="msg:copy_settings_input"):
+        return
     if update.effective_message is None or not update.effective_message.text:
         return
     # Ignore commands.
@@ -707,6 +753,8 @@ async def show_discovery_list(
     rising_only: bool = False,
     high_risk_only: bool = False,
 ) -> None:
+    if not await _require_copy_admin(update, context, action="cb:copy_discovery"):
+        return
     try:
         scores = await _ensure_discovery(update, context)
     except Exception as exc:
@@ -761,6 +809,8 @@ async def _render_discovery_card(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def discovery_nav(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+    if not await _require_copy_admin(update, context, action=f"cb:{data}"):
+        return
     if data == CB_DISC_BACK:
         await edit_or_reply(update, DISCOVERY_MENU_TEXT, reply_markup=discovery_inline_keyboard())
         return
@@ -778,6 +828,8 @@ async def add_watchlist_from_callback(
     context: ContextTypes.DEFAULT_TYPE,
     wallet: str,
 ) -> None:
+    if not await _require_copy_admin(update, context, action="cb:disc_add"):
+        return
     settings = _settings(context)
     assert_read_only(settings)
     scores = context.user_data.get(_DISCOVERY_VIEW_KEY) or []

@@ -168,19 +168,25 @@ class TestWatchlistService:
         assert remove_wallet(settings, W1, actor="1") is False
         assert copy_storage.get_watchlist_entry(settings, W1) is None
 
-    def test_user_isolation(self, settings):
-        add_wallet(settings, W1, label="mine", added_by=2)
-        add_wallet(settings, W2, label="other", added_by=3)
-        mine = list_entries_for_user(settings, 2, is_admin=False)
+    def test_user_isolation(self, tmp_path):
+        s = make_test_settings(
+            database_path=str(tmp_path / "iso.db"),
+            copy_intel_enabled=True,
+            admin_ids=[1, 2, 3],
+        )
+        initialize_database(s)
+        add_wallet(s, W1, label="mine", added_by=2)
+        add_wallet(s, W2, label="other", added_by=3)
+        mine = list_entries_for_user(s, 2, is_admin=True)
         assert [e.wallet for e in mine] == [W1]
-        admin = list_entries_for_user(settings, 1, is_admin=True)
-        assert {e.wallet for e in admin} == {W1, W2}
+        admin1 = list_entries_for_user(s, 1, is_admin=True)
+        assert admin1 == []
 
 
 @pytest.mark.asyncio
 class TestWatchlistHandlers:
     async def test_empty_watchlist_screen(self, settings):
-        update = _callback_update(CB_COPY_WATCHLIST, user_id=2)
+        update = _callback_update(CB_COPY_WATCHLIST, user_id=1)
         ctx = _context(settings)
         with patch(
             "app.telegram.copy_intel.handlers.edit_or_reply", new_callable=AsyncMock
@@ -256,17 +262,23 @@ class TestWatchlistHandlers:
             await watchlist_action(update, ctx, f"copy:wl:rmy:{W1}")
         assert copy_storage.get_watchlist_entry(settings, W1) is None
 
-    async def test_cannot_manage_other_user_subscription(self, settings):
-        add_wallet(settings, W1, label="Owner", added_by=2)
+    async def test_cannot_manage_other_user_subscription(self, tmp_path):
+        s = make_test_settings(
+            database_path=str(tmp_path / "own.db"),
+            copy_intel_enabled=True,
+            admin_ids=[1, 2, 3],
+        )
+        initialize_database(s)
+        add_wallet(s, W1, label="Owner", added_by=2)
         update = _callback_update(f"copy:wl:pause:{W1}", user_id=3)
-        ctx = _context(settings)
+        ctx = _context(s)
         with patch(
             "app.telegram.copy_intel.handlers.edit_or_reply", new_callable=AsyncMock
         ) as edit:
             await watchlist_action(update, ctx, f"copy:wl:pause:{W1}")
             text = _edit_text(edit)
             assert "Not authorized" in text
-        entry = copy_storage.get_watchlist_entry(settings, W1)
+        entry = copy_storage.get_watchlist_entry(s, W1)
         assert entry is not None and entry.enabled
 
     async def test_callback_query_answered(self, settings):
