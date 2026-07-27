@@ -41,9 +41,12 @@ from app.opportunity_intel.settings import (
 )
 
 MIGRATION_ID = "opportunity_intel_v1"
+MIGRATION_ID_RESUMABLE_DISCOVERY = "opportunity_intel_v2_resumable_discovery"
 SCHEMA_VERSION = 1
+SCHEMA_VERSION_RESUMABLE_DISCOVERY = 2
 
 _MIGRATION_FAILPOINT_HOOK: Callable[[str], None] | None = None
+_V2_MIGRATION_FAILPOINT_HOOK: Callable[[str], None] | None = None
 
 _TABLES = frozenset(
     {
@@ -115,6 +118,15 @@ class OpportunityMigrationResult:
     index_count: int
 
 
+@dataclass(frozen=True)
+class ResumableDiscoveryMigrationResult:
+    migration_id: str
+    already_applied: bool
+    table_present: bool
+    index_present: bool
+    applied_at: str | None
+
+
 @contextmanager
 def _opportunity_connection(
     settings: Settings,
@@ -141,11 +153,38 @@ def _failpoint(point: str) -> None:
         hook(point)
 
 
+def _v2_failpoint(point: str) -> None:
+    hook = _V2_MIGRATION_FAILPOINT_HOOK
+    if hook is not None:
+        hook(point)
+
+
 def initialize_opportunity_schema(settings: Settings) -> OpportunityMigrationResult:
-    """Create the V2.2.3 schema in one additive, rollback-safe transaction."""
+    """Apply v1 then v2 in separate commits on one connection.
+
+    Separate commits keep a failed v2 from rolling back a successful v1.
+    Using one connection also works for SQLite ``:memory:`` databases, which
+    are connection-scoped.
+    """
     with _opportunity_connection(settings) as connection:
         connection.execute("BEGIN IMMEDIATE")
-        return _initialize_on_connection(connection)
+        result = _initialize_on_connection(connection)
+        connection.commit()
+
+        connection.execute("BEGIN IMMEDIATE")
+        apply_result = _apply_resumable_discovery_on_connection(connection)
+        # Leave the successful v2 transaction for get_connection to commit.
+        _ = apply_result
+    return result
+
+
+def apply_resumable_discovery_migration(
+    settings: Settings,
+) -> ResumableDiscoveryMigrationResult:
+    """Additive v2 migration in its own transaction; never rolls back v1."""
+    with _opportunity_connection(settings) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        return _apply_resumable_discovery_on_connection(connection)
 
 
 def _initialize_on_connection(
@@ -271,6 +310,210 @@ def _ensure_delivery_foundations(connection: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+_DISCOVERY_SESSION_TABLE = "opportunity_discovery_sessions"
+_DISCOVERY_SESSION_INDEX = "idx_opportunity_discovery_sessions_expires"
+_DISCOVERY_SESSION_FORBIDDEN_COLUMNS = frozenset(
+    {
+        "raw_payload",
+        "raw_payload_json",
+        "gamma_payload",
+        "gamma_payload_json",
+        "page_payload",
+        "page_payload_json",
+        "events_json",
+        "raw_events_json",
+    }
+)
+
+
+def _apply_resumable_discovery_on_connection(
+    connection: sqlite3.Connection,
+) -> ResumableDiscoveryMigrationResult:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_schema_migrations (
+            migration_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL CHECK(schema_version >= 1),
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    v1 = connection.execute(
+        """
+        SELECT 1 FROM opportunity_schema_migrations
+        WHERE migration_id = ?
+        """,
+        (MIGRATION_ID,),
+    ).fetchone()
+    if v1 is None:
+        raise OpportunityMigrationError(
+            "opportunity_intel_v1 must be applied before "
+            f"{MIGRATION_ID_RESUMABLE_DISCOVERY}"
+        )
+
+    existing = connection.execute(
+        """
+        SELECT applied_at
+        FROM opportunity_schema_migrations
+        WHERE migration_id = ?
+        """,
+        (MIGRATION_ID_RESUMABLE_DISCOVERY,),
+    ).fetchone()
+    if existing is not None:
+        _validate_resumable_discovery_schema(connection)
+        return ResumableDiscoveryMigrationResult(
+            migration_id=MIGRATION_ID_RESUMABLE_DISCOVERY,
+            already_applied=True,
+            table_present=True,
+            index_present=True,
+            applied_at=str(existing["applied_at"]),
+        )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_discovery_sessions (
+            slot_key TEXT PRIMARY KEY CHECK(slot_key = 'active'),
+            session_id TEXT NOT NULL,
+            session_version INTEGER NOT NULL CHECK(session_version >= 1),
+            state TEXT NOT NULL CHECK(
+                state IN (
+                    'NOT_STARTED',
+                    'IN_PROGRESS',
+                    'COMPLETE',
+                    'RETRYABLE_FAILURE',
+                    'PERMANENT_FAILURE',
+                    'EXPIRED'
+                )
+            ),
+            started_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            next_cursor TEXT,
+            seen_cursors_json TEXT NOT NULL,
+            pages_completed INTEGER NOT NULL CHECK(pages_completed >= 0),
+            attempts_used INTEGER NOT NULL CHECK(attempts_used >= 0),
+            markets_json TEXT NOT NULL,
+            seen_event_ids_json TEXT NOT NULL,
+            seen_market_ids_json TEXT NOT NULL,
+            seen_condition_ids_json TEXT NOT NULL,
+            seen_asset_ids_json TEXT NOT NULL,
+            diagnostics_json TEXT NOT NULL
+        )
+        """
+    )
+    _v2_failpoint("after_sessions_table")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_opportunity_discovery_sessions_expires
+        ON opportunity_discovery_sessions(expires_at)
+        """
+    )
+    _v2_failpoint("after_indexes")
+    _validate_resumable_discovery_schema(connection)
+    _v2_failpoint("before_marker")
+    applied_at = _iso(_now())
+    connection.execute(
+        """
+        INSERT INTO opportunity_schema_migrations (
+            migration_id, schema_version, applied_at
+        ) VALUES (?, ?, ?)
+        """,
+        (
+            MIGRATION_ID_RESUMABLE_DISCOVERY,
+            SCHEMA_VERSION_RESUMABLE_DISCOVERY,
+            applied_at,
+        ),
+    )
+    return ResumableDiscoveryMigrationResult(
+        migration_id=MIGRATION_ID_RESUMABLE_DISCOVERY,
+        already_applied=False,
+        table_present=True,
+        index_present=True,
+        applied_at=applied_at,
+    )
+
+
+def _validate_resumable_discovery_schema(connection: sqlite3.Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()
+    }
+    if _DISCOVERY_SESSION_TABLE not in tables:
+        raise OpportunityMigrationError(
+            f"missing table {_DISCOVERY_SESSION_TABLE}"
+        )
+    if _DISCOVERY_SESSION_INDEX not in indexes:
+        raise OpportunityMigrationError(
+            f"missing index {_DISCOVERY_SESSION_INDEX}"
+        )
+    columns = {
+        row[1]
+        for row in connection.execute(
+            f"PRAGMA table_info({_DISCOVERY_SESSION_TABLE})"
+        ).fetchall()
+    }
+    forbidden = sorted(columns & _DISCOVERY_SESSION_FORBIDDEN_COLUMNS)
+    if forbidden:
+        raise OpportunityMigrationError(
+            f"raw payload columns forbidden on discovery sessions: {forbidden}"
+        )
+    required = {
+        "slot_key",
+        "session_id",
+        "session_version",
+        "state",
+        "started_at",
+        "expires_at",
+        "updated_at",
+        "next_cursor",
+        "seen_cursors_json",
+        "pages_completed",
+        "attempts_used",
+        "markets_json",
+        "seen_event_ids_json",
+        "seen_market_ids_json",
+        "seen_condition_ids_json",
+        "seen_asset_ids_json",
+        "diagnostics_json",
+    }
+    missing = sorted(required - columns)
+    if missing:
+        raise OpportunityMigrationError(
+            f"incomplete discovery session columns: {missing}"
+        )
+
+
+def is_resumable_discovery_migration_applied(settings: Settings) -> bool:
+    with _opportunity_connection(settings) as connection:
+        table = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'opportunity_schema_migrations'
+            """
+        ).fetchone()
+        if table is None:
+            return False
+        try:
+            row = connection.execute(
+                """
+                SELECT 1 FROM opportunity_schema_migrations
+                WHERE migration_id = ?
+                """,
+                (MIGRATION_ID_RESUMABLE_DISCOVERY,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -1939,6 +2182,133 @@ def load_runtime_snapshot(settings: Settings) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     return payload
+
+
+def load_active_discovery_session(settings: Settings):
+    """Load normalized in-progress discovery session, or None."""
+    from app.opportunity_intel.discovery_session import (
+        DiscoverySession,
+        session_from_normalized_dict,
+    )
+
+    apply_resumable_discovery_migration(settings)
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM opportunity_discovery_sessions
+            WHERE slot_key = 'active'
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    payload = {
+        "session_id": row["session_id"],
+        "version": int(row["session_version"]),
+        "state": row["state"],
+        "started_at": row["started_at"],
+        "expires_at": row["expires_at"],
+        "next_cursor": row["next_cursor"],
+        "seen_cursors": json.loads(row["seen_cursors_json"]),
+        "pages_completed": int(row["pages_completed"]),
+        "attempts_used": int(row["attempts_used"]),
+        "markets": json.loads(row["markets_json"]),
+        "seen_event_ids": json.loads(row["seen_event_ids_json"]),
+        "seen_market_ids": json.loads(row["seen_market_ids_json"]),
+        "seen_condition_ids": json.loads(row["seen_condition_ids_json"]),
+        "seen_asset_ids": json.loads(row["seen_asset_ids_json"]),
+        "diagnostics": json.loads(row["diagnostics_json"]),
+        "updated_at": row["updated_at"],
+    }
+    session = session_from_normalized_dict(payload)
+    assert isinstance(session, DiscoverySession)
+    return session
+
+
+def save_discovery_session(settings: Settings, session) -> None:
+    from app.opportunity_intel.discovery_session import session_to_normalized_dict
+
+    apply_resumable_discovery_migration(settings)
+    payload = session_to_normalized_dict(session)
+    with _opportunity_connection(settings) as connection:
+        connection.execute(
+            """
+            INSERT INTO opportunity_discovery_sessions (
+                slot_key, session_id, session_version, state,
+                started_at, expires_at, updated_at, next_cursor,
+                seen_cursors_json, pages_completed, attempts_used,
+                markets_json, seen_event_ids_json, seen_market_ids_json,
+                seen_condition_ids_json, seen_asset_ids_json, diagnostics_json
+            ) VALUES (
+                'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            ON CONFLICT(slot_key) DO UPDATE SET
+                session_id = excluded.session_id,
+                session_version = excluded.session_version,
+                state = excluded.state,
+                started_at = excluded.started_at,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at,
+                next_cursor = excluded.next_cursor,
+                seen_cursors_json = excluded.seen_cursors_json,
+                pages_completed = excluded.pages_completed,
+                attempts_used = excluded.attempts_used,
+                markets_json = excluded.markets_json,
+                seen_event_ids_json = excluded.seen_event_ids_json,
+                seen_market_ids_json = excluded.seen_market_ids_json,
+                seen_condition_ids_json = excluded.seen_condition_ids_json,
+                seen_asset_ids_json = excluded.seen_asset_ids_json,
+                diagnostics_json = excluded.diagnostics_json
+            """,
+            (
+                payload["session_id"],
+                int(payload["version"]),
+                payload["state"],
+                payload["started_at"],
+                payload["expires_at"],
+                payload["updated_at"],
+                payload["next_cursor"],
+                json.dumps(payload["seen_cursors"], separators=(",", ":")),
+                int(payload["pages_completed"]),
+                int(payload["attempts_used"]),
+                json.dumps(payload["markets"], separators=(",", ":")),
+                json.dumps(payload["seen_event_ids"], separators=(",", ":")),
+                json.dumps(payload["seen_market_ids"], separators=(",", ":")),
+                json.dumps(payload["seen_condition_ids"], separators=(",", ":")),
+                json.dumps(payload["seen_asset_ids"], separators=(",", ":")),
+                json.dumps(payload["diagnostics"], separators=(",", ":")),
+            ),
+        )
+
+
+def clear_discovery_session(settings: Settings, session_id: str | None = None) -> None:
+    apply_resumable_discovery_migration(settings)
+    with _opportunity_connection(settings) as connection:
+        if session_id is None:
+            connection.execute("DELETE FROM opportunity_discovery_sessions")
+            return
+        connection.execute(
+            """
+            DELETE FROM opportunity_discovery_sessions
+            WHERE slot_key = 'active' AND session_id = ?
+            """,
+            (session_id,),
+        )
+
+
+class SqliteDiscoverySessionStore:
+    """Restart-safe discovery session adapter (normalized metadata only)."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    def load_active_session(self):
+        return load_active_discovery_session(self._settings)
+
+    def save_session(self, session) -> None:
+        save_discovery_session(self._settings, session)
+
+    def clear_session(self, session_id: str | None = None) -> None:
+        clear_discovery_session(self._settings, session_id)
 
 
 def _parse_market_row(row: sqlite3.Row) -> MarketStateRecord:

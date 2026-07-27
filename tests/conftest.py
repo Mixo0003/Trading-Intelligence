@@ -105,6 +105,7 @@ def make_test_settings(**overrides) -> Settings:
         opportunity_user_delivery_enabled=False,
         opportunity_scan_interval_seconds=120,
         opportunity_discovery_ttl_seconds=300,
+        opportunity_discovery_session_ttl_seconds=3600,
         opportunity_max_markets=100,
         opportunity_max_books_per_cycle=40,
         opportunity_max_live_books_per_cycle=10,

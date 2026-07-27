@@ -399,6 +399,17 @@ def build_retention_policies() -> tuple[RetentionPolicy, ...]:
             reason="Current Telegram scan cache (bounded current-state)",
         ),
         RetentionPolicy(
+            dataset="opportunity_discovery_sessions",
+            table="opportunity_discovery_sessions",
+            kind="APPROVED",
+            timestamp_column="expires_at",
+            retention_days=1,
+            batch_size=DEFAULT_FUTURE_BATCH_SIZE,
+            terminal_predicate="state IN ('PERMANENT_FAILURE', 'EXPIRED', 'COMPLETE')",
+            protected_exclusion_predicate="state IN ('NOT_STARTED', 'IN_PROGRESS', 'RETRYABLE_FAILURE')",
+            reason="Abandoned/expired resumable discovery sessions; active rebuilds protected",
+        ),
+        RetentionPolicy(
             dataset="opportunity_market_state",
             table="opportunity_market_state",
             kind="PROTECTED",

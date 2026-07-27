@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from app.config.settings import Settings
 from app.database import opportunity_storage
-from app.opportunity_intel.models import ScannerStatus
+from app.opportunity_intel.models import OpportunityDiagnosticCode, ScannerStatus
 from app.opportunity_intel.runtime import RUNTIME_BOT_DATA_KEY
 from app.opportunity_intel.discovery import ResultStatus
 
@@ -162,15 +162,38 @@ def evaluate_opportunity_health(
 
     discovery_status = str(runtime.get("discovery_status") or "")
     storage_failed = runtime.get("storage_ok") is False
+    discovery_in_progress = (
+        discovery_status == ResultStatus.IN_PROGRESS.value
+        or int((failure_categories or {}).get("discovery_in_progress") or 0) > 0
+        or OpportunityDiagnosticCode.DISCOVERY_IN_PROGRESS.value
+        in list(runtime.get("diagnostic_codes") or [])
+    )
     discovery_incomplete = (
         discovery_status
         in {
             ResultStatus.PERMANENT_FAILURE.value,
             ResultStatus.RETRYABLE_FAILURE.value,
+            ResultStatus.EXPIRED.value,
         }
         or int((failure_categories or {}).get("discovery_incomplete") or 0) > 0
     )
-    if storage_failed or (
+    if storage_failed:
+        return OpportunityHealthSnapshot(
+            state="DOWN",
+            detail="Opportunity discovery/storage unavailable",
+            metrics={**metrics, "opportunity_state": "DOWN"},
+        )
+    if discovery_in_progress and last_complete is None:
+        return OpportunityHealthSnapshot(
+            state="BASELINING",
+            detail="Opportunity discovery in progress across bounded cycles",
+            metrics={
+                **metrics,
+                "opportunity_state": "BASELINING",
+                "discovery_session_state": ResultStatus.IN_PROGRESS.value,
+            },
+        )
+    if (
         last_attempt is not None
         and last_complete is None
         and discovery_incomplete
@@ -185,7 +208,13 @@ def evaluate_opportunity_health(
         and last_complete is None
         and int(runtime.get("markets_discovered") or 0) == 0
         and discovery_status
-        and discovery_status != ResultStatus.COMPLETE.value
+        and discovery_status
+        not in {
+            ResultStatus.COMPLETE.value,
+            ResultStatus.IN_PROGRESS.value,
+            ResultStatus.NOT_STARTED.value,
+            "",
+        }
     ):
         return OpportunityHealthSnapshot(
             state="DOWN",

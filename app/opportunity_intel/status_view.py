@@ -56,8 +56,14 @@ def build_scanner_status_view(
     active_count = opportunity_storage.count_active_signals(settings)
 
     if state is None:
-        label = "Not initialized"
-        baseline = "Unknown"
+        runtime = opportunity_storage.load_runtime_snapshot(settings) or {}
+        discovery_status = str(runtime.get("discovery_status") or "")
+        if discovery_status == "IN_PROGRESS":
+            label = "Baselining"
+            baseline = "Discovery in progress"
+        else:
+            label = "Not initialized"
+            baseline = "Unknown"
         age = None
         last = None
     else:

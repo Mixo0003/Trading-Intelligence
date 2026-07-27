@@ -41,9 +41,12 @@ _CATEGORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 
 
 class ResultStatus(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    IN_PROGRESS = "IN_PROGRESS"
     COMPLETE = "COMPLETE"
     RETRYABLE_FAILURE = "RETRYABLE_FAILURE"
     PERMANENT_FAILURE = "PERMANENT_FAILURE"
+    EXPIRED = "EXPIRED"
 
 
 class GammaDiscoveryClient(Protocol):
@@ -111,6 +114,13 @@ class DiscoveryResult:
     completed_at: datetime | None
     from_cache: bool = False
     refresh_failure_status: ResultStatus | None = None
+    gamma_attempts_this_cycle: int = 0
+    gamma_attempts_cumulative: int = 0
+    pages_this_cycle: int = 0
+    pages_cumulative: int = 0
+    session_resumed: bool = False
+    session_id: str | None = None
+    session_state: ResultStatus | None = None
 
     @property
     def complete(self) -> bool:
@@ -126,13 +136,32 @@ def _failure(
     code: OpportunityDiagnosticCode,
     *,
     pages_fetched: int,
+    gamma_attempts_this_cycle: int = 0,
+    gamma_attempts_cumulative: int | None = None,
+    pages_this_cycle: int = 0,
+    pages_cumulative: int | None = None,
+    session_resumed: bool = False,
+    session_id: str | None = None,
 ) -> DiscoveryResult:
+    cumulative_attempts = (
+        pages_fetched
+        if gamma_attempts_cumulative is None
+        else gamma_attempts_cumulative
+    )
+    cumulative_pages = pages_fetched if pages_cumulative is None else pages_cumulative
     return DiscoveryResult(
         status=status,
         markets=(),
         diagnostics=(DiscoveryDiagnostic(code=code),),
         pages_fetched=pages_fetched,
         completed_at=None,
+        gamma_attempts_this_cycle=gamma_attempts_this_cycle,
+        gamma_attempts_cumulative=cumulative_attempts,
+        pages_this_cycle=pages_this_cycle or pages_fetched,
+        pages_cumulative=cumulative_pages,
+        session_resumed=session_resumed,
+        session_id=session_id,
+        session_state=status,
     )
 
 
@@ -189,12 +218,18 @@ def discover_complete_markets(
                 ResultStatus.PERMANENT_FAILURE,
                 OpportunityDiagnosticCode.GAMMA_BUDGET_EXHAUSTED,
                 pages_fetched=pages_fetched,
+                gamma_attempts_this_cycle=pages_fetched,
+                gamma_attempts_cumulative=pages_fetched,
             )
         except Exception as exc:
+            attempts = pages_fetched + 1
             return _failure(
                 _request_failure_status(exc),
                 OpportunityDiagnosticCode.DISCOVERY_PAGE_FAILED,
                 pages_fetched=pages_fetched,
+                gamma_attempts_this_cycle=attempts,
+                gamma_attempts_cumulative=attempts,
+                pages_this_cycle=attempts,
             )
         pages_fetched += 1
         if not isinstance(payload, dict) or not isinstance(
@@ -318,6 +353,11 @@ def discover_complete_markets(
         diagnostics=tuple(diagnostics),
         pages_fetched=pages_fetched,
         completed_at=completed_at,
+        gamma_attempts_this_cycle=pages_fetched,
+        gamma_attempts_cumulative=pages_fetched,
+        pages_this_cycle=pages_fetched,
+        pages_cumulative=pages_fetched,
+        session_state=ResultStatus.COMPLETE,
     )
 
 
@@ -635,13 +675,24 @@ def shortlist_outcomes(
 
 
 class CompleteDiscoveryCache:
-    """In-memory cache that accepts complete normalized universes only."""
+    """In-memory complete-universe cache plus resumable discovery session."""
 
-    def __init__(self, *, ttl_seconds: int = DISCOVERY_CACHE_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        ttl_seconds: int = DISCOVERY_CACHE_TTL_SECONDS,
+        session_ttl_seconds: int = 3600,
+        session_store: Any | None = None,
+    ) -> None:
         if ttl_seconds < 1:
             raise ValueError("ttl_seconds must be positive")
+        if session_ttl_seconds < 1:
+            raise ValueError("session_ttl_seconds must be positive")
         self.ttl_seconds = ttl_seconds
+        self.session_ttl_seconds = session_ttl_seconds
         self._complete: DiscoveryResult | None = None
+        self._session: Any | None = None
+        self._session_store = session_store
 
     def get(self, *, now: datetime) -> DiscoveryResult | None:
         if now.tzinfo is None or now.utcoffset() is None:
@@ -654,12 +705,33 @@ class CompleteDiscoveryCache:
             return None
         return replace(result, from_cache=True)
 
+    def _load_session(self) -> Any | None:
+        if self._session is not None:
+            return self._session
+        store = self._session_store
+        if store is None:
+            return None
+        loaded = store.load_active_session()
+        self._session = loaded
+        return loaded
+
+    def _save_session(self, session: Any | None) -> None:
+        self._session = session
+        store = self._session_store
+        if store is None:
+            return
+        if session is None:
+            store.clear_session()
+        else:
+            store.save_session(session)
+
     def refresh(
         self,
         fetch: Callable[[], DiscoveryResult],
         *,
         now: datetime,
     ) -> DiscoveryResult:
+        """One-shot refresh helper used by unit tests and non-resumable callers."""
         result = fetch()
         if result.complete:
             self._complete = replace(
@@ -667,6 +739,7 @@ class CompleteDiscoveryCache:
                 from_cache=False,
                 refresh_failure_status=None,
             )
+            self._save_session(None)
             return self._complete
         cached = self.get(now=now)
         if cached is not None:
@@ -674,6 +747,85 @@ class CompleteDiscoveryCache:
                 cached,
                 diagnostics=cached.diagnostics + result.diagnostics,
                 refresh_failure_status=result.status,
+                gamma_attempts_this_cycle=result.gamma_attempts_this_cycle,
+                gamma_attempts_cumulative=result.gamma_attempts_cumulative,
+                pages_this_cycle=result.pages_this_cycle,
+                pages_cumulative=result.pages_cumulative,
+                session_resumed=result.session_resumed,
+                session_id=result.session_id,
+                session_state=result.session_state,
+            )
+        return result
+
+    def advance_from_client(
+        self,
+        client: GammaDiscoveryClient,
+        *,
+        now: datetime,
+        max_attempts: int = 10,
+    ) -> DiscoveryResult:
+        """Resume or start discovery; publish COMPLETE universe only when finished."""
+        from app.opportunity_intel.discovery_session import advance_discovery_session
+
+        clock = _aware_utc(now, "now")
+        cached = self.get(now=clock)
+        session = self._load_session()
+        # Still-fresh COMPLETE with no rebuild in flight: serve cache only.
+        if cached is not None and session is None:
+            return cached
+
+        advanced = advance_discovery_session(
+            client,
+            session,
+            now=clock,
+            max_attempts=max_attempts,
+            ttl_seconds=self.session_ttl_seconds,
+        )
+        result = advanced.result
+        if advanced.published_complete and result.complete:
+            self._complete = replace(
+                result,
+                from_cache=False,
+                refresh_failure_status=None,
+            )
+            self._save_session(None)
+            return self._complete
+
+        if result.status in {
+            ResultStatus.IN_PROGRESS,
+            ResultStatus.RETRYABLE_FAILURE,
+        }:
+            self._save_session(advanced.session)
+            if cached is not None:
+                # Do not replace a still-fresh COMPLETE with partial progress.
+                return replace(
+                    cached,
+                    diagnostics=cached.diagnostics + result.diagnostics,
+                    refresh_failure_status=result.status,
+                    gamma_attempts_this_cycle=result.gamma_attempts_this_cycle,
+                    gamma_attempts_cumulative=result.gamma_attempts_cumulative,
+                    pages_this_cycle=result.pages_this_cycle,
+                    pages_cumulative=result.pages_cumulative,
+                    session_resumed=result.session_resumed,
+                    session_id=result.session_id,
+                    session_state=result.session_state,
+                )
+            return result
+
+        # Permanent / expired: drop incomplete session; keep fresh COMPLETE if any.
+        self._save_session(None)
+        if cached is not None:
+            return replace(
+                cached,
+                diagnostics=cached.diagnostics + result.diagnostics,
+                refresh_failure_status=result.status,
+                gamma_attempts_this_cycle=result.gamma_attempts_this_cycle,
+                gamma_attempts_cumulative=result.gamma_attempts_cumulative,
+                pages_this_cycle=result.pages_this_cycle,
+                pages_cumulative=result.pages_cumulative,
+                session_resumed=result.session_resumed,
+                session_id=result.session_id,
+                session_state=result.session_state,
             )
         return result
 

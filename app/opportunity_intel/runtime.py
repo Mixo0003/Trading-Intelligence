@@ -34,11 +34,35 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_BOT_DATA_KEY = "opportunity_runtime"
 
-# Process-local executor retained across timed-out cycles so worker threads are
-# not pretended-cancelled; futures stay tracked until they complete.
-_CYCLE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="opp-cycle")
+# Process-local dedicated Opportunity executor. Bounded, created once, never
+# shared with Copy/default asyncio executor work.
+_EXECUTOR_LOCK = threading.Lock()
+_CYCLE_EXECUTOR: ThreadPoolExecutor | None = None
+_OPPORTUNITY_EXECUTOR_MAX_WORKERS = 2
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_FUTURES: set[Future] = set()
+
+
+def get_opportunity_executor() -> ThreadPoolExecutor:
+    """Idempotent dedicated executor for Opportunity scanner cycles only."""
+    global _CYCLE_EXECUTOR
+    with _EXECUTOR_LOCK:
+        if _CYCLE_EXECUTOR is None:
+            _CYCLE_EXECUTOR = ThreadPoolExecutor(
+                max_workers=_OPPORTUNITY_EXECUTOR_MAX_WORKERS,
+                thread_name_prefix="opp-cycle",
+            )
+        return _CYCLE_EXECUTOR
+
+
+def shutdown_opportunity_executor(*, wait: bool = False) -> None:
+    """Test/helper shutdown. Production shutdown expires tokens instead."""
+    global _CYCLE_EXECUTOR
+    with _EXECUTOR_LOCK:
+        executor = _CYCLE_EXECUTOR
+        _CYCLE_EXECUTOR = None
+    if executor is not None:
+        executor.shutdown(wait=wait, cancel_futures=False)
 
 
 @dataclass(frozen=True)
@@ -106,7 +130,9 @@ def build_scanner_service(
     deadline_token: CycleDeadlineToken | None = None,
 ) -> OpportunityScannerService:
     cache = discovery_cache or CompleteDiscoveryCache(
-        ttl_seconds=settings.opportunity_discovery_ttl_seconds
+        ttl_seconds=settings.opportunity_discovery_ttl_seconds,
+        session_ttl_seconds=settings.opportunity_discovery_session_ttl_seconds,
+        session_store=opportunity_storage.SqliteDiscoverySessionStore(settings),
     )
     budget = request_budget or CycleRequestBudget(
         clob_cap=LOCAL_CLOB_REQUEST_CAP_PER_CYCLE,
@@ -185,6 +211,9 @@ def persist_runtime_snapshot(
                 "gamma_attempts_used": cycle.gamma_attempts_used,
                 "budget_exhausted_assets": cycle.budget_exhausted_assets,
                 "deadline_aborted_before_commit": cycle.deadline_aborted_before_commit,
+                "discovery_session_state": (
+                    cycle.discovery_status.value if cycle.discovery_status else None
+                ),
                 "failure_categories": _sanitize_failure_categories(
                     {**cycle.failure_counters, **result.failure_categories}
                 ),
@@ -259,6 +288,7 @@ def _finalize_successful_cycle(
         and cycle.storage_ok
         and cycle.discovery_status == ResultStatus.COMPLETE
         and OpportunityDiagnosticCode.DISCOVERY_INCOMPLETE not in diagnostics
+        and OpportunityDiagnosticCode.DISCOVERY_IN_PROGRESS not in diagnostics
         and OpportunityDiagnosticCode.STORAGE_FAILURE not in diagnostics
         and OpportunityDiagnosticCode.CYCLE_DEADLINE_EXCEEDED not in diagnostics
     )
@@ -364,7 +394,7 @@ def start_managed_cycle(
         clob_cap=LOCAL_CLOB_REQUEST_CAP_PER_CYCLE,
         gamma_cap=LOCAL_GAMMA_REQUEST_CAP_PER_CYCLE,
     )
-    future = _CYCLE_EXECUTOR.submit(
+    future = get_opportunity_executor().submit(
         _execute_cycle,
         settings,
         clock=clock,

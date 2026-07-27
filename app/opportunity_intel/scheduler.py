@@ -122,8 +122,9 @@ async def market_opportunity_scan_job(context) -> None:
         handle: ManagedCycleHandle | None = None
         lock_released = False
         try:
-            started = await asyncio.to_thread(
-                start_managed_cycle,
+            # start_managed_cycle only submits to the dedicated Opportunity
+            # executor; keep that call on the event loop (non-blocking).
+            started = start_managed_cycle(
                 settings,
                 now=datetime.now(timezone.utc),
                 bot_data=context.application.bot_data,
@@ -139,6 +140,7 @@ async def market_opportunity_scan_job(context) -> None:
             handle = started
             context.application.bot_data[_ACTIVE_HANDLE_KEY] = handle
 
+            # Wait off the event loop without occupying the Opportunity worker pool.
             result = await asyncio.to_thread(await_managed_cycle, handle)
             if result.timed_out and not handle.future.done():
                 def _on_late(_fut) -> None:

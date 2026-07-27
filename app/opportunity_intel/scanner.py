@@ -29,7 +29,6 @@ from app.opportunity_intel.discovery import (
     DiscoveryResult,
     OutcomeCandidate,
     ResultStatus,
-    discover_complete_markets,
     shortlist_outcomes,
 )
 from app.opportunity_intel.episodes import (
@@ -203,15 +202,43 @@ class OpportunityScannerService:
         else:
             if self.gamma_client is None:
                 raise ValueError("gamma_client is required unless discovery_result is provided")
-            discovery = self.discovery_cache.refresh(
-                lambda: discover_complete_markets(
-                    self.gamma_client,
-                    now=current,
-                    max_pages=self.gamma_max_pages,
-                ),
+            discovery = self.discovery_cache.advance_from_client(
+                self.gamma_client,
                 now=current,
+                max_attempts=self.gamma_max_pages,
+            )
+        budget_snap = self.request_budget.snapshot()
+        gamma_used = max(
+            int(discovery.gamma_attempts_this_cycle),
+            int(budget_snap.gamma_attempts_used),
+        )
+        if discovery.status == ResultStatus.IN_PROGRESS:
+            return ScannerCycleResult(
+                cycle_id=cycle_id,
+                discovery_status=discovery.status,
+                markets_discovered=0,
+                outcomes_shortlisted=0,
+                histories_valid=0,
+                histories_failed=0,
+                books_valid=0,
+                books_failed=0,
+                observations_eligible=0,
+                observations_rejected=0,
+                baseline_advanced=0,
+                signals_created=0,
+                signals_materially_updated=0,
+                signals_expired=0,
+                storage_ok=True,
+                diagnostic_codes=(OpportunityDiagnosticCode.DISCOVERY_IN_PROGRESS,),
+                failure_counters={"discovery_in_progress": 1},
+                clob_attempts_used=budget_snap.clob_attempts_used,
+                gamma_attempts_used=gamma_used,
+                budget_exhausted_assets=budget_snap.clob_exhausted_count,
             )
         if not discovery.complete:
+            failure_code = OpportunityDiagnosticCode.DISCOVERY_INCOMPLETE
+            if discovery.diagnostics:
+                failure_code = discovery.diagnostics[0].code
             return ScannerCycleResult(
                 cycle_id=cycle_id,
                 discovery_status=discovery.status,
@@ -228,8 +255,11 @@ class OpportunityScannerService:
                 signals_materially_updated=0,
                 signals_expired=0,
                 storage_ok=True,
-                diagnostic_codes=(OpportunityDiagnosticCode.DISCOVERY_INCOMPLETE,),
+                diagnostic_codes=(failure_code,),
                 failure_counters={"discovery_incomplete": 1},
+                clob_attempts_used=budget_snap.clob_attempts_used,
+                gamma_attempts_used=gamma_used,
+                budget_exhausted_assets=budget_snap.clob_exhausted_count,
             )
 
         shortlist = shortlist_outcomes(
