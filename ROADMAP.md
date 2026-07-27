@@ -80,22 +80,26 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
   - `wallet_1` and `wallet_3`: complete public positions book cannot be proven inside the legal pagination window; snapshots preserved; alert paths fail-closed
   - See `docs/COPY_ALERTS.md`
 - [ ] **V2.2.3** Market Opportunity Scanner
-  - discover active Polymarket markets
-  - filter by liquidity, volume, and freshness
-  - detect meaningful price movement and spread
-  - inspect executable order-book depth
-  - rank opportunities
-  - send useful Telegram alerts or digests
-  - store signal history
-  - later measure post-signal outcomes
-  - remain read-only and paper-only
+  - **Implementation (Checkpoints 1–7) complete on `feature/v2.2.3-market-opportunity-scanner`.**
+  - **Checkpoint 8: documentation + full suite + release preparation.**
+  - Full suite (2026-07-27): **1213 passed, 2 skipped, 1 warning**; temp-DB migration PASS
+  - **Production migration: not performed.**
+  - **Live Telegram verification: pending.**
+  - **Not production GO and not released.**
+  - Public-data-only discovery / history / books; complete-discovery fail-closed
+  - Two-cycle baseline; canonical score v1; Normal + STRICT live
+  - Top Opportunities + deterministic cards; editable settings
+  - Same-wave admin/user delivery architecture; delivery worker
+  - Scheduler with timeout containment; shared CLOB budget 50; Gamma budget 10; health
+  - Additive migration `opportunity_intel_v1`; retention registration; defaults disabled
+  - See `docs/MARKET_OPPORTUNITY_SCANNER.md`
 - [ ] **V2.2.4** Trader Comparison
 - [ ] **V2.2.5** Paper Copy Portfolio
 - [ ] **V2.2.6** Full Polymarket Discovery and Market Normalization
 - [ ] **V2.2.7** Paper Arbitrage Intelligence
 - [ ] **V2.2.8** Notifications, Digest Mode and Final UX
 
-## Later (not started)
+## Later (not started) / V2.2.3 mandatory backlog
 
 - [ ] Large-wallet position-window support (deferred from V2.2.2)
 - [ ] Accounting-snapshot source research
@@ -105,7 +109,24 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
 - [ ] Optional AI Incident Explainer (sanitized, non-controlling)
 - [ ] Reduce / Close copy-alert intent (deferred from V2.2.2)
 - [ ] Multi-user / non-admin Copy subscriptions (deferred)
-- [ ] Live execution (explicitly out of scope until approved)
+- [ ] WebSocket streaming, reconnect, replay, and gap recovery
+- [ ] Faster / sub-minute live scanning
+- [ ] True short-window volume spikes
+- [ ] Trade-count reconstruction
+- [ ] Digest mode
+- [ ] Useful / Not useful feedback
+- [ ] Saved watchlists
+- [ ] Free/Pro entitlements
+- [ ] Payments
+- [ ] External forecasts
+- [ ] Fair-value models
+- [ ] AI/news explanations
+- [ ] Arbitrage Intelligence
+- [ ] Cross-market opportunities
+- [ ] Outcome-performance calibration
+- [ ] Scoring calibration from live data
+- [ ] Fully Decimal logarithmic scoring or explicit score-v1 reproducibility policy
+- [ ] Live execution / real trading (explicitly out of scope until approved)
 
 ## Product development gate
 
