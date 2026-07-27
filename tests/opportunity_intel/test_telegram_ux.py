@@ -65,6 +65,7 @@ def settings(tmp_path):
     value = make_test_settings(
         database_path=str(tmp_path / "opp_ux.db"),
         admin_ids=[1],
+        opportunity_scanner_enabled=True,
     )
     initialize_database(value)
     initialize_opportunity_schema(value)

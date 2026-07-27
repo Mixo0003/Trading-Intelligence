@@ -17,6 +17,7 @@ from app.opportunity_intel.models import (
     ObservationMode,
     OpportunityDiagnosticCode,
 )
+from app.opportunity_intel.request_budget import RequestBudgetExhausted
 from app.opportunity_intel.settings import (
     BALANCED_MINIMUM_24H_VOLUME_USD,
     BALANCED_MINIMUM_LIQUIDITY_USD,
@@ -183,6 +184,12 @@ def discover_complete_markets(
             params["after_cursor"] = cursor
         try:
             payload = client.get_json("/events/keyset", params=params)
+        except RequestBudgetExhausted:
+            return _failure(
+                ResultStatus.PERMANENT_FAILURE,
+                OpportunityDiagnosticCode.GAMMA_BUDGET_EXHAUSTED,
+                pages_fetched=pages_fetched,
+            )
         except Exception as exc:
             return _failure(
                 _request_failure_status(exc),

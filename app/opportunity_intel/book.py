@@ -16,9 +16,10 @@ from app.copy_intel.order_book import (
     ValidatedOrderBook,
     parse_validated_order_book,
 )
-from app.http.retry import get_with_retry, is_retryable_status
+from app.http.retry import get_with_retry, is_retryable_status, request_with_retry
 from app.opportunity_intel.discovery import ResultStatus
 from app.opportunity_intel.models import ObservationMode, OpportunityDiagnosticCode
+from app.opportunity_intel.request_budget import CycleRequestBudget, RequestBudgetExhausted
 from app.opportunity_intel.settings import (
     BALANCED_MAXIMUM_BOOK_AGE_SECONDS,
     STRICT_LIVE_MAXIMUM_BOOK_AGE_SECONDS,
@@ -193,6 +194,7 @@ class PublicOrderBookClient:
         base_url: str | None = None,
         request_get: Callable[..., requests.Response] = get_with_retry,
         timeout_seconds: int = BOOK_TIMEOUT_SECONDS,
+        request_budget: CycleRequestBudget | None = None,
     ) -> None:
         configured = (
             base_url
@@ -204,6 +206,7 @@ class PublicOrderBookClient:
         self.base_url = str(configured).rstrip("/")
         self.request_get = request_get
         self.timeout_seconds = int(timeout_seconds)
+        self.request_budget = request_budget
         if self.timeout_seconds < 1:
             raise ValueError("timeout_seconds must be positive")
 
@@ -217,16 +220,42 @@ class PublicOrderBookClient:
         url = f"{self.base_url}/book"
         request_count = 1
         try:
-            response = self.request_get(
-                url,
-                params={"token_id": asset_id},
-                headers={
-                    "User-Agent": "Trading Intelligence Bot",
-                    "Accept": "application/json",
-                },
-                timeout=self.timeout_seconds,
-            )
+            if self.request_budget is not None:
+
+                def _before(_attempt: int) -> None:
+                    assert self.request_budget is not None
+                    if not self.request_budget.try_consume_clob(1):
+                        raise RequestBudgetExhausted(kind="clob")
+
+                response = request_with_retry(
+                    "GET",
+                    url,
+                    params={"token_id": asset_id},
+                    headers={
+                        "User-Agent": "Trading Intelligence Bot",
+                        "Accept": "application/json",
+                    },
+                    timeout=self.timeout_seconds,
+                    before_attempt=_before,
+                )
+            else:
+                response = self.request_get(
+                    url,
+                    params={"token_id": asset_id},
+                    headers={
+                        "User-Agent": "Trading Intelligence Bot",
+                        "Accept": "application/json",
+                    },
+                    timeout=self.timeout_seconds,
+                )
             request_count = max(1, int(getattr(response, "request_count", 1) or 1))
+        except RequestBudgetExhausted:
+            return BookAdapterFailure(
+                status=ResultStatus.PERMANENT_FAILURE,
+                diagnostic_code=OpportunityDiagnosticCode.CLOB_BUDGET_EXHAUSTED,
+                request_count=request_count,
+                source_code="budget_exhausted",
+            )
         except (
             requests.exceptions.Timeout,
             requests.exceptions.ConnectionError,

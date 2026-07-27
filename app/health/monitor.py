@@ -471,6 +471,33 @@ def probe_infrastructure(settings: Settings) -> ComponentStatus:
     )
 
 
+def probe_opportunity_components(
+    settings: Settings, bot_data: dict | None = None
+) -> list[ComponentStatus]:
+    """Sanitized opportunity scanner components (disabled-by-default)."""
+    from app.opportunity_intel.health import (
+        component_status_for_opportunity,
+        evaluate_component_states,
+    )
+
+    snapshots = evaluate_component_states(settings, bot_data=bot_data)
+    components: list[ComponentStatus] = []
+    for name, snap in snapshots.items():
+        forced = component_status_for_opportunity(snap.state)
+        components.append(
+            _update_state(
+                settings,
+                name,
+                probe_ok=forced in {"HEALTHY", "DISABLED"},
+                detail=snap.detail,
+                metrics=snap.metrics,
+                forced_status=forced,
+                hard_down=forced == "DOWN",
+            )
+        )
+    return components
+
+
 def run_health_check(
     settings: Settings,
     *,
@@ -493,6 +520,7 @@ def run_health_check(
         probe_copy_intelligence(settings),
         probe_copy_readonly(settings),
         probe_infrastructure(settings),
+        *probe_opportunity_components(settings, bot_data=bot_data),
     ]
     overall = aggregate_overall(components)
     try:

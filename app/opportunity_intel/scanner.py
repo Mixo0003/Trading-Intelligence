@@ -52,6 +52,7 @@ from app.opportunity_intel.live_confirm import (
     confirm_strict_live_books,
     noop_delay,
 )
+from app.opportunity_intel.deadline import CycleDeadlineToken
 from app.opportunity_intel.models import (
     ObservationMode,
     OpportunityDiagnosticCode,
@@ -63,8 +64,11 @@ from app.opportunity_intel.observation import (
     ObservationRejected,
     build_canonical_observation,
 )
+from app.opportunity_intel.request_budget import CycleRequestBudget, RequestBudgetExhausted
 from app.opportunity_intel.versions import (
     BASELINE_VERSION,
+    LOCAL_CLOB_REQUEST_CAP_PER_CYCLE,
+    LOCAL_GAMMA_REQUEST_CAP_PER_CYCLE,
     OPPORTUNITY_SCORE_VERSION,
     SAFETY_POLICY_VERSION,
     SCANNER_HTTP_CONCURRENCY,
@@ -104,6 +108,22 @@ class ScannerCycleResult:
     asset_results: tuple[AssetEvaluationResult, ...] = ()
     diagnostic_codes: tuple[OpportunityDiagnosticCode, ...] = ()
     failure_counters: dict[str, int] = field(default_factory=dict)
+    delivery_signal_uids: tuple[str, ...] = ()
+    clob_attempts_used: int = 0
+    gamma_attempts_used: int = 0
+    budget_exhausted_assets: int = 0
+    deadline_aborted_before_commit: bool = False
+
+
+class _GammaBudgetClient:
+    def __init__(self, inner, budget: CycleRequestBudget) -> None:
+        self._inner = inner
+        self._budget = budget
+
+    def get_json(self, path: str, params: dict | None = None):
+        if not self._budget.try_consume_gamma(1):
+            raise RequestBudgetExhausted(kind="gamma")
+        return self._inner.get_json(path, params)
 
 
 class OpportunityScannerService:
@@ -120,15 +140,51 @@ class OpportunityScannerService:
         concurrency: int = SCANNER_HTTP_CONCURRENCY,
         live_confirm_delay_seconds: float = STRICT_LIVE_CONFIRM_DELAY_SECONDS,
         gamma_client=None,
+        max_markets: int | None = None,
+        max_books_per_cycle: int | None = None,
+        max_live_books_per_cycle: int | None = None,
+        gamma_max_pages: int | None = None,
+        request_budget: CycleRequestBudget | None = None,
+        deadline_token: CycleDeadlineToken | None = None,
     ) -> None:
         self.settings = settings
         self.discovery_cache = discovery_cache or CompleteDiscoveryCache()
-        self.history_client = history_client or PublicPriceHistoryClient(settings)
-        self.book_client = book_client or PublicOrderBookClient(settings)
+        self.request_budget = request_budget or CycleRequestBudget(
+            clob_cap=LOCAL_CLOB_REQUEST_CAP_PER_CYCLE,
+            gamma_cap=LOCAL_GAMMA_REQUEST_CAP_PER_CYCLE,
+        )
+        self.deadline_token = deadline_token
+        if history_client is not None:
+            self.history_client = history_client
+            if getattr(self.history_client, "request_budget", None) is None:
+                self.history_client.request_budget = self.request_budget
+        else:
+            self.history_client = PublicPriceHistoryClient(
+                settings, request_budget=self.request_budget
+            )
+        if book_client is not None:
+            self.book_client = book_client
+            if getattr(self.book_client, "request_budget", None) is None:
+                self.book_client.request_budget = self.request_budget
+        else:
+            self.book_client = PublicOrderBookClient(
+                settings, request_budget=self.request_budget
+            )
         self.delay = delay
-        self.concurrency = max(1, int(concurrency))
+        self.concurrency = max(1, min(5, int(concurrency)))
         self.live_confirm_delay_seconds = float(live_confirm_delay_seconds)
-        self.gamma_client = gamma_client
+        raw_gamma = gamma_client
+        self.gamma_client = (
+            None
+            if raw_gamma is None
+            else _GammaBudgetClient(raw_gamma, self.request_budget)
+        )
+        self.max_markets = max(1, min(100, int(max_markets or 100)))
+        self.max_books_per_cycle = max(1, min(40, int(max_books_per_cycle or 40)))
+        self.max_live_books_per_cycle = max(
+            1, min(10, int(max_live_books_per_cycle or 10))
+        )
+        self.gamma_max_pages = max(1, min(10, int(gamma_max_pages or 10)))
 
     def run_cycle(
         self,
@@ -148,7 +204,11 @@ class OpportunityScannerService:
             if self.gamma_client is None:
                 raise ValueError("gamma_client is required unless discovery_result is provided")
             discovery = self.discovery_cache.refresh(
-                lambda: discover_complete_markets(self.gamma_client, now=current),
+                lambda: discover_complete_markets(
+                    self.gamma_client,
+                    now=current,
+                    max_pages=self.gamma_max_pages,
+                ),
                 now=current,
             )
         if not discovery.complete:
@@ -176,7 +236,34 @@ class OpportunityScannerService:
             discovery.markets,
             now=current,
             strict_live_demand=strict_live_demand,
+            max_candidates=self.max_markets,
         )
+        shortlist, budget_skipped = self._apply_book_budgets(shortlist)
+        if self.deadline_token is not None and self.deadline_token.expired:
+            snap = self.request_budget.snapshot()
+            return ScannerCycleResult(
+                cycle_id=cycle_id,
+                discovery_status=ResultStatus.COMPLETE,
+                markets_discovered=len(discovery.markets),
+                outcomes_shortlisted=len(shortlist),
+                histories_valid=0,
+                histories_failed=0,
+                books_valid=0,
+                books_failed=0,
+                observations_eligible=0,
+                observations_rejected=0,
+                baseline_advanced=0,
+                signals_created=0,
+                signals_materially_updated=0,
+                signals_expired=0,
+                storage_ok=False,
+                diagnostic_codes=(OpportunityDiagnosticCode.CYCLE_DEADLINE_EXCEEDED,),
+                failure_counters={"cycle_deadline": 1},
+                clob_attempts_used=snap.clob_attempts_used,
+                gamma_attempts_used=snap.gamma_attempts_used,
+                budget_exhausted_assets=snap.clob_exhausted_count,
+                deadline_aborted_before_commit=True,
+            )
         prior_states = {
             state.asset_id: state for state in load_all_market_states(self.settings)
         }
@@ -190,6 +277,8 @@ class OpportunityScannerService:
                 for candidate in shortlist
             }
             for future in as_completed(futures):
+                if self.deadline_token is not None and self.deadline_token.expired:
+                    break
                 candidate = futures[future]
                 evaluations.append((candidate, future.result()))
 
@@ -209,6 +298,8 @@ class OpportunityScannerService:
             "signals_expired": 0,
         }
         failure_counters: dict[str, int] = {}
+        if budget_skipped:
+            failure_counters["book_budget_skipped"] = budget_skipped
 
         for candidate, payload in evaluations:
             result, write = self._build_asset_write(
@@ -281,6 +372,37 @@ class OpportunityScannerService:
             updated_at=current,
         )
 
+        budget_snap = self.request_budget.snapshot()
+        if budget_snap.clob_exhausted_count:
+            failure_counters["clob_budget_exhausted"] = budget_snap.clob_exhausted_count
+
+        if self.deadline_token is not None and self.deadline_token.expired:
+            # Cooperative stop before opening the SQLite write transaction.
+            return ScannerCycleResult(
+                cycle_id=cycle_id,
+                discovery_status=ResultStatus.COMPLETE,
+                markets_discovered=len(discovery.markets),
+                outcomes_shortlisted=len(shortlist),
+                histories_valid=counters["histories_valid"],
+                histories_failed=counters["histories_failed"],
+                books_valid=counters["books_valid"],
+                books_failed=counters["books_failed"],
+                observations_eligible=counters["observations_eligible"],
+                observations_rejected=counters["observations_rejected"],
+                baseline_advanced=0,
+                signals_created=0,
+                signals_materially_updated=0,
+                signals_expired=0,
+                storage_ok=False,
+                asset_results=tuple(asset_results),
+                diagnostic_codes=(OpportunityDiagnosticCode.CYCLE_DEADLINE_EXCEEDED,),
+                failure_counters={**failure_counters, "cycle_deadline": 1},
+                clob_attempts_used=budget_snap.clob_attempts_used,
+                gamma_attempts_used=budget_snap.gamma_attempts_used,
+                budget_exhausted_assets=budget_snap.clob_exhausted_count,
+                deadline_aborted_before_commit=True,
+            )
+
         storage_ok = True
         try:
             commit_scanner_cycle(
@@ -311,7 +433,15 @@ class OpportunityScannerService:
                 asset_results=tuple(asset_results),
                 diagnostic_codes=(OpportunityDiagnosticCode.STORAGE_FAILURE,),
                 failure_counters=failure_counters,
+                clob_attempts_used=budget_snap.clob_attempts_used,
+                gamma_attempts_used=budget_snap.gamma_attempts_used,
+                budget_exhausted_assets=budget_snap.clob_exhausted_count,
             )
+
+        delivery_uids: list[str] = []
+        for write in writes:
+            for signal in write.signals_to_insert:
+                delivery_uids.append(signal.opportunity_uid)
 
         return ScannerCycleResult(
             cycle_id=cycle_id,
@@ -331,7 +461,47 @@ class OpportunityScannerService:
             storage_ok=storage_ok,
             asset_results=tuple(asset_results),
             failure_counters=failure_counters,
+            delivery_signal_uids=tuple(delivery_uids),
+            clob_attempts_used=budget_snap.clob_attempts_used,
+            gamma_attempts_used=budget_snap.gamma_attempts_used,
+            budget_exhausted_assets=budget_snap.clob_exhausted_count,
         )
+
+    def _apply_book_budgets(
+        self, shortlist: tuple[OutcomeCandidate, ...]
+    ) -> tuple[tuple[OutcomeCandidate, ...], int]:
+        """Cap normal/live book finalists; never silently exceed CLOB book budget.
+
+        Each LIVE_STRICT finalist requires two book snapshots (confirm). Combined
+        book fetches are hard-capped at LOCAL_CLOB_REQUEST_CAP_PER_CYCLE.
+        """
+        from app.opportunity_intel.versions import LOCAL_CLOB_REQUEST_CAP_PER_CYCLE
+
+        kept: list[OutcomeCandidate] = []
+        normal_kept = 0
+        live_kept = 0
+        skipped = 0
+        for candidate in shortlist:
+            if candidate.mode == ObservationMode.LIVE_STRICT:
+                if live_kept >= self.max_live_books_per_cycle:
+                    skipped += 1
+                    continue
+                projected = normal_kept + 2 * (live_kept + 1)
+                if projected > LOCAL_CLOB_REQUEST_CAP_PER_CYCLE:
+                    skipped += 1
+                    continue
+                live_kept += 1
+            else:
+                if normal_kept >= self.max_books_per_cycle:
+                    skipped += 1
+                    continue
+                projected = (normal_kept + 1) + 2 * live_kept
+                if projected > LOCAL_CLOB_REQUEST_CAP_PER_CYCLE:
+                    skipped += 1
+                    continue
+                normal_kept += 1
+            kept.append(candidate)
+        return tuple(kept), skipped
 
     def _evaluate_candidate(
         self, candidate: OutcomeCandidate, now: datetime

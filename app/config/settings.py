@@ -98,6 +98,24 @@ def _parse_bool(value: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _parse_bounded_int(
+    raw: str | None,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+    name: str,
+) -> int:
+    text = default if raw is None or str(raw).strip() == "" else str(raw).strip()
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
 def _split_regions(value: str) -> list:
     from app.region.types import ScanRegion, parse_scan_region
 
@@ -210,6 +228,18 @@ class Settings:
     weather_discovery_cache_ttl_seconds: int
     weather_scan_concurrency: int
     weather_scan_deadline_seconds: int
+
+    opportunity_scanner_enabled: bool
+    opportunity_auto_alerts_enabled: bool
+    opportunity_user_delivery_enabled: bool
+    opportunity_scan_interval_seconds: int
+    opportunity_discovery_ttl_seconds: int
+    opportunity_max_markets: int
+    opportunity_max_books_per_cycle: int
+    opportunity_max_live_books_per_cycle: int
+    opportunity_concurrency: int
+    opportunity_cycle_deadline_seconds: int
+    opportunity_first_run_delay_seconds: int
 
     @property
     def scheduled_reports_configured(self) -> bool:
@@ -541,5 +571,70 @@ def load_settings() -> Settings:
                 str(STORAGE_RETENTION_PRUNE_STOP_ON_POLICY_FAILURE).lower(),
             ),
             default=STORAGE_RETENTION_PRUNE_STOP_ON_POLICY_FAILURE,
+        ),
+        opportunity_scanner_enabled=_parse_bool(
+            os.getenv("OPPORTUNITY_SCANNER_ENABLED", "false")
+        ),
+        opportunity_auto_alerts_enabled=_parse_bool(
+            os.getenv("OPPORTUNITY_AUTO_ALERTS_ENABLED", "false")
+        ),
+        opportunity_user_delivery_enabled=_parse_bool(
+            os.getenv("OPPORTUNITY_USER_DELIVERY_ENABLED", "false")
+        ),
+        opportunity_scan_interval_seconds=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_SCAN_INTERVAL_SECONDS"),
+            default=120,
+            minimum=30,
+            maximum=3600,
+            name="OPPORTUNITY_SCAN_INTERVAL_SECONDS",
+        ),
+        opportunity_discovery_ttl_seconds=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_DISCOVERY_TTL_SECONDS"),
+            default=300,
+            minimum=30,
+            maximum=3600,
+            name="OPPORTUNITY_DISCOVERY_TTL_SECONDS",
+        ),
+        opportunity_max_markets=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_MAX_MARKETS"),
+            default=100,
+            minimum=1,
+            maximum=100,
+            name="OPPORTUNITY_MAX_MARKETS",
+        ),
+        opportunity_max_books_per_cycle=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_MAX_BOOKS_PER_CYCLE"),
+            default=40,
+            minimum=1,
+            maximum=40,
+            name="OPPORTUNITY_MAX_BOOKS_PER_CYCLE",
+        ),
+        opportunity_max_live_books_per_cycle=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_MAX_LIVE_BOOKS_PER_CYCLE"),
+            default=10,
+            minimum=1,
+            maximum=10,
+            name="OPPORTUNITY_MAX_LIVE_BOOKS_PER_CYCLE",
+        ),
+        opportunity_concurrency=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_CONCURRENCY"),
+            default=5,
+            minimum=1,
+            maximum=5,
+            name="OPPORTUNITY_CONCURRENCY",
+        ),
+        opportunity_cycle_deadline_seconds=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_CYCLE_DEADLINE_SECONDS"),
+            default=75,
+            minimum=15,
+            maximum=300,
+            name="OPPORTUNITY_CYCLE_DEADLINE_SECONDS",
+        ),
+        opportunity_first_run_delay_seconds=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_FIRST_RUN_DELAY_SECONDS"),
+            default=30,
+            minimum=0,
+            maximum=600,
+            name="OPPORTUNITY_FIRST_RUN_DELAY_SECONDS",
         ),
     )

@@ -12,9 +12,10 @@ from typing import Any, Callable, Iterable
 import requests
 
 from app.config.settings import Settings
-from app.http.retry import get_with_retry, is_retryable_status
+from app.http.retry import get_with_retry, is_retryable_status, request_with_retry
 from app.opportunity_intel.discovery import ResultStatus
 from app.opportunity_intel.models import ObservationMode, OpportunityDiagnosticCode
+from app.opportunity_intel.request_budget import CycleRequestBudget, RequestBudgetExhausted
 from app.opportunity_intel.settings import (
     NORMAL_HISTORY_15M_TOLERANCE_SECONDS,
     NORMAL_HISTORY_1H_TOLERANCE_SECONDS,
@@ -103,6 +104,7 @@ class PublicPriceHistoryClient:
         base_url: str | None = None,
         request_get: Callable[..., requests.Response] = get_with_retry,
         timeout_seconds: int = HISTORY_TIMEOUT_SECONDS,
+        request_budget: CycleRequestBudget | None = None,
     ) -> None:
         configured = (
             base_url
@@ -114,6 +116,7 @@ class PublicPriceHistoryClient:
         self.base_url = str(configured).rstrip("/")
         self.request_get = request_get
         self.timeout_seconds = int(timeout_seconds)
+        self.request_budget = request_budget
         if self.timeout_seconds < 1:
             raise ValueError("timeout_seconds must be positive")
 
@@ -134,24 +137,50 @@ class PublicPriceHistoryClient:
         end = _utc_timestamp(end_at, "end_at")
         if start >= end:
             raise ValueError("start_at must be before end_at")
+        url = f"{self.base_url}/prices-history"
+        params = {
+            "market": asset_id,
+            "startTs": int(start.timestamp()),
+            "endTs": int(end.timestamp()),
+            "fidelity": 1,
+        }
+        headers = {
+            "User-Agent": "Trading Intelligence Bot",
+            "Accept": "application/json",
+        }
         try:
-            response = self.request_get(
-                f"{self.base_url}/prices-history",
-                params={
-                    "market": asset_id,
-                    "startTs": int(start.timestamp()),
-                    "endTs": int(end.timestamp()),
-                    "fidelity": 1,
-                },
-                headers={
-                    "User-Agent": "Trading Intelligence Bot",
-                    "Accept": "application/json",
-                },
-                timeout=self.timeout_seconds,
-            )
+            if self.request_budget is not None:
+
+                def _before(_attempt: int) -> None:
+                    assert self.request_budget is not None
+                    if not self.request_budget.try_consume_clob(1):
+                        raise RequestBudgetExhausted(kind="clob")
+
+                response = request_with_retry(
+                    "GET",
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                    before_attempt=_before,
+                )
+            else:
+                response = self.request_get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                )
             status_code = int(response.status_code)
             response.raise_for_status()
             payload = response.json()
+        except RequestBudgetExhausted:
+            return _history_failure(
+                asset_id=asset_id,
+                status=ResultStatus.PERMANENT_FAILURE,
+                code=OpportunityDiagnosticCode.CLOB_BUDGET_EXHAUSTED,
+                category="budget",
+            )
         except (
             requests.exceptions.Timeout,
             requests.exceptions.ConnectionError,

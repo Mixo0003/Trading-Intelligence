@@ -28,6 +28,29 @@ def build_scanner_status_view(
     settings: Settings, *, now: datetime | None = None
 ) -> ScannerStatusView:
     clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if not settings.opportunity_scanner_enabled:
+        return ScannerStatusView(
+            label="Disabled",
+            last_complete_cycle_at=None,
+            cache_age_seconds=None,
+            baseline_label="Not started",
+            active_opportunity_count=0,
+            user_delivery_globally_available=False,
+            text="\n".join(
+                [
+                    "Scanner Status",
+                    "",
+                    "State: Disabled",
+                    "Baseline: Not started",
+                    "Active opportunities: 0",
+                    "Automatic user delivery: not available globally",
+                    "",
+                    "This view uses persisted scanner state only.",
+                    "It does not place trades or refresh market data.",
+                ]
+            ),
+        )
+
     state = opportunity_storage.load_scanner_state(settings)
     gates = opportunity_storage.load_delivery_gates(settings)
     active_count = opportunity_storage.count_active_signals(settings)
@@ -67,7 +90,9 @@ def build_scanner_status_view(
         else:
             baseline = "Incomplete"
 
-    user_gate = bool(gates.user_delivery_enabled)
+    user_gate = bool(gates.user_delivery_enabled) or bool(
+        settings.opportunity_user_delivery_enabled
+    )
     lines = [
         "Scanner Status",
         "",

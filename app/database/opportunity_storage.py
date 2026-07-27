@@ -262,6 +262,15 @@ def _ensure_delivery_foundations(connection: sqlite3.Connection) -> None:
         ON opportunity_deliveries(telegram_id, status, updated_at)
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_runtime_status (
+            status_key TEXT PRIMARY KEY CHECK(status_key = 'runtime'),
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -1823,6 +1832,113 @@ def list_expired_claims(
             (now_iso, limit),
         ).fetchall()
     return tuple(_parse_delivery_row(row) for row in rows)
+
+
+def list_pending_deliveries(
+    settings: Settings,
+    *,
+    limit: int = 50,
+    max_attempts: int = 3,
+) -> tuple[OpportunityDelivery, ...]:
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_deliveries
+            WHERE status = 'pending'
+              AND attempt_count < ?
+            ORDER BY updated_at ASC
+            LIMIT ?
+            """,
+            (max_attempts, limit),
+        ).fetchall()
+    return tuple(_parse_delivery_row(row) for row in rows)
+
+
+def list_delivery_worker_batch(
+    settings: Settings,
+    *,
+    now: datetime,
+    limit: int = 20,
+    max_attempts: int = 3,
+) -> tuple[OpportunityDelivery, ...]:
+    """Bounded PENDING + due RETRY_WAIT + expired CLAIMED rows without duplicates."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    remaining = int(limit)
+    selected: list[OpportunityDelivery] = []
+    seen: set[tuple[int, str]] = set()
+
+    def _extend(rows: tuple[OpportunityDelivery, ...]) -> None:
+        nonlocal remaining
+        for row in rows:
+            if remaining <= 0:
+                return
+            key = (row.telegram_id, row.opportunity_uid)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(row)
+            remaining -= 1
+
+    _extend(list_pending_deliveries(settings, limit=remaining, max_attempts=max_attempts))
+    if remaining > 0:
+        _extend(
+            list_due_delivery_retries(
+                settings, now=now, limit=remaining, max_attempts=max_attempts
+            )
+        )
+    if remaining > 0:
+        _extend(list_expired_claims(settings, now=now, limit=remaining))
+    return tuple(selected)
+
+
+def count_deliveries_by_status(settings: Settings) -> dict[str, int]:
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT status, COUNT(*) AS n
+            FROM opportunity_deliveries
+            GROUP BY status
+            """
+        ).fetchall()
+    return {str(row["status"]): int(row["n"]) for row in rows}
+
+
+def save_runtime_snapshot(settings: Settings, payload: dict[str, Any]) -> None:
+    """Persist sanitized runtime counters for health/status (no secrets/paths)."""
+    with _opportunity_connection(settings) as connection:
+        _ensure_delivery_foundations(connection)
+        connection.execute(
+            """
+            INSERT INTO opportunity_runtime_status (
+                status_key, payload_json, updated_at
+            ) VALUES ('runtime', ?, ?)
+            ON CONFLICT(status_key) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                _iso(_now()),
+            ),
+        )
+
+
+def load_runtime_snapshot(settings: Settings) -> dict[str, Any] | None:
+    with _opportunity_connection(settings) as connection:
+        _ensure_delivery_foundations(connection)
+        row = connection.execute(
+            """
+            SELECT payload_json FROM opportunity_runtime_status
+            WHERE status_key = 'runtime'
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    payload = json.loads(row["payload_json"])
+    if not isinstance(payload, dict):
+        return None
+    return payload
 
 
 def _parse_market_row(row: sqlite3.Row) -> MarketStateRecord:

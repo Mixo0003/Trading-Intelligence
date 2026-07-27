@@ -100,6 +100,17 @@ def make_test_settings(**overrides) -> Settings:
         storage_retention_prune_lock_ttl_seconds=300,
         storage_retention_prune_confirm_ttl_seconds=120,
         storage_retention_prune_stop_on_policy_failure=True,
+        opportunity_scanner_enabled=False,
+        opportunity_auto_alerts_enabled=False,
+        opportunity_user_delivery_enabled=False,
+        opportunity_scan_interval_seconds=120,
+        opportunity_discovery_ttl_seconds=300,
+        opportunity_max_markets=100,
+        opportunity_max_books_per_cycle=40,
+        opportunity_max_live_books_per_cycle=10,
+        opportunity_concurrency=5,
+        opportunity_cycle_deadline_seconds=75,
+        opportunity_first_run_delay_seconds=30,
     )
     base.update(overrides)
     return Settings(**base)
