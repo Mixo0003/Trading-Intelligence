@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from collections.abc import Iterable
 from typing import Any, Protocol
 
 from app.opportunity_intel.discovery import (
@@ -27,7 +28,11 @@ from app.opportunity_intel.request_budget import RequestBudgetExhausted
 from app.opportunity_intel.versions import LOCAL_GAMMA_REQUEST_CAP_PER_CYCLE
 
 DISCOVERY_SESSION_VERSION = 1
-DEFAULT_DISCOVERY_SESSION_TTL_SECONDS = 3600
+DEFAULT_DISCOVERY_SESSION_TTL_SECONDS = 21600
+# Per-page normalization rejections are informational only; fatal codes return
+# immediately. Bound them so a multi-hundred-page session cannot rewrite a
+# multi-megabyte JSON blob on every cycle.
+MAX_SESSION_DIAGNOSTICS = 200
 
 
 class DiscoverySessionStore(Protocol):
@@ -223,6 +228,17 @@ def session_from_normalized_dict(payload: dict[str, Any]) -> DiscoverySession:
         ),
         updated_at=datetime.fromisoformat(str(payload["updated_at"])),
     )
+
+
+def _record_diagnostics(
+    diagnostics: list[DiscoveryDiagnostic],
+    new_items: Iterable[DiscoveryDiagnostic],
+) -> None:
+    """Append informational diagnostics up to the bounded session limit."""
+    for item in new_items:
+        if len(diagnostics) >= MAX_SESSION_DIAGNOSTICS:
+            return
+        diagnostics.append(item)
 
 
 def _failure_result(
@@ -500,10 +516,13 @@ def advance_discovery_session(
             raw_event_id = raw_event.get("id")
             event_id = _validated_identifier(raw_event_id)
             if event_id is None:
-                diagnostics.append(
-                    DiscoveryDiagnostic(
-                        code=OpportunityDiagnosticCode.MARKET_IDENTITY_INVALID
-                    )
+                _record_diagnostics(
+                    diagnostics,
+                    (
+                        DiscoveryDiagnostic(
+                            code=OpportunityDiagnosticCode.MARKET_IDENTITY_INVALID
+                        ),
+                    ),
                 )
                 continue
             if event_id in seen_events:
@@ -558,7 +577,7 @@ def advance_discovery_session(
                     attempts_this_cycle=attempts_this_cycle,
                     published_complete=False,
                 )
-            diagnostics.extend(event_diagnostics)
+            _record_diagnostics(diagnostics, event_diagnostics)
             for market in event_markets:
                 if (
                     market.market_id in seen_markets

@@ -234,6 +234,7 @@ class Settings:
     opportunity_user_delivery_enabled: bool
     opportunity_scan_interval_seconds: int
     opportunity_discovery_ttl_seconds: int
+    opportunity_catalog_ttl_seconds: int
     opportunity_discovery_session_ttl_seconds: int
     opportunity_max_markets: int
     opportunity_max_books_per_cycle: int
@@ -596,9 +597,16 @@ def load_settings() -> Settings:
             maximum=3600,
             name="OPPORTUNITY_DISCOVERY_TTL_SECONDS",
         ),
+        opportunity_catalog_ttl_seconds=_parse_bounded_int(
+            os.getenv("OPPORTUNITY_CATALOG_TTL_SECONDS"),
+            default=21600,
+            minimum=300,
+            maximum=86400,
+            name="OPPORTUNITY_CATALOG_TTL_SECONDS",
+        ),
         opportunity_discovery_session_ttl_seconds=_parse_bounded_int(
             os.getenv("OPPORTUNITY_DISCOVERY_SESSION_TTL_SECONDS"),
-            default=3600,
+            default=21600,
             minimum=60,
             maximum=86400,
             name="OPPORTUNITY_DISCOVERY_SESSION_TTL_SECONDS",

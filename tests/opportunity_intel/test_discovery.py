@@ -215,7 +215,7 @@ def test_page_cap_exhaustion_invalidates_universe():
 
 
 def test_failed_refresh_does_not_replace_complete_cache_and_expired_cache_rejects():
-    cache = CompleteDiscoveryCache()
+    cache = CompleteDiscoveryCache(ttl_seconds=300, catalog_ttl_seconds=600)
     complete = discover_complete_markets(
         _client({"events": [_event()], "next_cursor": None}),
         now=NOW,
@@ -233,7 +233,12 @@ def test_failed_refresh_does_not_replace_complete_cache_and_expired_cache_reject
     assert retained.status == ResultStatus.COMPLETE
     assert retained.from_cache is True
     assert retained.refresh_failure_status == ResultStatus.RETRYABLE_FAILURE
-    expired = cache.refresh(lambda: failure, now=NOW + timedelta(seconds=301))
+    # Soft discovery TTL exceeded, but catalog identity TTL still usable.
+    soft = cache.refresh(lambda: failure, now=NOW + timedelta(seconds=301))
+    assert soft.status == ResultStatus.COMPLETE
+    assert soft.refresh_failure_status == ResultStatus.RETRYABLE_FAILURE
+    # Hard catalog identity expiry drops the trusted universe.
+    expired = cache.refresh(lambda: failure, now=NOW + timedelta(seconds=601))
     assert expired.status == ResultStatus.RETRYABLE_FAILURE
     assert expired.markets == ()
 

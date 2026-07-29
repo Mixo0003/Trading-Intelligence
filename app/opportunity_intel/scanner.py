@@ -17,7 +17,9 @@ from app.database.opportunity_storage import (
     commit_scanner_cycle,
     load_active_signals_for_asset,
     load_all_market_states,
+    load_scanner_state,
     next_episode_sequence,
+    save_scanner_state,
 )
 from app.opportunity_intel.baseline import advance_baseline
 from app.opportunity_intel.book import (
@@ -25,6 +27,8 @@ from app.opportunity_intel.book import (
     PublicOrderBookClient,
 )
 from app.opportunity_intel.discovery import (
+    SHORTLIST_MAX_OUTCOMES,
+    SHORTLIST_STAGE_A_MULTIPLIER,
     CompleteDiscoveryCache,
     DiscoveryResult,
     OutcomeCandidate,
@@ -73,6 +77,37 @@ from app.opportunity_intel.versions import (
     SCANNER_HTTP_CONCURRENCY,
     STRICT_LIVE_CONFIRM_DELAY_SECONDS,
 )
+
+
+# Rejection reasons that still prove a complete, trustworthy observation: the
+# market simply does not qualify right now. Data-integrity, freshness, and
+# identity failures are absent here on purpose, so they cannot advance baseline.
+_NON_QUALIFYING_REJECTION_CODES = frozenset(
+    {
+        OpportunityDiagnosticCode.LIQUIDITY_TOO_LOW,
+        OpportunityDiagnosticCode.VOLUME_TOO_LOW,
+        OpportunityDiagnosticCode.SPREAD_TOO_WIDE,
+        OpportunityDiagnosticCode.SLIPPAGE_TOO_HIGH,
+        OpportunityDiagnosticCode.INSUFFICIENT_DEPTH,
+        OpportunityDiagnosticCode.MIDPOINT_OUT_OF_BOUNDS,
+        OpportunityDiagnosticCode.MOVEMENT_TRIGGER_MISSING,
+        OpportunityDiagnosticCode.SCORE_BELOW_FLOOR,
+    }
+)
+
+
+def observation_complete_below_floor(payload: dict) -> bool:
+    """True when history and book were complete but the market did not qualify."""
+    if not (payload.get("history_ok") and payload.get("book_ok")):
+        return False
+    result = payload.get("observation_result")
+    if not isinstance(result, ObservationRejected):
+        return False
+    if not result.diagnostic_codes:
+        return False
+    return all(
+        code in _NON_QUALIFYING_REJECTION_CODES for code in result.diagnostic_codes
+    )
 
 
 @dataclass(frozen=True)
@@ -213,6 +248,11 @@ class OpportunityScannerService:
             int(budget_snap.gamma_attempts_used),
         )
         if discovery.status == ResultStatus.IN_PROGRESS:
+            self._heartbeat_discovery_progress(
+                now=current,
+                discovery=discovery,
+                diagnostic=OpportunityDiagnosticCode.DISCOVERY_IN_PROGRESS,
+            )
             return ScannerCycleResult(
                 cycle_id=cycle_id,
                 discovery_status=discovery.status,
@@ -239,6 +279,11 @@ class OpportunityScannerService:
             failure_code = OpportunityDiagnosticCode.DISCOVERY_INCOMPLETE
             if discovery.diagnostics:
                 failure_code = discovery.diagnostics[0].code
+            self._heartbeat_discovery_progress(
+                now=current,
+                discovery=discovery,
+                diagnostic=failure_code,
+            )
             return ScannerCycleResult(
                 cycle_id=cycle_id,
                 discovery_status=discovery.status,
@@ -262,11 +307,15 @@ class OpportunityScannerService:
                 budget_exhausted_assets=budget_snap.clob_exhausted_count,
             )
 
+        stage_a_limit = min(
+            SHORTLIST_MAX_OUTCOMES,
+            max(self.max_markets * SHORTLIST_STAGE_A_MULTIPLIER, self.max_markets),
+        )
         shortlist = shortlist_outcomes(
             discovery.markets,
             now=current,
             strict_live_demand=strict_live_demand,
-            max_candidates=self.max_markets,
+            max_candidates=stage_a_limit,
         )
         shortlist, budget_skipped = self._apply_book_budgets(shortlist)
         if self.deadline_token is not None and self.deadline_token.expired:
@@ -297,22 +346,40 @@ class OpportunityScannerService:
         prior_states = {
             state.asset_id: state for state in load_all_market_states(self.settings)
         }
-        present_assets = {candidate.asset_id for candidate in shortlist}
 
-        # Phase 1: HTTP + pure evaluation (no SQLite write transaction held).
+        # Phase 1: evaluate Stage A candidates in rank order until enough
+        # observation-capable assets fill final tracked slots or budget ends.
         evaluations: list[tuple[OutcomeCandidate, dict]] = []
-        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
-            futures = {
-                pool.submit(self._evaluate_candidate, candidate, current): candidate
-                for candidate in shortlist
-            }
-            for future in as_completed(futures):
-                if self.deadline_token is not None and self.deadline_token.expired:
-                    break
-                candidate = futures[future]
-                evaluations.append((candidate, future.result()))
+        capable: list[tuple[OutcomeCandidate, dict]] = []
+        remaining = list(shortlist)
+        while remaining and len(capable) < self.max_markets:
+            if self.deadline_token is not None and self.deadline_token.expired:
+                break
+            batch = remaining[: self.concurrency]
+            remaining = remaining[self.concurrency :]
+            with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+                futures = {
+                    pool.submit(self._evaluate_candidate, candidate, current): candidate
+                    for candidate in batch
+                }
+                for future in as_completed(futures):
+                    if self.deadline_token is not None and self.deadline_token.expired:
+                        break
+                    candidate = futures[future]
+                    payload = future.result()
+                    evaluations.append((candidate, payload))
+                    if payload.get("history_ok") and payload.get("book_ok"):
+                        capable.append((candidate, payload))
 
-        # Phase 2: build write set from evaluations + prior state.
+        # Prefer observation-capable assets for final tracked slots.
+        selected = capable[: self.max_markets]
+        if not selected and evaluations:
+            # All candidates missing history/book: keep diagnostics only; do not
+            # fabricate observations. Leave selected empty so slots stay free.
+            selected = []
+        present_assets = {candidate.asset_id for candidate, _ in selected}
+
+        # Phase 2: build write set from selected capable evaluations + prior.
         writes: list[CycleAssetWrite] = []
         asset_results: list[AssetEvaluationResult] = []
         counters = {
@@ -332,6 +399,18 @@ class OpportunityScannerService:
             failure_counters["book_budget_skipped"] = budget_skipped
 
         for candidate, payload in evaluations:
+            if payload.get("history_ok"):
+                counters["histories_valid"] += 1
+            else:
+                counters["histories_failed"] += 1
+                failure_counters["history"] = failure_counters.get("history", 0) + 1
+            if payload.get("book_ok"):
+                counters["books_valid"] += 1
+            else:
+                counters["books_failed"] += 1
+                failure_counters["book"] = failure_counters.get("book", 0) + 1
+
+        for candidate, payload in selected:
             result, write = self._build_asset_write(
                 candidate=candidate,
                 payload=payload,
@@ -355,16 +434,6 @@ class OpportunityScannerService:
                 counters["signals_materially_updated"] += 1
             if result.signal_expired:
                 counters["signals_expired"] += 1
-            if payload.get("history_ok"):
-                counters["histories_valid"] += 1
-            else:
-                counters["histories_failed"] += 1
-                failure_counters["history"] = failure_counters.get("history", 0) + 1
-            if payload.get("book_ok"):
-                counters["books_valid"] += 1
-            else:
-                counters["books_failed"] += 1
-                failure_counters["book"] = failure_counters.get("book", 0) + 1
 
         # Absence resets for markets missing beyond window (no HTTP).
         for asset_id, prior in prior_states.items():
@@ -396,7 +465,7 @@ class OpportunityScannerService:
             score_version=OPPORTUNITY_SCORE_VERSION,
             global_baseline_cycles=min(2, min_global),
             discovery_complete=True,
-            last_complete_discovery_at=current,
+            last_complete_discovery_at=discovery.completed_at or current,
             last_complete_cycle_at=current,
             diagnostic_code=None,
             updated_at=current,
@@ -496,6 +565,77 @@ class OpportunityScannerService:
             gamma_attempts_used=budget_snap.gamma_attempts_used,
             budget_exhausted_assets=budget_snap.clob_exhausted_count,
         )
+
+    def _heartbeat_discovery_progress(
+        self,
+        *,
+        now: datetime,
+        discovery: DiscoveryResult,
+        diagnostic: OpportunityDiagnosticCode,
+    ) -> None:
+        """Persist progress heartbeat so IN_PROGRESS cycles are not stale."""
+        prior = load_scanner_state(self.settings)
+        # Do not invent scanner_state on permanent/incomplete failures with no
+        # prior state. IN_PROGRESS always heartbeats so health sees progress.
+        if (
+            discovery.status != ResultStatus.IN_PROGRESS
+            and prior is None
+            and discovery.refresh_failure_status != ResultStatus.IN_PROGRESS
+        ):
+            return
+        has_catalog = bool(discovery.markets) or (
+            prior is not None and prior.discovery_complete
+        )
+        refreshing = discovery.refresh_failure_status in {
+            ResultStatus.IN_PROGRESS,
+            ResultStatus.RETRYABLE_FAILURE,
+        } or discovery.status == ResultStatus.IN_PROGRESS
+        if prior is not None and prior.global_baseline_cycles >= 2 and has_catalog:
+            status = ScannerStatus.HEALTHY
+        else:
+            status = ScannerStatus.BASELINING
+        try:
+            save_scanner_state(
+                self.settings,
+                OpportunityScannerState(
+                    status=status,
+                    schema_version=(
+                        prior.schema_version if prior is not None else SCHEMA_VERSION
+                    ),
+                    baseline_version=(
+                        prior.baseline_version
+                        if prior is not None
+                        else BASELINE_VERSION
+                    ),
+                    score_version=(
+                        prior.score_version
+                        if prior is not None
+                        else OPPORTUNITY_SCORE_VERSION
+                    ),
+                    global_baseline_cycles=(
+                        prior.global_baseline_cycles if prior is not None else 0
+                    ),
+                    discovery_complete=has_catalog,
+                    last_complete_discovery_at=(
+                        discovery.completed_at
+                        if discovery.completed_at is not None
+                        else (
+                            prior.last_complete_discovery_at
+                            if prior is not None
+                            else None
+                        )
+                    ),
+                    last_complete_cycle_at=(
+                        prior.last_complete_cycle_at if prior is not None else None
+                    ),
+                    diagnostic_code=(
+                        diagnostic if refreshing or not has_catalog else None
+                    ),
+                    updated_at=now,
+                ),
+            )
+        except Exception:
+            return
 
     def _apply_book_budgets(
         self, shortlist: tuple[OutcomeCandidate, ...]
@@ -625,15 +765,11 @@ class OpportunityScannerService:
             outcome=candidate.outcome,
         )
         eligible = isinstance(observation_result, ObservationAccepted)
-        observation_valid = eligible or (
-            payload["history_ok"]
-            and payload["book_ok"]
-            and isinstance(observation_result, ObservationRejected)
-        )
-        # Valid observation for baseline = accepted OR rejected-with-complete inputs.
-        # Baseline requires "valid history/book/observation" — use accepted only for
-        # advancing, matching "valid observation required".
-        baseline_valid = eligible
+        complete_below_floor = observation_complete_below_floor(payload)
+        # Baseline measures data completeness over two consecutive cycles, not
+        # qualification: a complete history + book pair advances it even when the
+        # observation scores below the opportunity floor.
+        baseline_valid = eligible or complete_below_floor
 
         observed_at = now
         if eligible:
@@ -657,12 +793,6 @@ class OpportunityScannerService:
 
         active_signals = load_active_signals_for_asset(self.settings, candidate.asset_id)
         market_closed = candidate.end_at <= now
-        complete_below_floor = (
-            not eligible
-            and payload["history_ok"]
-            and payload["book_ok"]
-            and isinstance(observation_result, ObservationRejected)
-        )
 
         became_ready = baseline_decision.became_ready
         was_eligible = bool(prior.was_eligible_at_baseline) if prior else False

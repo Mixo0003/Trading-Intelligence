@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -42,11 +43,16 @@ from app.opportunity_intel.settings import (
 
 MIGRATION_ID = "opportunity_intel_v1"
 MIGRATION_ID_RESUMABLE_DISCOVERY = "opportunity_intel_v2_resumable_discovery"
+MIGRATION_ID_PERSISTED_CATALOG = "opportunity_intel_v3_persisted_catalog"
 SCHEMA_VERSION = 1
 SCHEMA_VERSION_RESUMABLE_DISCOVERY = 2
+SCHEMA_VERSION_PERSISTED_CATALOG = 3
+
+DEFAULT_CATALOG_RETENTION_VERSIONS = 3
 
 _MIGRATION_FAILPOINT_HOOK: Callable[[str], None] | None = None
 _V2_MIGRATION_FAILPOINT_HOOK: Callable[[str], None] | None = None
+_V3_MIGRATION_FAILPOINT_HOOK: Callable[[str], None] | None = None
 
 _TABLES = frozenset(
     {
@@ -127,6 +133,29 @@ class ResumableDiscoveryMigrationResult:
     applied_at: str | None
 
 
+@dataclass(frozen=True)
+class PersistedCatalogMigrationResult:
+    migration_id: str
+    already_applied: bool
+    table_present: bool
+    index_present: bool
+    applied_at: str | None
+
+
+@dataclass(frozen=True)
+class CatalogVersionRecord:
+    catalog_version_id: str
+    discovery_session_id: str | None
+    completed_at: datetime
+    published_at: datetime
+    market_count: int
+    tradeable_market_count: int
+    pages_completed: int
+    status: str
+    diagnostics: tuple[str, ...]
+    created_at: datetime
+
+
 @contextmanager
 def _opportunity_connection(
     settings: Settings,
@@ -160,11 +189,11 @@ def _v2_failpoint(point: str) -> None:
 
 
 def initialize_opportunity_schema(settings: Settings) -> OpportunityMigrationResult:
-    """Apply v1 then v2 in separate commits on one connection.
+    """Apply v1, v2, then v3 in separate commits on one connection.
 
-    Separate commits keep a failed v2 from rolling back a successful v1.
-    Using one connection also works for SQLite ``:memory:`` databases, which
-    are connection-scoped.
+    Separate commits keep a failed later migration from rolling back earlier
+    successful markers. Using one connection also works for SQLite ``:memory:``
+    databases, which are connection-scoped.
     """
     with _opportunity_connection(settings) as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -172,9 +201,14 @@ def initialize_opportunity_schema(settings: Settings) -> OpportunityMigrationRes
         connection.commit()
 
         connection.execute("BEGIN IMMEDIATE")
-        apply_result = _apply_resumable_discovery_on_connection(connection)
-        # Leave the successful v2 transaction for get_connection to commit.
-        _ = apply_result
+        apply_v2 = _apply_resumable_discovery_on_connection(connection)
+        connection.commit()
+        _ = apply_v2
+
+        connection.execute("BEGIN IMMEDIATE")
+        apply_v3 = _apply_persisted_catalog_on_connection(connection)
+        # Leave the successful v3 transaction for get_connection to commit.
+        _ = apply_v3
     return result
 
 
@@ -185,6 +219,15 @@ def apply_resumable_discovery_migration(
     with _opportunity_connection(settings) as connection:
         connection.execute("BEGIN IMMEDIATE")
         return _apply_resumable_discovery_on_connection(connection)
+
+
+def apply_persisted_catalog_migration(
+    settings: Settings,
+) -> PersistedCatalogMigrationResult:
+    """Additive v3 migration in its own transaction; never rolls back v1/v2."""
+    with _opportunity_connection(settings) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        return _apply_persisted_catalog_on_connection(connection)
 
 
 def _initialize_on_connection(
@@ -514,6 +557,437 @@ def is_resumable_discovery_migration_applied(settings: Settings) -> bool:
         except sqlite3.OperationalError:
             return False
         return row is not None
+
+
+_CATALOG_VERSIONS_TABLE = "opportunity_catalog_versions"
+_CATALOG_MARKETS_TABLE = "opportunity_catalog_markets"
+_CATALOG_VERSIONS_ACTIVE_INDEX = "idx_opportunity_catalog_versions_active"
+_CATALOG_MARKETS_VERSION_INDEX = "idx_opportunity_catalog_markets_version"
+_CATALOG_MARKETS_END_INDEX = "idx_opportunity_catalog_markets_end_at"
+_CATALOG_FORBIDDEN_COLUMNS = frozenset(
+    {
+        "raw_payload",
+        "raw_payload_json",
+        "gamma_payload",
+        "gamma_payload_json",
+        "page_payload",
+        "page_payload_json",
+        "events_json",
+        "raw_events_json",
+    }
+)
+
+
+def _v3_failpoint(point: str) -> None:
+    hook = _V3_MIGRATION_FAILPOINT_HOOK
+    if hook is not None:
+        hook(point)
+
+
+def _apply_persisted_catalog_on_connection(
+    connection: sqlite3.Connection,
+) -> PersistedCatalogMigrationResult:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_schema_migrations (
+            migration_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL CHECK(schema_version >= 1),
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    v1 = connection.execute(
+        """
+        SELECT 1 FROM opportunity_schema_migrations
+        WHERE migration_id = ?
+        """,
+        (MIGRATION_ID,),
+    ).fetchone()
+    if v1 is None:
+        raise OpportunityMigrationError(
+            "opportunity_intel_v1 must be applied before "
+            f"{MIGRATION_ID_PERSISTED_CATALOG}"
+        )
+    v2 = connection.execute(
+        """
+        SELECT 1 FROM opportunity_schema_migrations
+        WHERE migration_id = ?
+        """,
+        (MIGRATION_ID_RESUMABLE_DISCOVERY,),
+    ).fetchone()
+    if v2 is None:
+        raise OpportunityMigrationError(
+            "opportunity_intel_v2_resumable_discovery must be applied before "
+            f"{MIGRATION_ID_PERSISTED_CATALOG}"
+        )
+
+    existing = connection.execute(
+        """
+        SELECT applied_at
+        FROM opportunity_schema_migrations
+        WHERE migration_id = ?
+        """,
+        (MIGRATION_ID_PERSISTED_CATALOG,),
+    ).fetchone()
+    if existing is not None:
+        _validate_persisted_catalog_schema(connection)
+        return PersistedCatalogMigrationResult(
+            migration_id=MIGRATION_ID_PERSISTED_CATALOG,
+            already_applied=True,
+            table_present=True,
+            index_present=True,
+            applied_at=str(existing["applied_at"]),
+        )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_catalog_versions (
+            catalog_version_id TEXT PRIMARY KEY,
+            discovery_session_id TEXT,
+            completed_at TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            market_count INTEGER NOT NULL CHECK(market_count >= 0),
+            tradeable_market_count INTEGER NOT NULL
+                CHECK(tradeable_market_count >= 0),
+            pages_completed INTEGER NOT NULL CHECK(pages_completed >= 0),
+            status TEXT NOT NULL CHECK(
+                status IN ('ACTIVE', 'SUPERSEDED', 'EXPIRED')
+            ),
+            diagnostics_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    _v3_failpoint("after_versions_table")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_catalog_markets (
+            catalog_version_id TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            market_id TEXT NOT NULL,
+            condition_id TEXT NOT NULL,
+            event_slug TEXT NOT NULL,
+            question TEXT NOT NULL,
+            category_ids_json TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            liquidity_usd TEXT NOT NULL,
+            volume_24h_usd TEXT NOT NULL,
+            metadata_at TEXT NOT NULL,
+            end_at TEXT NOT NULL,
+            outcomes_json TEXT NOT NULL,
+            enable_order_book INTEGER NOT NULL
+                CHECK(enable_order_book IN (0, 1)),
+            accepting_orders INTEGER NOT NULL
+                CHECK(accepting_orders IN (0, 1)),
+            active INTEGER NOT NULL CHECK(active IN (0, 1)),
+            closed INTEGER NOT NULL CHECK(closed IN (0, 1)),
+            PRIMARY KEY (catalog_version_id, market_id),
+            FOREIGN KEY (catalog_version_id)
+                REFERENCES opportunity_catalog_versions(catalog_version_id)
+        )
+        """
+    )
+    _v3_failpoint("after_markets_table")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_opportunity_catalog_versions_active
+        ON opportunity_catalog_versions(status, published_at)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_opportunity_catalog_markets_version
+        ON opportunity_catalog_markets(catalog_version_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_opportunity_catalog_markets_end_at
+        ON opportunity_catalog_markets(catalog_version_id, end_at)
+        """
+    )
+    _v3_failpoint("after_indexes")
+    _validate_persisted_catalog_schema(connection)
+    _v3_failpoint("before_marker")
+    applied_at = _iso(_now())
+    connection.execute(
+        """
+        INSERT INTO opportunity_schema_migrations (
+            migration_id, schema_version, applied_at
+        ) VALUES (?, ?, ?)
+        """,
+        (
+            MIGRATION_ID_PERSISTED_CATALOG,
+            SCHEMA_VERSION_PERSISTED_CATALOG,
+            applied_at,
+        ),
+    )
+    return PersistedCatalogMigrationResult(
+        migration_id=MIGRATION_ID_PERSISTED_CATALOG,
+        already_applied=False,
+        table_present=True,
+        index_present=True,
+        applied_at=applied_at,
+    )
+
+
+def _validate_persisted_catalog_schema(connection: sqlite3.Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()
+    }
+    for table in (_CATALOG_VERSIONS_TABLE, _CATALOG_MARKETS_TABLE):
+        if table not in tables:
+            raise OpportunityMigrationError(f"missing table {table}")
+    for index in (
+        _CATALOG_VERSIONS_ACTIVE_INDEX,
+        _CATALOG_MARKETS_VERSION_INDEX,
+        _CATALOG_MARKETS_END_INDEX,
+    ):
+        if index not in indexes:
+            raise OpportunityMigrationError(f"missing index {index}")
+    for table in (_CATALOG_VERSIONS_TABLE, _CATALOG_MARKETS_TABLE):
+        columns = {
+            row[1]
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        forbidden = sorted(columns & _CATALOG_FORBIDDEN_COLUMNS)
+        if forbidden:
+            raise OpportunityMigrationError(
+                f"raw payload columns forbidden on {table}: {forbidden}"
+            )
+
+
+def is_persisted_catalog_migration_applied(settings: Settings) -> bool:
+    with _opportunity_connection(settings) as connection:
+        table = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'opportunity_schema_migrations'
+            """
+        ).fetchone()
+        if table is None:
+            return False
+        try:
+            row = connection.execute(
+                """
+                SELECT 1 FROM opportunity_schema_migrations
+                WHERE migration_id = ?
+                """,
+                (MIGRATION_ID_PERSISTED_CATALOG,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
+
+
+def publish_complete_catalog(
+    settings: Settings,
+    *,
+    markets: Iterable[Any],
+    completed_at: datetime,
+    discovery_session_id: str | None,
+    pages_completed: int,
+    diagnostics: Iterable[str] = (),
+    retention_versions: int = DEFAULT_CATALOG_RETENTION_VERSIONS,
+    catalog_version_id: str | None = None,
+) -> str:
+    """Atomically publish a COMPLETE catalog. Prior ACTIVE remains until commit."""
+    from app.opportunity_intel.discovery_session import market_to_normalized_dict
+
+    if retention_versions < 1:
+        raise ValueError("retention_versions must be >= 1")
+    market_list = list(markets)
+    version_id = catalog_version_id or f"cat-{uuid.uuid4().hex}"
+    published_at = _now()
+    diagnostics_tuple = tuple(str(item)[:120] for item in diagnostics)[:50]
+    with _opportunity_connection(settings) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            UPDATE opportunity_catalog_versions
+            SET status = 'SUPERSEDED'
+            WHERE status = 'ACTIVE'
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO opportunity_catalog_versions (
+                catalog_version_id, discovery_session_id, completed_at,
+                published_at, market_count, tradeable_market_count,
+                pages_completed, status, diagnostics_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+            """,
+            (
+                version_id,
+                discovery_session_id,
+                _iso(completed_at),
+                _iso(published_at),
+                len(market_list),
+                len(market_list),
+                int(pages_completed),
+                json.dumps(list(diagnostics_tuple)),
+                _iso(published_at),
+            ),
+        )
+        for market in market_list:
+            payload = market_to_normalized_dict(market)
+            connection.execute(
+                """
+                INSERT INTO opportunity_catalog_markets (
+                    catalog_version_id, event_id, market_id, condition_id,
+                    event_slug, question, category_ids_json, mode,
+                    liquidity_usd, volume_24h_usd, metadata_at, end_at,
+                    outcomes_json, enable_order_book, accepting_orders,
+                    active, closed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0)
+                """,
+                (
+                    version_id,
+                    payload["event_id"],
+                    payload["market_id"],
+                    payload["condition_id"],
+                    payload["event_slug"],
+                    payload["question"],
+                    json.dumps(payload["category_ids"]),
+                    payload["mode"],
+                    payload["liquidity_usd"],
+                    payload["volume_24h_usd"],
+                    payload["metadata_at"],
+                    payload["end_at"],
+                    json.dumps(payload["outcomes"]),
+                ),
+            )
+        _prune_catalog_versions_on_connection(
+            connection, retention_versions=retention_versions
+        )
+    return version_id
+
+
+def _prune_catalog_versions_on_connection(
+    connection: sqlite3.Connection, *, retention_versions: int
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT catalog_version_id, status, published_at
+        FROM opportunity_catalog_versions
+        ORDER BY published_at DESC, catalog_version_id DESC
+        """
+    ).fetchall()
+    keep: list[str] = []
+    for row in rows:
+        if row["status"] == "ACTIVE" or len(keep) < retention_versions:
+            keep.append(str(row["catalog_version_id"]))
+            continue
+        version_id = str(row["catalog_version_id"])
+        connection.execute(
+            "DELETE FROM opportunity_catalog_markets WHERE catalog_version_id = ?",
+            (version_id,),
+        )
+        connection.execute(
+            "DELETE FROM opportunity_catalog_versions WHERE catalog_version_id = ?",
+            (version_id,),
+        )
+
+
+def load_active_catalog_version(
+    settings: Settings,
+) -> CatalogVersionRecord | None:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT catalog_version_id, discovery_session_id, completed_at,
+                   published_at, market_count, tradeable_market_count,
+                   pages_completed, status, diagnostics_json, created_at
+            FROM opportunity_catalog_versions
+            WHERE status = 'ACTIVE'
+            ORDER BY published_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    return _catalog_version_from_row(row)
+
+
+def load_active_catalog_markets(settings: Settings) -> tuple[Any, ...]:
+    """Load ACTIVE catalog markets as ValidatedMarket tuples."""
+    from app.opportunity_intel.discovery_session import market_from_normalized_dict
+
+    version = load_active_catalog_version(settings)
+    if version is None:
+        return ()
+    with _opportunity_connection(settings) as connection:
+        rows = connection.execute(
+            """
+            SELECT event_id, market_id, condition_id, event_slug, question,
+                   category_ids_json, mode, liquidity_usd, volume_24h_usd,
+                   metadata_at, end_at, outcomes_json
+            FROM opportunity_catalog_markets
+            WHERE catalog_version_id = ?
+            ORDER BY market_id
+            """,
+            (version.catalog_version_id,),
+        ).fetchall()
+    markets = []
+    for row in rows:
+        markets.append(
+            market_from_normalized_dict(
+                {
+                    "event_id": row["event_id"],
+                    "market_id": row["market_id"],
+                    "condition_id": row["condition_id"],
+                    "event_slug": row["event_slug"],
+                    "question": row["question"],
+                    "category_ids": json.loads(row["category_ids_json"]),
+                    "mode": row["mode"],
+                    "liquidity_usd": row["liquidity_usd"],
+                    "volume_24h_usd": row["volume_24h_usd"],
+                    "metadata_at": row["metadata_at"],
+                    "end_at": row["end_at"],
+                    "outcomes": json.loads(row["outcomes_json"]),
+                }
+            )
+        )
+    return tuple(markets)
+
+
+def load_active_catalog(
+    settings: Settings,
+) -> tuple[CatalogVersionRecord, tuple[Any, ...]] | None:
+    version = load_active_catalog_version(settings)
+    if version is None:
+        return None
+    return version, load_active_catalog_markets(settings)
+
+
+def _catalog_version_from_row(row: sqlite3.Row) -> CatalogVersionRecord:
+    diagnostics_raw = json.loads(row["diagnostics_json"] or "[]")
+    diagnostics = tuple(str(item) for item in diagnostics_raw)
+    return CatalogVersionRecord(
+        catalog_version_id=str(row["catalog_version_id"]),
+        discovery_session_id=(
+            None
+            if row["discovery_session_id"] is None
+            else str(row["discovery_session_id"])
+        ),
+        completed_at=datetime.fromisoformat(str(row["completed_at"])),
+        published_at=datetime.fromisoformat(str(row["published_at"])),
+        market_count=int(row["market_count"]),
+        tradeable_market_count=int(row["tradeable_market_count"]),
+        pages_completed=int(row["pages_completed"]),
+        status=str(row["status"]),
+        diagnostics=diagnostics,
+        created_at=datetime.fromisoformat(str(row["created_at"])),
+    )
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -2293,6 +2767,78 @@ def clear_discovery_session(settings: Settings, session_id: str | None = None) -
             """,
             (session_id,),
         )
+
+
+@dataclass(frozen=True)
+class DiscoveryProgress:
+    """Sanitized discovery-session progress. Never exposes cursors or ids."""
+
+    state: str
+    pages_completed: int
+    attempts_used: int
+    markets_accumulated: int
+    resumable: bool
+    started_at: datetime | None
+    updated_at: datetime | None
+    expires_at: datetime | None
+
+
+def load_discovery_progress(settings: Settings) -> DiscoveryProgress | None:
+    """Light progress read for status UX; skips diagnostics and cursors."""
+    apply_resumable_discovery_migration(settings)
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT state, pages_completed, attempts_used, markets_json,
+                   next_cursor, started_at, updated_at, expires_at
+            FROM opportunity_discovery_sessions
+            WHERE slot_key = 'active'
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        markets = json.loads(row["markets_json"])
+    except (TypeError, ValueError):
+        markets = []
+    return DiscoveryProgress(
+        state=str(row["state"]),
+        pages_completed=int(row["pages_completed"]),
+        attempts_used=int(row["attempts_used"]),
+        markets_accumulated=len(markets) if isinstance(markets, list) else 0,
+        resumable=row["next_cursor"] is not None,
+        started_at=_optional_dt(row["started_at"]),
+        updated_at=_optional_dt(row["updated_at"]),
+        expires_at=_optional_dt(row["expires_at"]),
+    )
+
+
+def count_baseline_ready_assets(settings: Settings) -> int:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS n FROM opportunity_market_state
+            WHERE baseline_ready = 1
+            """
+        ).fetchone()
+    return int(row["n"] if row is not None else 0)
+
+
+def count_market_states(settings: Settings) -> int:
+    with _opportunity_connection(settings) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS n FROM opportunity_market_state"
+        ).fetchone()
+    return int(row["n"] if row is not None else 0)
+
+
+def _optional_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
 
 
 class SqliteDiscoverySessionStore:

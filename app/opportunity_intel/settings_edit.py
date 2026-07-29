@@ -60,6 +60,125 @@ FIELD_CODES: dict[str, str] = {
 
 FIELD_BY_KEY = {value: key for key, value in FIELD_CODES.items()}
 
+FILTER_FIELD_KEYS: tuple[str, ...] = (
+    "minimum_score",
+    "minimum_liquidity_usd",
+    "minimum_24h_volume_usd",
+    "maximum_relative_spread",
+    "maximum_absolute_spread",
+    "maximum_slippage",
+    "categories",
+    "live_mode",
+)
+
+ALERT_FIELD_KEYS: tuple[str, ...] = (
+    "alert_mode",
+    "cooldown_seconds",
+    "quiet_hours",
+    "timezone_name",
+    "paper_allocation_usd",
+)
+
+FIELD_LABELS: dict[str, str] = {
+    "minimum_score": "Minimum score",
+    "minimum_liquidity_usd": "Minimum liquidity",
+    "minimum_24h_volume_usd": "Minimum 24h volume",
+    "maximum_relative_spread": "Maximum relative spread",
+    "maximum_absolute_spread": "Maximum absolute spread",
+    "maximum_slippage": "Maximum slippage",
+    "paper_allocation_usd": "Paper allocation",
+    "categories": "Categories",
+    "live_mode": "Live mode",
+    "cooldown_seconds": "Cooldown",
+    "alert_mode": "Alert mode",
+    "quiet_hours": "Quiet hours",
+    "timezone_name": "Timezone",
+}
+
+# Each field advertises only its own accepted input format. Ranges are derived
+# from the unchanged validation bounds so prompt text cannot drift from them.
+FIELD_INPUT_FORMATS: dict[str, tuple[str, str]] = {
+    "minimum_score": (
+        f"Enter a whole number from {MINIMUM_SCORE_BOUNDS[0]} "
+        f"to {MINIMUM_SCORE_BOUNDS[1]}.",
+        "65",
+    ),
+    "minimum_liquidity_usd": (
+        f"Enter a USD amount from {MINIMUM_LIQUIDITY_USD_BOUNDS[0]} "
+        f"to {MINIMUM_LIQUIDITY_USD_BOUNDS[1]}.",
+        "10000",
+    ),
+    "minimum_24h_volume_usd": (
+        f"Enter a USD amount from {MINIMUM_24H_VOLUME_USD_BOUNDS[0]} "
+        f"to {MINIMUM_24H_VOLUME_USD_BOUNDS[1]}.",
+        "25000",
+    ),
+    "maximum_relative_spread": (
+        "Enter a spread fraction of midpoint from "
+        f"{MAXIMUM_RELATIVE_SPREAD_BOUNDS[0]} to "
+        f"{MAXIMUM_RELATIVE_SPREAD_BOUNDS[1]} (0.10 means 10%).",
+        "0.10",
+    ),
+    "maximum_absolute_spread": (
+        "Enter a probability-point value from "
+        f"{MAXIMUM_ABSOLUTE_SPREAD_BOUNDS[0]} to "
+        f"{MAXIMUM_ABSOLUTE_SPREAD_BOUNDS[1]}.",
+        "0.05",
+    ),
+    "maximum_slippage": (
+        f"Enter a slippage fraction from {MAXIMUM_SLIPPAGE_BOUNDS[0]} "
+        f"to {MAXIMUM_SLIPPAGE_BOUNDS[1]} (0.02 means 2%).",
+        "0.02",
+    ),
+    "paper_allocation_usd": (
+        "Choose a preset USD amount.",
+        "100",
+    ),
+    "cooldown_seconds": (
+        f"Enter seconds from {COOLDOWN_SECONDS_BOUNDS[0]} "
+        f"to {COOLDOWN_SECONDS_BOUNDS[1]}.",
+        "1800",
+    ),
+    "quiet_hours": (
+        "Enter HH:MM-HH:MM or off.",
+        "23:00-07:00",
+    ),
+    "timezone_name": (
+        "Enter a supported IANA timezone.",
+        "America/Chicago or UTC",
+    ),
+    "categories": (
+        "Select all categories or at least one category.",
+        "politics",
+    ),
+    "live_mode": (
+        "Choose OFF or STRICT.",
+        "OFF",
+    ),
+    "alert_mode": (
+        "Choose ON_DEMAND_ONLY or INSTANT.",
+        "ON_DEMAND_ONLY",
+    ),
+}
+
+
+def field_label(field_key: str) -> str:
+    return FIELD_LABELS.get(field_key, field_key)
+
+
+def field_prompt(field_key: str) -> str:
+    """Prompt showing only this field's accepted format and one example."""
+    if field_key not in FIELD_INPUT_FORMATS:
+        raise ValueError(f"unsupported field: {field_key}")
+    instruction, example = FIELD_INPUT_FORMATS[field_key]
+    return "\n".join(
+        [
+            field_label(field_key),
+            instruction,
+            f"Example: {example}",
+        ]
+    )
+
 
 @dataclass(frozen=True)
 class OpportunitySettingsConfirmation:
@@ -114,7 +233,7 @@ def preview_field_change(
     proposed = replace(proposed, revision=current.revision + 1)
     lines = [
         "Confirm Opportunity Settings change?",
-        f"Field: {field_key}",
+        f"Field: {field_label(field_key)}",
         f"{_display_value(current, field_key)} → {_display_value(proposed, field_key)}",
         f"Starting revision: {current.revision}",
         "Confirm to save, or Cancel.",

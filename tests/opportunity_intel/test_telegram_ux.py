@@ -53,7 +53,7 @@ from app.telegram.inline_menus import (
 )
 from app.telegram.menu import build_telegram_application
 from app.telegram.opportunity_intel.formatting import (
-    format_live_markets_help,
+    format_live_mode_help,
     format_opportunity_card,
     sanitize_plain,
 )
@@ -277,7 +277,7 @@ def test_top_opportunities_catalog_filters_and_limit(settings):
 
 def test_top_opportunities_status_messages(settings):
     empty = load_top_opportunities(settings, telegram_id=42)
-    assert empty.status == "not_initialized"
+    assert empty.status == "discovering"
     now = datetime.now(timezone.utc)
     save_scanner_state(
         settings,
@@ -369,7 +369,7 @@ def test_card_rendering_normal_and_strict():
     live_text = format_opportunity_card(live, now=now)
     assert "LIVE / IN-PLAY" in live_text
     assert "STRICT DATA CHECKS" in live_text
-    help_text = format_live_markets_help().lower()
+    help_text = format_live_mode_help().lower()
     assert "does not imply" in help_text
     assert "no trades are placed" in help_text
 

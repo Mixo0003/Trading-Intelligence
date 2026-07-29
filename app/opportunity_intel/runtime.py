@@ -42,6 +42,48 @@ _OPPORTUNITY_EXECUTOR_MAX_WORKERS = 2
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_FUTURES: set[Future] = set()
 
+# Process-local discovery cache. A completed universe must outlive the cycle
+# that published it, otherwise every cycle restarts a full keyset crawl and no
+# two consecutive cycles ever see a trusted catalog.
+_DISCOVERY_CACHE_LOCK = threading.Lock()
+_DISCOVERY_CACHE: CompleteDiscoveryCache | None = None
+_DISCOVERY_CACHE_KEY: tuple[str, int, int, int] | None = None
+
+
+def _discovery_cache_key(settings: Settings) -> tuple[str, int, int, int]:
+    return (
+        str(settings.database_path),
+        int(settings.opportunity_discovery_ttl_seconds),
+        int(settings.opportunity_catalog_ttl_seconds),
+        int(settings.opportunity_discovery_session_ttl_seconds),
+    )
+
+
+def get_discovery_cache(settings: Settings) -> CompleteDiscoveryCache:
+    """Idempotent per-process discovery cache reused across scanner cycles."""
+    global _DISCOVERY_CACHE, _DISCOVERY_CACHE_KEY
+    key = _discovery_cache_key(settings)
+    with _DISCOVERY_CACHE_LOCK:
+        if _DISCOVERY_CACHE is None or _DISCOVERY_CACHE_KEY != key:
+            _DISCOVERY_CACHE = CompleteDiscoveryCache(
+                ttl_seconds=settings.opportunity_discovery_ttl_seconds,
+                catalog_ttl_seconds=settings.opportunity_catalog_ttl_seconds,
+                session_ttl_seconds=settings.opportunity_discovery_session_ttl_seconds,
+                session_store=opportunity_storage.SqliteDiscoverySessionStore(settings),
+                settings=settings,
+                persist_catalog=True,
+            )
+            _DISCOVERY_CACHE_KEY = key
+        return _DISCOVERY_CACHE
+
+
+def reset_discovery_cache() -> None:
+    """Drop the process-local discovery cache (tests and shutdown helpers)."""
+    global _DISCOVERY_CACHE, _DISCOVERY_CACHE_KEY
+    with _DISCOVERY_CACHE_LOCK:
+        _DISCOVERY_CACHE = None
+        _DISCOVERY_CACHE_KEY = None
+
 
 def get_opportunity_executor() -> ThreadPoolExecutor:
     """Idempotent dedicated executor for Opportunity scanner cycles only."""
@@ -129,11 +171,7 @@ def build_scanner_service(
     request_budget: CycleRequestBudget | None = None,
     deadline_token: CycleDeadlineToken | None = None,
 ) -> OpportunityScannerService:
-    cache = discovery_cache or CompleteDiscoveryCache(
-        ttl_seconds=settings.opportunity_discovery_ttl_seconds,
-        session_ttl_seconds=settings.opportunity_discovery_session_ttl_seconds,
-        session_store=opportunity_storage.SqliteDiscoverySessionStore(settings),
-    )
+    cache = discovery_cache or get_discovery_cache(settings)
     budget = request_budget or CycleRequestBudget(
         clob_cap=LOCAL_CLOB_REQUEST_CAP_PER_CYCLE,
         gamma_cap=LOCAL_GAMMA_REQUEST_CAP_PER_CYCLE,

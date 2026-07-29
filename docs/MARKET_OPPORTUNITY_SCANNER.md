@@ -57,6 +57,65 @@ authenticated trading endpoints.
 - Invalid books, stale quotes, malformed rows, and incomplete history fail
   closed rather than inventing midpoints or scores.
 
+### Trusted catalog persistence (v3)
+
+Additive migration marker: `opportunity_intel_v3_persisted_catalog`.
+
+- Only a terminal-cursor **COMPLETE** discovery publishes a catalog.
+- Publication is atomic: prior ACTIVE remains until the new version commits.
+- Process restart reloads the latest ACTIVE COMPLETE catalog.
+- Failed refresh preserves the previous ACTIVE catalog.
+- Retention keeps a bounded number of catalog versions (default 3).
+- No raw Gamma payload columns.
+
+### Stale-while-refresh policy
+
+Separate TTLs:
+
+| Concept | Default | Role |
+|---------|---------|------|
+| Discovery soft refresh TTL | `OPPORTUNITY_DISCOVERY_TTL_SECONDS` = 300s | Start/continue rebuild |
+| Catalog identity TTL | `OPPORTUNITY_CATALOG_TTL_SECONDS` = **21600s (6h)** | Keep last COMPLETE usable |
+| Discovery session TTL | `OPPORTUNITY_DISCOVERY_SESSION_TTL_SECONDS` = **21600s** | Multi-cycle crawl continuity |
+| Per-market metadata freshness | 600s (Normal) | Shortlist/scoring gate |
+
+**Catalog identity TTL derivation (evidence-based):** observed full keyset crawl
+can exceed one hour; scanner interval is typically 120s; baseline needs two
+complete observation cycles after publish; add safety margin → multi-hour
+default (6h). Soft 300s TTL no longer expires the trusted universe.
+
+While refresh is IN_PROGRESS, baseline/scoring may continue from the last
+COMPLETE catalog. Hard expiry remains fail-closed after catalog identity TTL.
+
+### Tradeable universe filters
+
+**Verified server-side Gamma `/events/keyset` params (do not invent others):**
+
+- `closed=false`
+- `limit` (page size)
+- `after_cursor` (keyset pagination)
+
+**Client-side filters (required; unsupported as query params):**
+
+- active / not archived / not resolved
+- `enableOrderBook` / accepting orders where present
+- parseable liquidity and 24h volume
+- time remaining and metadata freshness thresholds
+- outcome identity + price-hint bounds for shortlist
+
+Report separately: raw server pages/events vs tradeable normalized markets.
+COMPLETE still means terminal-cursor proof over the **actual** server-side
+result set under the verified filters above.
+
+### History-aware shortlist
+
+1. Stage A: metadata shortlist oversized (`max_markets * 3`, capped at 100).
+2. Stage B: request history/books within CLOB budget; prefer assets with valid
+   history + book for final tracked slots.
+3. `HISTORY_MISSING` remains fail-closed for canonical observations.
+4. Do not fill all tracked slots with history-missing assets when capable
+   candidates remain available later in the ranked Stage A list.
+
 ## Two-cycle baseline
 
 - Per-asset baseline requires **two consecutive complete cycles** before

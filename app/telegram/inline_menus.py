@@ -74,6 +74,8 @@ CB_OSET_RESET_NO = "oset:rno"
 CB_OSET_CAT = "oset:cat"
 CB_OSET_LIVE = "oset:lm"
 CB_OSET_ALERT = "oset:am"
+# Legacy combined edit menu; routed to Alert Settings for backwards compatibility.
+CB_OSET_EDIT_LEGACY = CB_OSET_EDIT
 # Dynamic: oset:f:<code>, oset:pv:<code>:<idx>, oset:ct:<id>, oset:cta, oset:ctc
 
 
@@ -341,7 +343,7 @@ def opportunity_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Filters", callback_data=CB_OPP_FILTERS),
             ],
             [
-                InlineKeyboardButton("Live Markets", callback_data=CB_OPP_LIVE),
+                InlineKeyboardButton("Live Mode", callback_data=CB_OPP_LIVE),
                 InlineKeyboardButton("Signal History", callback_data=CB_OPP_HISTORY),
             ],
             [InlineKeyboardButton("Scanner Status", callback_data=CB_OPP_STATUS)],
@@ -350,17 +352,8 @@ def opportunity_inline_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def opportunity_settings_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("Edit Settings", callback_data=CB_OSET_EDIT)],
-            [InlineKeyboardButton("Reset to Balanced", callback_data=CB_OSET_RESET)],
-            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP)],
-        ]
-    )
-
-
-def opportunity_settings_edit_keyboard() -> InlineKeyboardMarkup:
+def opportunity_filters_keyboard() -> InlineKeyboardMarkup:
+    """Filter fields only: score, liquidity, volume, spreads, slippage, scope."""
     return InlineKeyboardMarkup(
         [
             [
@@ -376,19 +369,29 @@ def opportunity_settings_edit_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Max slippage", callback_data="oset:f:sl"),
             ],
             [
-                InlineKeyboardButton("Allocation", callback_data="oset:f:pa"),
-                InlineKeyboardButton("Cooldown", callback_data="oset:f:cd"),
-            ],
-            [
                 InlineKeyboardButton("Categories", callback_data=CB_OSET_CAT),
                 InlineKeyboardButton("Live mode", callback_data=CB_OSET_LIVE),
             ],
+            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP)],
+        ]
+    )
+
+
+def opportunity_settings_keyboard() -> InlineKeyboardMarkup:
+    """Alert-related fields only: mode, cooldown, quiet hours, timezone, paper size."""
+    return InlineKeyboardMarkup(
+        [
             [
                 InlineKeyboardButton("Alert mode", callback_data=CB_OSET_ALERT),
-                InlineKeyboardButton("Quiet hours", callback_data="oset:f:qh"),
+                InlineKeyboardButton("Cooldown", callback_data="oset:f:cd"),
             ],
-            [InlineKeyboardButton("Timezone", callback_data="oset:f:tz")],
-            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_ALERTS)],
+            [
+                InlineKeyboardButton("Quiet hours", callback_data="oset:f:qh"),
+                InlineKeyboardButton("Timezone", callback_data="oset:f:tz"),
+            ],
+            [InlineKeyboardButton("Paper allocation", callback_data="oset:f:pa")],
+            [InlineKeyboardButton("Reset all to Balanced", callback_data=CB_OSET_RESET)],
+            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP)],
         ]
     )
 
@@ -422,7 +425,7 @@ def opportunity_live_mode_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("OFF", callback_data="oset:pv:lm:0"),
                 InlineKeyboardButton("STRICT", callback_data="oset:pv:lm:1"),
             ],
-            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OSET_EDIT)],
+            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_FILTERS)],
         ]
     )
 
@@ -434,7 +437,7 @@ def opportunity_alert_mode_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("ON_DEMAND_ONLY", callback_data="oset:pv:am:0"),
                 InlineKeyboardButton("INSTANT", callback_data="oset:pv:am:1"),
             ],
-            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OSET_EDIT)],
+            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_ALERTS)],
         ]
     )
 
@@ -452,7 +455,7 @@ def opportunity_allocation_keyboard() -> InlineKeyboardMarkup:
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=CB_OSET_EDIT)])
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_ALERTS)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -487,7 +490,7 @@ def opportunity_category_keyboard(
     rows.append(
         [InlineKeyboardButton("✅ Preview save", callback_data="oset:ctp")]
     )
-    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=CB_OSET_EDIT)])
+    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_FILTERS)])
     return InlineKeyboardMarkup(rows)
 
 

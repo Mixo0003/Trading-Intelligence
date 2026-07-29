@@ -28,6 +28,12 @@ from app.opportunity_intel.settings import (
 
 TOP_OPPORTUNITIES_LIMIT = 3
 
+DISCOVERING_MESSAGE = "Scanner is building the complete market catalog."
+BASELINING_MESSAGE = (
+    "Market catalog is ready. Baseline observations are still being built."
+)
+READY_EMPTY_MESSAGE = "Scanner is ready. No markets currently pass your filters."
+
 
 @dataclass(frozen=True)
 class CatalogEntry:
@@ -63,6 +69,13 @@ def load_top_opportunities(
     clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     state = opportunity_storage.load_scanner_state(settings)
     if state is None:
+        progress = opportunity_storage.load_discovery_progress(settings)
+        if progress is not None or settings.opportunity_scanner_enabled:
+            return TopOpportunitiesResult(
+                status="discovering",
+                entries=(),
+                message=DISCOVERING_MESSAGE,
+            )
         return TopOpportunitiesResult(
             status="not_initialized",
             entries=(),
@@ -74,16 +87,21 @@ def load_top_opportunities(
             entries=(),
             message="Market Opportunity Scanner is disabled.",
         )
-    if state.status == ScannerStatus.BASELINING or (
-        not state.discovery_complete and state.global_baseline_cycles < 2
-    ):
-        # Per-asset baseline gates signals; global cycles are diagnostic.
-        if state.status == ScannerStatus.BASELINING:
+    if not state.discovery_complete or state.last_complete_discovery_at is None:
+        # Prefer persisted ACTIVE catalog when scanner_state lags a restart.
+        active = opportunity_storage.load_active_catalog_version(settings)
+        if active is None:
             return TopOpportunitiesResult(
-                status="baselining",
+                status="discovering",
                 entries=(),
-                message="Baseline in progress. Cached results are not ready yet.",
+                message=DISCOVERING_MESSAGE,
             )
+    if opportunity_storage.count_baseline_ready_assets(settings) == 0:
+        return TopOpportunitiesResult(
+            status="baselining",
+            entries=(),
+            message=BASELINING_MESSAGE,
+        )
     if state.last_complete_cycle_at is None:
         return TopOpportunitiesResult(
             status="not_initialized",
@@ -218,7 +236,7 @@ def load_top_opportunities(
         return TopOpportunitiesResult(
             status="empty",
             entries=(),
-            message="No qualifying opportunities for your current filters.",
+            message=READY_EMPTY_MESSAGE,
         )
     return TopOpportunitiesResult(
         status="ready",

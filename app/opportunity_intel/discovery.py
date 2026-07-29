@@ -31,9 +31,16 @@ from app.opportunity_intel.settings import (
 from app.polymarket.links import build_validated_market_link
 
 DISCOVERY_CACHE_TTL_SECONDS = 300
+# Catalog identity TTL: full keyset crawl can exceed one hour; scanner interval
+# is typically 120s; baseline needs two complete cycles after publish. Default
+# six hours keeps the last COMPLETE universe usable while a refresh rebuilds.
+DEFAULT_CATALOG_IDENTITY_TTL_SECONDS = 21600
 DISCOVERY_PAGE_LIMIT = 500
 DISCOVERY_MAX_PAGES = 20
 SHORTLIST_MAX_OUTCOMES = 100
+# Stage A oversamples final tracked slots so Stage B can prefer observation-
+# capable assets within the shared CLOB budget.
+SHORTLIST_STAGE_A_MULTIPLIER = 3
 
 _CURSOR_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{1,512}$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
@@ -675,35 +682,123 @@ def shortlist_outcomes(
 
 
 class CompleteDiscoveryCache:
-    """In-memory complete-universe cache plus resumable discovery session."""
+    """Trusted COMPLETE universe with soft refresh and optional persistence.
+
+    ``ttl_seconds`` is the soft refresh trigger (discovery TTL).
+    ``catalog_ttl_seconds`` is hard usability for the last COMPLETE catalog
+    (stale-while-refresh). Persisted ACTIVE catalogs reload after restart.
+    """
 
     def __init__(
         self,
         *,
         ttl_seconds: int = DISCOVERY_CACHE_TTL_SECONDS,
+        catalog_ttl_seconds: int = DEFAULT_CATALOG_IDENTITY_TTL_SECONDS,
         session_ttl_seconds: int = 3600,
         session_store: Any | None = None,
+        settings: Any | None = None,
+        persist_catalog: bool = True,
     ) -> None:
         if ttl_seconds < 1:
             raise ValueError("ttl_seconds must be positive")
+        if catalog_ttl_seconds < 1:
+            raise ValueError("catalog_ttl_seconds must be positive")
         if session_ttl_seconds < 1:
             raise ValueError("session_ttl_seconds must be positive")
+        if catalog_ttl_seconds < ttl_seconds:
+            raise ValueError("catalog_ttl_seconds must be >= ttl_seconds")
         self.ttl_seconds = ttl_seconds
+        self.catalog_ttl_seconds = catalog_ttl_seconds
         self.session_ttl_seconds = session_ttl_seconds
         self._complete: DiscoveryResult | None = None
         self._session: Any | None = None
         self._session_store = session_store
+        self._settings = settings
+        self._persist_catalog = persist_catalog
+        self._loaded_from_store = False
+
+    def _ensure_loaded_from_store(self, *, now: datetime) -> None:
+        if self._loaded_from_store or self._complete is not None:
+            self._loaded_from_store = True
+            return
+        self._loaded_from_store = True
+        if not self._persist_catalog or self._settings is None:
+            return
+        try:
+            from app.database import opportunity_storage
+
+            loaded = opportunity_storage.load_active_catalog(self._settings)
+        except Exception:
+            return
+        if loaded is None:
+            return
+        version, markets = loaded
+        completed_at = version.completed_at.astimezone(timezone.utc)
+        age = (now.astimezone(timezone.utc) - completed_at).total_seconds()
+        if age < 0 or age > self.catalog_ttl_seconds:
+            return
+        self._complete = DiscoveryResult(
+            status=ResultStatus.COMPLETE,
+            markets=markets,
+            diagnostics=tuple(),
+            pages_fetched=version.pages_completed,
+            completed_at=completed_at,
+            from_cache=True,
+            pages_cumulative=version.pages_completed,
+            session_id=version.discovery_session_id,
+            session_state=ResultStatus.COMPLETE,
+        )
 
     def get(self, *, now: datetime) -> DiscoveryResult | None:
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be timezone-aware")
+        clock = now.astimezone(timezone.utc)
+        self._ensure_loaded_from_store(now=clock)
         result = self._complete
         if result is None or result.completed_at is None:
             return None
-        age = (now.astimezone(timezone.utc) - result.completed_at).total_seconds()
-        if age < 0 or age > self.ttl_seconds:
+        age = (clock - result.completed_at.astimezone(timezone.utc)).total_seconds()
+        if age < 0 or age > self.catalog_ttl_seconds:
             return None
         return replace(result, from_cache=True)
+
+    def needs_soft_refresh(self, *, now: datetime) -> bool:
+        result = self._complete
+        if result is None or result.completed_at is None:
+            return True
+        age = (
+            now.astimezone(timezone.utc)
+            - result.completed_at.astimezone(timezone.utc)
+        ).total_seconds()
+        return age < 0 or age > self.ttl_seconds
+
+    def _publish_complete(self, result: DiscoveryResult) -> DiscoveryResult:
+        published = replace(
+            result,
+            from_cache=False,
+            refresh_failure_status=None,
+        )
+        if self._persist_catalog and self._settings is not None:
+            try:
+                from app.database import opportunity_storage
+
+                opportunity_storage.publish_complete_catalog(
+                    self._settings,
+                    markets=published.markets,
+                    completed_at=published.completed_at or _utc_now(),
+                    discovery_session_id=published.session_id,
+                    pages_completed=published.pages_cumulative
+                    or published.pages_fetched,
+                    diagnostics=tuple(
+                        d.code.value if hasattr(d, "code") else str(d)
+                        for d in published.diagnostics
+                    ),
+                )
+            except Exception:
+                pass
+        self._complete = published
+        self._save_session(None)
+        return self._complete
 
     def _load_session(self) -> Any | None:
         if self._session is not None:
@@ -734,13 +829,7 @@ class CompleteDiscoveryCache:
         """One-shot refresh helper used by unit tests and non-resumable callers."""
         result = fetch()
         if result.complete:
-            self._complete = replace(
-                result,
-                from_cache=False,
-                refresh_failure_status=None,
-            )
-            self._save_session(None)
-            return self._complete
+            return self._publish_complete(result)
         cached = self.get(now=now)
         if cached is not None:
             return replace(
@@ -768,10 +857,14 @@ class CompleteDiscoveryCache:
         from app.opportunity_intel.discovery_session import advance_discovery_session
 
         clock = _aware_utc(now, "now")
+        self._ensure_loaded_from_store(now=clock)
         cached = self.get(now=clock)
         session = self._load_session()
-        # Still-fresh COMPLETE with no rebuild in flight: serve cache only.
-        if cached is not None and session is None:
+        if (
+            cached is not None
+            and session is None
+            and not self.needs_soft_refresh(now=clock)
+        ):
             return cached
 
         advanced = advance_discovery_session(
@@ -783,13 +876,7 @@ class CompleteDiscoveryCache:
         )
         result = advanced.result
         if advanced.published_complete and result.complete:
-            self._complete = replace(
-                result,
-                from_cache=False,
-                refresh_failure_status=None,
-            )
-            self._save_session(None)
-            return self._complete
+            return self._publish_complete(result)
 
         if result.status in {
             ResultStatus.IN_PROGRESS,
@@ -797,7 +884,7 @@ class CompleteDiscoveryCache:
         }:
             self._save_session(advanced.session)
             if cached is not None:
-                # Do not replace a still-fresh COMPLETE with partial progress.
+                # Stale-while-refresh: keep serving prior COMPLETE catalog.
                 return replace(
                     cached,
                     diagnostics=cached.diagnostics + result.diagnostics,
@@ -812,7 +899,7 @@ class CompleteDiscoveryCache:
                 )
             return result
 
-        # Permanent / expired: drop incomplete session; keep fresh COMPLETE if any.
+        # Permanent / expired: drop incomplete session; keep usable COMPLETE.
         self._save_session(None)
         if cached is not None:
             return replace(

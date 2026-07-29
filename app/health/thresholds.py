@@ -31,8 +31,10 @@ def apply_consecutive_thresholds(
     if probe_ok:
         successes = consecutive_successes + 1
         failures = 0
-        # Recovering from a failure streak requires recovery threshold.
-        if consecutive_failures > 0 and successes < rec_th:
+        # Recovery hysteresis applies only after a streak that actually reached
+        # DEGRADED (failures >= fail_th). Sub-threshold blips must not produce
+        # HEALTHY -> DEGRADED flap on the next success.
+        if consecutive_failures >= fail_th and successes < rec_th:
             return "DEGRADED", failures, successes
         return "HEALTHY", failures, successes
 

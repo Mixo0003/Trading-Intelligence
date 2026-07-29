@@ -59,6 +59,7 @@ def test_fresh_db_applies_v1_then_v2(tmp_path):
     assert [row[0] for row in markers] == [
         MIGRATION_ID,
         MIGRATION_ID_RESUMABLE_DISCOVERY,
+        "opportunity_intel_v3_persisted_catalog",
     ]
     assert _has_discovery_table(settings)
 

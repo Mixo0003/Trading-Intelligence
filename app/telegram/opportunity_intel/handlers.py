@@ -13,11 +13,14 @@ from app.opportunity_intel.catalog import load_top_opportunities
 from app.opportunity_intel.categories import KNOWN_CATEGORY_IDS, KNOWN_CATEGORY_SET
 from app.opportunity_intel.settings import ALLOCATION_PRESETS_USD
 from app.opportunity_intel.settings_edit import (
+    ALERT_FIELD_KEYS,
+    FILTER_FIELD_KEYS,
     cancel_confirmation,
     create_edit_confirmation,
     create_reset_confirmation,
     drop_operator_confirmations,
     execute_confirmed_settings,
+    field_prompt,
     get_or_default_subscription,
     preview_field_change,
     resolve_field_key,
@@ -47,17 +50,18 @@ from app.telegram.inline_menus import (
     opportunity_allocation_keyboard,
     opportunity_category_keyboard,
     opportunity_confirm_keyboard,
+    opportunity_filters_keyboard,
     opportunity_inline_keyboard,
     opportunity_live_mode_keyboard,
     opportunity_reset_confirm_keyboard,
-    opportunity_settings_edit_keyboard,
     opportunity_settings_keyboard,
 )
 from app.telegram.nav import edit_or_reply, open_main_menu
 from app.telegram.opportunity_intel.formatting import (
-    format_live_markets_help,
+    format_alert_settings_card,
+    format_filters_card,
+    format_live_mode_help,
     format_opportunity_card,
-    format_settings_card,
     format_signal_history,
 )
 
@@ -71,6 +75,24 @@ _CATEGORY_ALL_KEY = "opp_category_all"
 
 def _settings(context: ContextTypes.DEFAULT_TYPE):
     return context.application.bot_data["settings"]
+
+
+def _keyboard_for_field(field_key: str | None):
+    """Keep each field's edit/back path inside the menu that owns it."""
+    if field_key in FILTER_FIELD_KEYS:
+        return opportunity_filters_keyboard()
+    if field_key in ALERT_FIELD_KEYS:
+        return opportunity_settings_keyboard()
+    return opportunity_inline_keyboard()
+
+
+async def _show_owning_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, field_key: str | None
+) -> None:
+    if field_key in FILTER_FIELD_KEYS:
+        await show_filters(update, context)
+        return
+    await show_alert_settings(update, context)
 
 
 async def _offload(work):
@@ -123,7 +145,7 @@ async def show_alert_settings(update: Update, context: ContextTypes.DEFAULT_TYPE
     def work():
         sub = get_or_default_subscription(settings, int(user.id))
         gates = opportunity_storage.load_delivery_gates(settings)
-        return format_settings_card(
+        return format_alert_settings_card(
             sub.settings,
             user_delivery_available=gates.user_delivery_enabled,
         )
@@ -133,13 +155,23 @@ async def show_alert_settings(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await show_alert_settings(update, context)
+    settings = _settings(context)
+    user = update.effective_user
+    if user is None:
+        return
+
+    def work():
+        sub = get_or_default_subscription(settings, int(user.id))
+        return format_filters_card(sub.settings)
+
+    text = await _offload(work)
+    await edit_or_reply(update, text, reply_markup=opportunity_filters_keyboard())
 
 
-async def show_live_markets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def show_live_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await edit_or_reply(
         update,
-        format_live_markets_help(),
+        format_live_mode_help(),
         reply_markup=opportunity_inline_keyboard(),
     )
 
@@ -181,11 +213,14 @@ async def handle_opportunity_callback(
     if data == CB_OPP_TOP:
         await show_top_opportunities(update, context)
         return
-    if data in {CB_OPP_ALERTS, CB_OPP_FILTERS}:
+    if data == CB_OPP_ALERTS:
         await show_alert_settings(update, context)
         return
+    if data == CB_OPP_FILTERS:
+        await show_filters(update, context)
+        return
     if data == CB_OPP_LIVE:
-        await show_live_markets(update, context)
+        await show_live_mode(update, context)
         return
     if data == CB_OPP_HISTORY:
         await show_signal_history(update, context)
@@ -219,12 +254,9 @@ async def handle_opportunity_settings_flow(
     operator_id = int(user.id)
 
     if data == CB_OSET_EDIT:
+        # Legacy combined edit entry point: alert-related fields.
         context.user_data[_SETTINGS_EDIT_KEY] = None
-        await edit_or_reply(
-            update,
-            "Edit Opportunity Settings\nChoose a field:",
-            reply_markup=opportunity_settings_edit_keyboard(),
-        )
+        await show_alert_settings(update, context)
         return
 
     if data == CB_OSET_RESET:
@@ -254,6 +286,7 @@ async def handle_opportunity_settings_flow(
                 settings, token=str(token), operator_id=operator_id
             )
 
+        edited_field = context.user_data.get(_SETTINGS_EDIT_KEY)
         status, _sub = await _offload(work)
         context.user_data[_SETTINGS_TOKEN_KEY] = None
         context.user_data[_SETTINGS_EDIT_KEY] = None
@@ -261,14 +294,15 @@ async def handle_opportunity_settings_flow(
             await edit_or_reply(
                 update,
                 f"Could not save settings ({status}).",
-                reply_markup=opportunity_settings_keyboard(),
+                reply_markup=_keyboard_for_field(edited_field),
             )
             return
-        await show_alert_settings(update, context)
+        await _show_owning_menu(update, context, edited_field)
         return
 
     if data in {CB_OSET_CANCEL, CB_OSET_RESET_NO}:
         token = context.user_data.get(_SETTINGS_TOKEN_KEY)
+        edited_field = context.user_data.get(_SETTINGS_EDIT_KEY)
         if token:
             await _offload(
                 lambda: cancel_confirmation(
@@ -278,13 +312,20 @@ async def handle_opportunity_settings_flow(
         context.user_data[_SETTINGS_TOKEN_KEY] = None
         context.user_data[_SETTINGS_EDIT_KEY] = None
         drop_operator_confirmations(operator_id)
-        await show_alert_settings(update, context)
+        await _show_owning_menu(update, context, edited_field)
         return
 
     if data == CB_OSET_LIVE:
         await edit_or_reply(
             update,
-            "Choose live mode:",
+            "\n".join(
+                [
+                    field_prompt("live_mode"),
+                    "",
+                    "OFF excludes live / in-play markets from your results.",
+                    "STRICT allows them only with stricter checks.",
+                ]
+            ),
             reply_markup=opportunity_live_mode_keyboard(),
         )
         return
@@ -292,8 +333,14 @@ async def handle_opportunity_settings_flow(
     if data == CB_OSET_ALERT:
         await edit_or_reply(
             update,
-            "Choose alert mode:\n"
-            "Personal alert mode is separate from global user-delivery availability.",
+            "\n".join(
+                [
+                    field_prompt("alert_mode"),
+                    "",
+                    "Personal alert mode is separate from global"
+                    " user-delivery availability.",
+                ]
+            ),
             reply_markup=opportunity_alert_mode_keyboard(),
         )
         return
@@ -346,7 +393,7 @@ async def handle_opportunity_settings_flow(
             await edit_or_reply(
                 update,
                 "Unknown category.",
-                reply_markup=opportunity_settings_edit_keyboard(),
+                reply_markup=opportunity_filters_keyboard(),
             )
             return
         draft = set(context.user_data.get(_CATEGORY_DRAFT_KEY) or set())
@@ -389,16 +436,15 @@ async def handle_opportunity_settings_flow(
         if key == "paper_allocation_usd":
             await edit_or_reply(
                 update,
-                "Choose paper allocation preset:",
+                field_prompt(key),
                 reply_markup=opportunity_allocation_keyboard(),
             )
             return
         context.user_data[_SETTINGS_EDIT_KEY] = key
         await edit_or_reply(
             update,
-            f"Send a new value for {key}.\n"
-            "Quiet hours format: HH:MM-HH:MM or off",
-            reply_markup=opportunity_settings_edit_keyboard(),
+            field_prompt(key),
+            reply_markup=_keyboard_for_field(key),
         )
         return
 
@@ -455,8 +501,8 @@ async def _begin_preview(
     except ValueError as exc:
         await edit_or_reply(
             update,
-            f"Invalid value: {exc}",
-            reply_markup=opportunity_settings_edit_keyboard(),
+            f"Invalid value: {exc}\n\n{field_prompt(field_key)}",
+            reply_markup=_keyboard_for_field(field_key),
         )
         return
     context.user_data[_SETTINGS_TOKEN_KEY] = confirmation.token

@@ -80,7 +80,9 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
   - `wallet_1` and `wallet_3`: complete public positions book cannot be proven inside the legal pagination window; snapshots preserved; alert paths fail-closed
   - See `docs/COPY_ALERTS.md`
 - [ ] **V2.2.3** Market Opportunity Scanner
+  - **Executable market momentum and quality** (not fair value / not arbitrage).
   - **Implementation (Checkpoints 1–7) complete on `feature/v2.2.3-market-opportunity-scanner`.**
+  - **Trusted catalog persistence + stale-while-refresh (v3) implemented in working tree; production migration not performed.**
   - **Checkpoint 8: documentation + full suite + release preparation.**
   - Full suite (2026-07-27): **1213 passed, 2 skipped, 1 warning**; temp-DB migration PASS
   - **Production migration: not performed.**
@@ -91,8 +93,15 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
   - Top Opportunities + deterministic cards; editable settings
   - Same-wave admin/user delivery architecture; delivery worker
   - Scheduler with timeout containment; shared CLOB budget 50; Gamma budget 10; health
-  - Additive migration `opportunity_intel_v1`; retention registration; defaults disabled
+  - Additive migrations `opportunity_intel_v1` + `v2_resumable_discovery` + `v3_persisted_catalog`
   - See `docs/MARKET_OPPORTUNITY_SCANNER.md`
+- [ ] **Next major intelligence direction — Arbitrage Intelligence** (backlog only; not V2.2.3)
+  - same-market YES/NO inconsistencies
+  - mutually exclusive outcome inconsistencies
+  - cross-market relationship inconsistencies
+  - fee-, spread-, depth-, and execution-aware profitability
+  - no “guaranteed” label without fully executable proof
+- [ ] **Later — Fair Value / Forecast Intelligence** (backlog only)
 - [ ] **V2.2.4** Trader Comparison
 - [ ] **V2.2.5** Paper Copy Portfolio
 - [ ] **V2.2.6** Full Polymarket Discovery and Market Normalization
