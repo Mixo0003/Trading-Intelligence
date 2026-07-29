@@ -418,18 +418,175 @@ def test_live_shortlist_requires_demand_and_never_uses_normal_thresholds():
     ) == ()
 
 
-def test_shortlist_metadata_age_and_time_remaining_are_mode_specific():
+def test_shortlist_preserves_stale_updated_at_and_enforces_time_remaining():
     normal = _complete_market()
-    assert shortlist_outcomes(
-        [replace(normal, metadata_at=NOW - timedelta(minutes=11))],
-        now=NOW,
-        strict_live_demand=False,
-    ) == ()
+    # Gamma updatedAt age is provenance only — stale ages must not reject Stage A.
+    stale = replace(normal, metadata_at=NOW - timedelta(hours=2))
+    selected = shortlist_outcomes([stale], now=NOW, strict_live_demand=False)
+    assert [candidate.asset_id for candidate in selected] == [
+        "market-1-yes",
+        "market-1-no",
+    ]
+    assert all(candidate.metadata_at == stale.metadata_at for candidate in selected)
     assert shortlist_outcomes(
         [replace(normal, end_at=NOW + timedelta(hours=5, minutes=59))],
         now=NOW,
         strict_live_demand=False,
     ) == ()
+    # Future provenance timestamps remain unsafe and are skipped.
+    assert shortlist_outcomes(
+        [replace(normal, metadata_at=NOW + timedelta(seconds=1))],
+        now=NOW,
+        strict_live_demand=False,
+    ) == ()
+
+
+def test_live_shortlist_does_not_reject_stale_source_updated_at():
+    strict_market = _complete_market(
+        _event(
+            "event-live",
+            live=True,
+            markets=[
+                _market(
+                    "market-live",
+                    condition_id="condition-live",
+                    live=True,
+                    liquidity="25000",
+                    volume_24h="50000",
+                    updated_at=(NOW - timedelta(hours=3)).isoformat(),
+                )
+            ],
+        )
+    )
+    selected = shortlist_outcomes(
+        [strict_market], now=NOW, strict_live_demand=True
+    )
+    assert len(selected) == 2
+    assert selected[0].metadata_at == NOW - timedelta(hours=3)
+
+
+def test_expired_and_low_remaining_markets_rejected_before_publication():
+    expired = discover_complete_markets(
+        _client(
+            {
+                "events": [
+                    _event(
+                        markets=[
+                            _market(end_at=(NOW - timedelta(seconds=1)).isoformat())
+                        ]
+                    )
+                ],
+                "next_cursor": None,
+            }
+        ),
+        now=NOW,
+    )
+    assert expired.status == ResultStatus.COMPLETE
+    assert expired.markets == ()
+    assert expired.diagnostics[0].code == OpportunityDiagnosticCode.MARKET_EXPIRED
+
+    exactly_now = discover_complete_markets(
+        _client(
+            {
+                "events": [
+                    _event(markets=[_market(end_at=NOW.isoformat())])
+                ],
+                "next_cursor": None,
+            }
+        ),
+        now=NOW,
+    )
+    assert exactly_now.status == ResultStatus.COMPLETE
+    assert exactly_now.markets == ()
+    assert exactly_now.diagnostics[0].code == OpportunityDiagnosticCode.MARKET_EXPIRED
+
+    low_remaining = discover_complete_markets(
+        _client(
+            {
+                "events": [
+                    _event(
+                        markets=[
+                            _market(
+                                end_at=(NOW + timedelta(hours=5)).isoformat()
+                            )
+                        ]
+                    )
+                ],
+                "next_cursor": None,
+            }
+        ),
+        now=NOW,
+    )
+    assert low_remaining.status == ResultStatus.COMPLETE
+    assert low_remaining.markets == ()
+    assert (
+        low_remaining.diagnostics[0].code
+        == OpportunityDiagnosticCode.MARKET_TIME_REMAINING_LOW
+    )
+
+
+def test_complete_proof_publishes_tradeable_subset_excluding_expired():
+    client = _client(
+        {
+            "events": [
+                _event(
+                    "event-ok",
+                    markets=[
+                        _market(
+                            "market-ok",
+                            condition_id="condition-ok",
+                            end_at=(NOW + timedelta(days=2)).isoformat(),
+                        )
+                    ],
+                ),
+                _event(
+                    "event-expired",
+                    markets=[
+                        _market(
+                            "market-expired",
+                            condition_id="condition-expired",
+                            end_at=(NOW - timedelta(days=30)).isoformat(),
+                        )
+                    ],
+                ),
+            ],
+            "next_cursor": None,
+        }
+    )
+    result = discover_complete_markets(client, now=NOW)
+    assert result.status == ResultStatus.COMPLETE
+    assert result.pages_fetched == 1
+    assert len(result.markets) == 1
+    assert result.markets[0].market_id == "market-ok"
+    assert any(
+        d.code == OpportunityDiagnosticCode.MARKET_EXPIRED for d in result.diagnostics
+    )
+
+
+def test_future_updated_at_rejected_as_time_invalid_not_metadata_stale():
+    result = discover_complete_markets(
+        _client(
+            {
+                "events": [
+                    _event(
+                        markets=[
+                            _market(
+                                updated_at=(NOW + timedelta(minutes=5)).isoformat()
+                            )
+                        ]
+                    )
+                ],
+                "next_cursor": None,
+            }
+        ),
+        now=NOW,
+    )
+    assert result.status == ResultStatus.COMPLETE
+    assert result.markets == ()
+    assert result.diagnostics[0].code == OpportunityDiagnosticCode.MARKET_TIME_INVALID
+    assert all(
+        d.code != OpportunityDiagnosticCode.METADATA_STALE for d in result.diagnostics
+    )
 
 
 def test_shortlist_caps_at_100_and_has_stable_activity_first_ties():

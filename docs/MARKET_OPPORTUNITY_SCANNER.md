@@ -77,7 +77,7 @@ Separate TTLs:
 | Discovery soft refresh TTL | `OPPORTUNITY_DISCOVERY_TTL_SECONDS` = 300s | Start/continue rebuild |
 | Catalog identity TTL | `OPPORTUNITY_CATALOG_TTL_SECONDS` = **21600s (6h)** | Keep last COMPLETE usable |
 | Discovery session TTL | `OPPORTUNITY_DISCOVERY_SESSION_TTL_SECONDS` = **21600s** | Multi-cycle crawl continuity |
-| Per-market metadata freshness | 600s (Normal) | Shortlist/scoring gate |
+| Execution freshness | live history + CLOB book ages | Stage B fail-closed gates |
 
 **Catalog identity TTL derivation (evidence-based):** observed full keyset crawl
 can exceed one hour; scanner interval is typically 120s; baseline needs two
@@ -86,6 +86,11 @@ default (6h). Soft 300s TTL no longer expires the trusted universe.
 
 While refresh is IN_PROGRESS, baseline/scoring may continue from the last
 COMPLETE catalog. Hard expiry remains fail-closed after catalog identity TTL.
+
+**Gamma `updatedAt` is provenance only** (last market/event row update). It is
+**not** quote, trade, book, or fetch freshness and is **not** a Stage A
+tradeability gate. Trusted-catalog freshness (identity TTL / soft refresh) is
+separate from execution freshness (authoritative history + live CLOB book).
 
 ### Tradeable universe filters
 
@@ -100,12 +105,16 @@ COMPLETE catalog. Hard expiry remains fail-closed after catalog identity TTL.
 - active / not archived / not resolved
 - `enableOrderBook` / accepting orders where present
 - parseable liquidity and 24h volume
-- time remaining and metadata freshness thresholds
-- outcome identity + price-hint bounds for shortlist
+- `end_at` not in the past; mode-specific minimum time remaining before
+  publication into the trusted catalog
+- outcome identity + price-hint bounds for Stage A shortlist
 
-Report separately: raw server pages/events vs tradeable normalized markets.
+Report separately: raw server pages/events vs published tradeable normalized
+markets (expired / low-remaining rows become diagnostics such as
+`MARKET_EXPIRED` / `MARKET_TIME_REMAINING_LOW` and are not published).
 COMPLETE still means terminal-cursor proof over the **actual** server-side
-result set under the verified filters above.
+result set under the verified server filters above; published catalog rows are
+the validated tradeable subset.
 
 ### History-aware shortlist
 

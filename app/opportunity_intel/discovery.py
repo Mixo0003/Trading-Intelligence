@@ -22,11 +22,9 @@ from app.opportunity_intel.settings import (
     BALANCED_MINIMUM_24H_VOLUME_USD,
     BALANCED_MINIMUM_LIQUIDITY_USD,
     BALANCED_MINIMUM_TIME_REMAINING_SECONDS,
-    NORMAL_METADATA_MAXIMUM_AGE_SECONDS,
     STRICT_LIVE_MINIMUM_24H_VOLUME_USD,
     STRICT_LIVE_MINIMUM_LIQUIDITY_USD,
     STRICT_LIVE_MINIMUM_TIME_REMAINING_SECONDS,
-    STRICT_LIVE_METADATA_MAXIMUM_AGE_SECONDS,
 )
 from app.polymarket.links import build_validated_market_link
 
@@ -312,7 +310,9 @@ def discover_complete_markets(
                 pages_fetched=pages_fetched,
             )
         seen_events.add(event_id)
-        event_markets, event_diagnostics = _validate_event(raw_event, event_id)
+        event_markets, event_diagnostics = _validate_event(
+            raw_event, event_id, now=completed_at
+        )
         fatal_codes = {
             OpportunityDiagnosticCode.DUPLICATE_MARKET,
             OpportunityDiagnosticCode.DUPLICATE_ASSET,
@@ -369,9 +369,13 @@ def discover_complete_markets(
 
 
 def _validate_event(
-    raw_event: dict[str, Any], event_id: str
+    raw_event: dict[str, Any],
+    event_id: str,
+    *,
+    now: datetime,
 ) -> tuple[list[ValidatedMarket], list[DiscoveryDiagnostic]]:
     diagnostics: list[DiscoveryDiagnostic] = []
+    clock = _aware_utc(now, "now")
     if (
         raw_event.get("active") is not True
         or raw_event.get("closed") is not False
@@ -438,6 +442,7 @@ def _validate_event(
             event_id=event_id,
             event_slug=str(slug),
             category_ids=category_ids,
+            now=clock,
         )
         if diagnostic is not None:
             diagnostics.append(diagnostic)
@@ -454,6 +459,7 @@ def _validate_market(
     event_id: str,
     event_slug: str,
     category_ids: tuple[str, ...],
+    now: datetime,
 ) -> tuple[ValidatedMarket | None, DiscoveryDiagnostic | None]:
     market_id = _validated_identifier(raw_market.get("id"))
     condition_id = _validated_identifier(raw_market.get("conditionId"))
@@ -540,13 +546,40 @@ def _validate_market(
             event_id=event_id,
             market_id=market_id,
         )
+    clock = _aware_utc(now, "now")
     end_at = _datetime_value(raw_market.get("endDate") or raw_event.get("endDate"))
+    # Gamma updatedAt is provenance only (last row update), not execution freshness.
     metadata_at = _datetime_value(
         raw_market.get("updatedAt") or raw_event.get("updatedAt")
     )
     if end_at is None or metadata_at is None:
         return None, DiscoveryDiagnostic(
             code=OpportunityDiagnosticCode.MARKET_TIME_INVALID,
+            event_id=event_id,
+            market_id=market_id,
+        )
+    # Reject future provenance timestamps; do not reject merely-old updatedAt.
+    if metadata_at > clock:
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.MARKET_TIME_INVALID,
+            event_id=event_id,
+            market_id=market_id,
+        )
+    remaining = (end_at - clock).total_seconds()
+    if remaining <= 0:
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.MARKET_EXPIRED,
+            event_id=event_id,
+            market_id=market_id,
+        )
+    min_remaining = (
+        STRICT_LIVE_MINIMUM_TIME_REMAINING_SECONDS
+        if mode == ObservationMode.LIVE_STRICT
+        else BALANCED_MINIMUM_TIME_REMAINING_SECONDS
+    )
+    if remaining < min_remaining:
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.MARKET_TIME_REMAINING_LOW,
             event_id=event_id,
             market_id=market_id,
         )
@@ -609,7 +642,12 @@ def shortlist_outcomes(
     strict_live_demand: bool,
     max_candidates: int = SHORTLIST_MAX_OUTCOMES,
 ) -> tuple[OutcomeCandidate, ...]:
-    """Pure activity-first shortlist; no HTTP calls and no scoring."""
+    """Pure activity-first shortlist; no HTTP calls and no scoring.
+
+    Gamma ``updatedAt`` / ``metadata_at`` is provenance only and is not used as
+    an execution-freshness gate. Live history and CLOB book ages enforce
+    freshness in Stage B.
+    """
     if not 1 <= max_candidates <= SHORTLIST_MAX_OUTCOMES:
         raise ValueError(
             f"max_candidates must be between 1 and {SHORTLIST_MAX_OUTCOMES}"
@@ -620,23 +658,21 @@ def shortlist_outcomes(
     candidates: list[OutcomeCandidate] = []
     for market in markets:
         if market.mode == ObservationMode.NORMAL:
-            metadata_max_age = NORMAL_METADATA_MAXIMUM_AGE_SECONDS
             min_liquidity = BALANCED_MINIMUM_LIQUIDITY_USD
             min_volume = BALANCED_MINIMUM_24H_VOLUME_USD
             min_remaining = BALANCED_MINIMUM_TIME_REMAINING_SECONDS
         elif market.mode == ObservationMode.LIVE_STRICT:
             if not strict_live_demand:
                 continue
-            metadata_max_age = STRICT_LIVE_METADATA_MAXIMUM_AGE_SECONDS
             min_liquidity = STRICT_LIVE_MINIMUM_LIQUIDITY_USD
             min_volume = STRICT_LIVE_MINIMUM_24H_VOLUME_USD
             min_remaining = STRICT_LIVE_MINIMUM_TIME_REMAINING_SECONDS
         else:  # pragma: no cover - enum exhaustiveness
             continue
-        age = (current - market.metadata_at).total_seconds()
-        remaining = (market.end_at - current).total_seconds()
-        if age < 0 or age > metadata_max_age:
+        # Provenance sanity only: reject future updatedAt; never reject old ages.
+        if market.metadata_at > current:
             continue
+        remaining = (market.end_at - current).total_seconds()
         if remaining < min_remaining:
             continue
         if market.liquidity_usd < min_liquidity:

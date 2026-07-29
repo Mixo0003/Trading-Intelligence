@@ -545,7 +545,9 @@ def advance_discovery_session(
                     published_complete=False,
                 )
             seen_events.add(event_id)
-            event_markets, event_diagnostics = _validate_event(raw_event, event_id)
+            event_markets, event_diagnostics = _validate_event(
+                raw_event, event_id, now=clock
+            )
             fatal_codes = {
                 OpportunityDiagnosticCode.DUPLICATE_MARKET,
                 OpportunityDiagnosticCode.DUPLICATE_ASSET,
