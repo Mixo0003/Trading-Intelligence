@@ -29,7 +29,7 @@ class TestRegionKeyboards:
         assert "🔍 Scan USA" in labels
         assert "🌍 Scan Europe" in labels
         assert "📈 Top Signals" in labels
-        assert "⬅️ Main Menu" in labels
+        assert "⬅️ Polymarket" in labels
 
     def test_no_persistent_reply_keyboard(self):
         assert isinstance(remove_reply_keyboard(), ReplyKeyboardRemove)

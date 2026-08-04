@@ -1,4 +1,4 @@
-"""Unified inline callback router for Weather + Copy Trading menus."""
+"""Unified inline callback router for product hubs + Weather/Copy/Opp menus."""
 
 from __future__ import annotations
 
@@ -17,6 +17,11 @@ from app.telegram.inline_menus import (
     CB_COPY_SETTINGS,
     CB_COPY_STATUS,
     CB_COPY_WATCHLIST,
+    CB_CRYPTO_ARB,
+    CB_CRYPTO_EXCHANGES,
+    CB_CRYPTO_MENU,
+    CB_CRYPTO_OVERVIEW,
+    CB_CRYPTO_SPREAD,
     CB_DISC_BACK,
     CB_DISC_CAT,
     CB_DISC_FIND,
@@ -27,6 +32,14 @@ from app.telegram.inline_menus import (
     CB_DISC_TOP,
     CB_MAIN,
     CB_OPP,
+    CB_PM_MENU,
+    CB_PM_SETTINGS,
+    CB_RESEARCH_COIN,
+    CB_RESEARCH_COMMODITY,
+    CB_RESEARCH_COMPARE,
+    CB_RESEARCH_HISTORY,
+    CB_RESEARCH_MENU,
+    CB_RESEARCH_NEWS,
     CB_SET_ALERT_BOTH,
     CB_SET_ALERT_FOLLOW,
     CB_SET_BALANCED,
@@ -45,13 +58,23 @@ from app.telegram.inline_menus import (
     CB_WX_SCAN_USA,
     CB_WX_TOP,
     COPY_MENU_TEXT,
+    CRYPTO_MENU_TEXT,
+    CRYPTO_STUB_TEXT,
     DISCOVERY_MENU_TEXT,
+    POLYMARKET_MENU_TEXT,
+    POLYMARKET_SETTINGS_TEXT,
+    RESEARCH_MENU_TEXT,
+    RESEARCH_STUB_TEXT,
     SETTINGS_MENU_TEXT,
     WEATHER_MENU_TEXT,
     copy_inline_keyboard,
-    copy_settings_inline_keyboard,
+    crypto_inline_keyboard,
     discovery_inline_keyboard,
     main_inline_keyboard,
+    polymarket_inline_keyboard,
+    polymarket_settings_keyboard,
+    research_inline_keyboard,
+    stub_back_keyboard,
     weather_inline_keyboard,
 )
 from app.telegram.auth import is_admin, require_admin
@@ -65,6 +88,20 @@ _SCAN_CB = {
     CB_WX_SCAN_EUROPE: ScanRegion.EUROPE,
     CB_WX_SCAN_ASIA: ScanRegion.ASIA,
     CB_WX_SCAN_ALL: ScanRegion.ALL,
+}
+
+_CRYPTO_STUBS = {
+    CB_CRYPTO_OVERVIEW,
+    CB_CRYPTO_ARB,
+    CB_CRYPTO_SPREAD,
+    CB_CRYPTO_EXCHANGES,
+}
+_RESEARCH_STUBS = {
+    CB_RESEARCH_COIN,
+    CB_RESEARCH_COMMODITY,
+    CB_RESEARCH_HISTORY,
+    CB_RESEARCH_NEWS,
+    CB_RESEARCH_COMPARE,
 }
 
 
@@ -122,6 +159,46 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if data == CB_MAIN:
         await open_main_menu(update, settings=settings)
         return
+    if data == CB_PM_MENU:
+        await edit_or_reply(
+            update, POLYMARKET_MENU_TEXT, reply_markup=polymarket_inline_keyboard()
+        )
+        return
+    if data == CB_PM_SETTINGS:
+        await edit_or_reply(
+            update,
+            POLYMARKET_SETTINGS_TEXT,
+            reply_markup=polymarket_settings_keyboard(),
+        )
+        return
+    if data == CB_CRYPTO_MENU:
+        await edit_or_reply(
+            update, CRYPTO_MENU_TEXT, reply_markup=crypto_inline_keyboard()
+        )
+        return
+    if data in _CRYPTO_STUBS:
+        await edit_or_reply(
+            update,
+            CRYPTO_STUB_TEXT,
+            reply_markup=stub_back_keyboard(
+                hub_callback=CB_CRYPTO_MENU, hub_label="Crypto Intelligence"
+            ),
+        )
+        return
+    if data == CB_RESEARCH_MENU:
+        await edit_or_reply(
+            update, RESEARCH_MENU_TEXT, reply_markup=research_inline_keyboard()
+        )
+        return
+    if data in _RESEARCH_STUBS:
+        await edit_or_reply(
+            update,
+            RESEARCH_STUB_TEXT,
+            reply_markup=stub_back_keyboard(
+                hub_callback=CB_RESEARCH_MENU, hub_label="Market Research"
+            ),
+        )
+        return
     if data == CB_WEATHER:
         await edit_or_reply(update, WEATHER_MENU_TEXT, reply_markup=weather_inline_keyboard())
         return
@@ -139,6 +216,7 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await edit_or_reply(update, COPY_MENU_TEXT, reply_markup=copy_inline_keyboard())
         return
     if data == CB_TOP:
+        # Legacy weather regional top (kept for /top command / older clients).
         from app.telegram.handlers import top_from_callback
 
         await top_from_callback(update, context)

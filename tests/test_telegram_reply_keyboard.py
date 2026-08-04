@@ -8,9 +8,11 @@ from app.telegram.callback_handler import inline_callback_handler
 from app.telegram.handlers import menu_command, start_command
 from app.telegram.inline_menus import (
     CB_COPY,
+    CB_PM_MENU,
     copy_inline_keyboard,
     discovery_inline_keyboard,
     main_inline_keyboard,
+    polymarket_inline_keyboard,
     remove_reply_keyboard,
     weather_inline_keyboard,
 )
@@ -71,7 +73,14 @@ async def test_inline_weather_and_copy_menus():
     assert "🔍 Scan USA" in _inline_labels(weather_inline_keyboard())
     assert "🏆 Trader Discovery" in _inline_labels(copy_inline_keyboard())
     assert "🏆 Top Traders" in _inline_labels(discovery_inline_keyboard())
-    assert "🌤 Weather Intelligence" in _inline_labels(main_inline_keyboard())
+    assert "📈 Polymarket" in _inline_labels(main_inline_keyboard())
+    assert "🌤 Weather Intelligence" in _inline_labels(polymarket_inline_keyboard())
+    assert CB_PM_MENU in {
+        b.callback_data
+        for row in weather_inline_keyboard().inline_keyboard
+        for b in row
+        if b.callback_data
+    }
 
 
 @pytest.mark.asyncio

@@ -16,16 +16,23 @@ from app.telegram.inline_menus import (
     CB_COPY,
     CB_COPY_DISCOVER,
     CB_MAIN,
+    CB_PM_MENU,
     CB_WEATHER,
     CB_WX_SCAN_USA,
     COPY_MENU_TEXT,
+    CRYPTO_MENU_TEXT,
     DISCOVERY_MENU_TEXT,
     MAIN_MENU_TEXT,
+    POLYMARKET_MENU_TEXT,
+    RESEARCH_MENU_TEXT,
     SETTINGS_MENU_TEXT,
     WEATHER_MENU_TEXT,
     copy_inline_keyboard,
+    crypto_inline_keyboard,
     discovery_inline_keyboard,
     main_inline_keyboard,
+    polymarket_inline_keyboard,
+    research_inline_keyboard,
     weather_inline_keyboard,
 )
 from app.telegram.menu import build_telegram_application
@@ -60,6 +67,9 @@ class TestEnglishOnlyMenus:
     def test_menu_strings_english_only(self):
         for text in (
             MAIN_MENU_TEXT,
+            POLYMARKET_MENU_TEXT,
+            CRYPTO_MENU_TEXT,
+            RESEARCH_MENU_TEXT,
             WEATHER_MENU_TEXT,
             COPY_MENU_TEXT,
             DISCOVERY_MENU_TEXT,
@@ -73,6 +83,9 @@ class TestEnglishOnlyMenus:
     def test_inline_button_labels_english_only(self):
         labels = (
             _callback_labels(main_inline_keyboard())
+            + _callback_labels(polymarket_inline_keyboard())
+            + _callback_labels(crypto_inline_keyboard())
+            + _callback_labels(research_inline_keyboard())
             + _callback_labels(weather_inline_keyboard())
             + _callback_labels(copy_inline_keyboard())
             + _callback_labels(discovery_inline_keyboard())
@@ -98,23 +111,24 @@ class TestNoPersistentKeyboard:
 
     def test_main_inline_menu(self):
         labels = _callback_labels(main_inline_keyboard())
-        assert "🌤 Weather Intelligence" in labels
-        assert "📋 Copy Trading Intelligence" in labels
-        assert "📊 Top Opportunities" in labels
+        assert "📈 Polymarket" in labels
+        assert "₿ Crypto Intelligence" in labels
+        assert "📚 Market Research" in labels
         assert "⚙️ Settings" in labels
+        assert "🌤 Weather Intelligence" not in labels
 
     def test_weather_inline_menu(self):
         labels = _callback_labels(weather_inline_keyboard())
         assert "🔍 Scan USA" in labels
         assert "🌍 Scan Europe" in labels
         assert "📈 Top Signals" in labels
-        assert "⬅️ Main Menu" in labels
+        assert "⬅️ Polymarket" in labels
 
     def test_copy_inline_menu(self):
         labels = _callback_labels(copy_inline_keyboard())
         assert "🏆 Trader Discovery" in labels
         assert "👀 Watchlist" in labels
-        assert "⬅️ Main Menu" in labels
+        assert "⬅️ Polymarket" in labels
 
     def test_discovery_inline_menu(self):
         labels = _callback_labels(discovery_inline_keyboard())
@@ -177,6 +191,11 @@ async def test_back_to_main_and_copy_menus():
     update.callback_query.message.edit_text.assert_awaited()
     text = update.callback_query.message.edit_text.call_args.args[0]
     assert "Choose a section" in text
+
+    update = _callback_update(CB_PM_MENU)
+    await inline_callback_handler(update, context)
+    text = update.callback_query.message.edit_text.call_args.args[0]
+    assert "Polymarket" in text
 
     update = _callback_update(CB_COPY)
     await inline_callback_handler(update, context)
@@ -277,9 +296,11 @@ def test_copy_settings_callbacks_under_64_bytes():
 def test_no_duplicate_callback_data_in_menus():
     all_data = (
         _callback_datas(main_inline_keyboard())
+        + _callback_datas(polymarket_inline_keyboard())
         + _callback_datas(weather_inline_keyboard())
         + _callback_datas(copy_inline_keyboard())
         + _callback_datas(discovery_inline_keyboard())
     )
     assert CB_WEATHER in all_data
     assert CB_WX_SCAN_USA in all_data
+    assert CB_PM_MENU in all_data

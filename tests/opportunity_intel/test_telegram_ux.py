@@ -48,10 +48,12 @@ from app.telegram.inline_menus import (
     CB_COPY,
     CB_OPP,
     CB_OPP_TOP,
+    CB_PM_MENU,
     CB_TOP,
     CB_WEATHER,
     main_inline_keyboard,
     opportunity_inline_keyboard,
+    polymarket_inline_keyboard,
 )
 from app.telegram.menu import build_telegram_application
 from app.telegram.opportunity_intel.formatting import (
@@ -299,19 +301,31 @@ def _seed_ready(settings, *, score="80", mode=ObservationMode.NORMAL):
 @pytest.mark.asyncio
 async def test_main_menu_and_namespace_isolation(settings):
     labels = [b.text for row in main_inline_keyboard().inline_keyboard for b in row]
-    assert "🎯 Market Opportunities" in labels
-    assert "📊 Top Opportunities" in labels
+    assert "📈 Polymarket" in labels
+    assert "🎯 Market Opportunities" not in labels
     datas = [
         b.callback_data for row in main_inline_keyboard().inline_keyboard for b in row
     ]
-    assert CB_OPP in datas
-    assert CB_TOP in datas
+    assert CB_PM_MENU in datas
+    assert CB_OPP not in datas
+    assert CB_TOP not in datas
+
+    pm_datas = [
+        b.callback_data
+        for row in polymarket_inline_keyboard().inline_keyboard
+        for b in row
+    ]
+    assert CB_OPP in pm_datas
+    assert CB_OPP_TOP in pm_datas
+    assert CB_WEATHER in pm_datas
+
     opp_datas = [
         b.callback_data
         for row in opportunity_inline_keyboard().inline_keyboard
         for b in row
     ]
     assert CB_OPP_TOP in opp_datas
+    assert CB_PM_MENU in opp_datas
     assert all(not d.startswith("wx:") for d in opp_datas if d)
     assert all(d != CB_TOP for d in opp_datas)
 
