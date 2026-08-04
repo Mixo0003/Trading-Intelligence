@@ -1,10 +1,11 @@
-"""Read-only Top Opportunities catalog from persisted scanner data."""
+"""Top Opportunities catalog from persisted scanner data + live eligibility."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 from app.config.settings import Settings
 from app.database import opportunity_storage
@@ -21,10 +22,15 @@ from app.opportunity_intel.models import (
 )
 from app.opportunity_intel.payload import DeliveryCardPayload, build_delivery_card_payload
 from app.opportunity_intel.settings import (
-    NORMAL_LATEST_HISTORY_MAXIMUM_AGE_SECONDS,
     OpportunityScannerSettings,
     balanced_settings,
 )
+from app.opportunity_intel.top_eligibility import (
+    TOP_DISPLAY_FRESHNESS_SECONDS,
+    active_catalog_asset_ids,
+    evaluate_top_opportunity_eligibility,
+)
+from app.polymarket.client import PolymarketClient
 
 TOP_OPPORTUNITIES_LIMIT = 3
 
@@ -64,8 +70,13 @@ def load_top_opportunities(
     telegram_id: int,
     now: datetime | None = None,
     limit: int = TOP_OPPORTUNITIES_LIMIT,
+    gamma_client: Any | None = None,
 ) -> TopOpportunitiesResult:
-    """Return filtered cached opportunities. No HTTP, rescoring, or delivery."""
+    """Return live-eligible Top Opportunities from persisted signals.
+
+    Applies a final fail-closed live eligibility filter before formatting.
+    Does not rescore, authorize delivery, or touch Signal History.
+    """
     clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     state = opportunity_storage.load_scanner_state(settings)
     if state is None:
@@ -110,13 +121,23 @@ def load_top_opportunities(
         )
 
     age = (clock - state.last_complete_cycle_at.astimezone(timezone.utc)).total_seconds()
-    if age > float(NORMAL_LATEST_HISTORY_MAXIMUM_AGE_SECONDS) * 30:
+    if age > TOP_DISPLAY_FRESHNESS_SECONDS:
         # Bound: treat multi-hour-old cycles as stale for on-demand display.
         return TopOpportunitiesResult(
             status="stale",
             entries=(),
             message="Cached opportunity data is stale and is not shown as current.",
         )
+
+    active_catalog = opportunity_storage.load_active_catalog(settings)
+    if active_catalog is None:
+        return TopOpportunitiesResult(
+            status="discovering",
+            entries=(),
+            message=DISCOVERING_MESSAGE,
+        )
+    catalog_asset_ids = active_catalog_asset_ids(active_catalog[1])
+    client = gamma_client if gamma_client is not None else PolymarketClient(settings)
 
     user_settings = resolve_user_settings(settings, telegram_id)
     # Synthetic subscription for filter evaluation (Top view ignores delivery gates).
@@ -144,7 +165,7 @@ def load_top_opportunities(
         admin_delivery_enabled=True, user_delivery_enabled=True
     )
 
-    candidates: list[CatalogEntry] = []
+    ranked: list[tuple[OpportunitySignal, Any, Any]] = []
     for signal in opportunity_storage.list_active_signals(settings, limit=50):
         if signal.status != SignalStatus.ACTIVE:
             continue
@@ -197,6 +218,21 @@ def load_top_opportunities(
         metric = qualification.allocation_metric
         if metric.execution_vwap is None or metric.slippage is None:
             continue
+        ranked.append((signal, bundle, metric))
+
+    ranked.sort(key=lambda item: item[0].score, reverse=True)
+    max_entries = max(1, min(limit, TOP_OPPORTUNITIES_LIMIT))
+    selected: list[CatalogEntry] = []
+    for signal, bundle, metric in ranked:
+        eligibility = evaluate_top_opportunity_eligibility(
+            client,
+            signal=signal,
+            bundle=bundle,
+            catalog_asset_ids=catalog_asset_ids,
+            now=clock,
+        )
+        if not eligibility.eligible:
+            continue
         payload = build_delivery_card_payload(
             opportunity_uid=signal.opportunity_uid,
             signal_at=signal.signal_at,
@@ -226,12 +262,12 @@ def load_top_opportunities(
             end_at=bundle.end_at,
             source_observed_at=bundle.observed_at,
         )
-        candidates.append(
+        selected.append(
             CatalogEntry(signal=signal, payload=payload, score=signal.score)
         )
+        if len(selected) >= max_entries:
+            break
 
-    candidates.sort(key=lambda item: item.score, reverse=True)
-    selected = tuple(candidates[: max(1, min(limit, TOP_OPPORTUNITIES_LIMIT))])
     if not selected:
         return TopOpportunitiesResult(
             status="empty",
@@ -240,6 +276,6 @@ def load_top_opportunities(
         )
     return TopOpportunitiesResult(
         status="ready",
-        entries=selected,
+        entries=tuple(selected),
         message=f"Top {len(selected)} cached opportunities",
     )

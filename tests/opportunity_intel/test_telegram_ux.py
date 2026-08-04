@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.database import opportunity_storage
 from app.database.opportunity_storage import (
     initialize_opportunity_schema,
     save_observation_metrics,
@@ -18,6 +19,7 @@ from app.database.opportunity_storage import (
 )
 from app.database.storage import initialize_database, upsert_user
 from app.opportunity_intel.catalog import load_top_opportunities
+from app.opportunity_intel.discovery import ValidatedMarket, ValidatedOutcome
 from app.opportunity_intel.models import (
     CanonicalObservation,
     ExecutionMetrics,
@@ -95,6 +97,59 @@ def _context(settings):
     return context
 
 
+def _live_gamma_client(
+    *,
+    now: datetime | None = None,
+    market_overrides: dict | None = None,
+    event_overrides: dict | None = None,
+    side_effect=None,
+) -> MagicMock:
+    clock = now or datetime.now(timezone.utc)
+    market = {
+        "id": "market-1",
+        "conditionId": "condition-1",
+        "question": "Will it rain?",
+        "active": True,
+        "closed": False,
+        "archived": False,
+        "resolved": False,
+        "enableOrderBook": True,
+        "acceptingOrders": True,
+        "live": False,
+        "liquidityNum": "100000",
+        "volume24hr": "250000",
+        "updatedAt": (clock - timedelta(seconds=30)).isoformat(),
+        "endDate": (clock + timedelta(days=1)).isoformat(),
+        "outcomes": ["Yes", "No"],
+        "clobTokenIds": ["asset-1", "asset-1-no"],
+        "outcomePrices": ["0.55", "0.45"],
+        "events": [
+            {
+                "id": "event-1",
+                "slug": "market-one",
+                "active": True,
+                "closed": False,
+                "archived": False,
+                "resolved": False,
+                "live": False,
+                "updatedAt": (clock - timedelta(seconds=30)).isoformat(),
+                "endDate": (clock + timedelta(days=1)).isoformat(),
+                "tags": [{"id": "politics", "slug": "politics"}],
+            }
+        ],
+    }
+    if market_overrides:
+        market.update(market_overrides)
+    if event_overrides and isinstance(market.get("events"), list) and market["events"]:
+        market["events"][0].update(event_overrides)
+    client = MagicMock()
+    if side_effect is not None:
+        client.get_json.side_effect = side_effect
+    else:
+        client.get_json.return_value = [market]
+    return client
+
+
 def _seed_ready(settings, *, score="80", mode=ObservationMode.NORMAL):
     now = datetime.now(timezone.utc)
     baseline = OpportunityBaseline(
@@ -118,6 +173,41 @@ def _seed_ready(settings, *, score="80", mode=ObservationMode.NORMAL):
         category_ids=("politics",),
         metadata_at=now,
         end_at=now + timedelta(days=1),
+    )
+    opportunity_storage.publish_complete_catalog(
+        settings,
+        markets=[
+            ValidatedMarket(
+                event_id="event-1",
+                market_id="market-1",
+                condition_id="condition-1",
+                event_slug="market-one",
+                question="Will it rain?",
+                category_ids=("politics",),
+                mode=mode,
+                liquidity_usd=Decimal("100000"),
+                volume_24h_usd=Decimal("250000"),
+                metadata_at=now,
+                end_at=now + timedelta(days=1),
+                outcomes=(
+                    ValidatedOutcome(
+                        asset_id="asset-1",
+                        name="Yes",
+                        price_hint=Decimal("0.55"),
+                        index=0,
+                    ),
+                    ValidatedOutcome(
+                        asset_id="asset-1-no",
+                        name="No",
+                        price_hint=Decimal("0.45"),
+                        index=1,
+                    ),
+                ),
+            )
+        ],
+        completed_at=now,
+        discovery_session_id="sess-top",
+        pages_completed=1,
     )
     metrics = tuple(
         ExecutionMetrics(
@@ -269,14 +359,20 @@ def test_top_opportunities_catalog_filters_and_limit(settings):
         ),
         expected_revision=None,
     )
-    result = load_top_opportunities(settings, telegram_id=42)
+    result = load_top_opportunities(
+        settings,
+        telegram_id=42,
+        gamma_client=_live_gamma_client(),
+    )
     assert result.status == "ready"
     assert 1 <= len(result.entries) <= 3
     assert result.entries[0].payload.allocation_usd == Decimal("100")
 
 
 def test_top_opportunities_status_messages(settings):
-    empty = load_top_opportunities(settings, telegram_id=42)
+    empty = load_top_opportunities(
+        settings, telegram_id=42, gamma_client=_live_gamma_client()
+    )
     assert empty.status == "discovering"
     now = datetime.now(timezone.utc)
     save_scanner_state(
@@ -291,7 +387,9 @@ def test_top_opportunities_status_messages(settings):
             updated_at=now,
         ),
     )
-    disabled = load_top_opportunities(settings, telegram_id=42)
+    disabled = load_top_opportunities(
+        settings, telegram_id=42, gamma_client=_live_gamma_client()
+    )
     assert disabled.status == "disabled"
 
 
@@ -437,10 +535,17 @@ async def test_top_callback_uses_cached_path(settings):
     _seed_ready(settings)
     update = _callback_update(CB_OPP_TOP)
     context = _context(settings)
-    with patch(
-        "app.telegram.opportunity_intel.handlers.load_top_opportunities",
-        wraps=load_top_opportunities,
-    ) as mocked:
+    client = _live_gamma_client()
+    with (
+        patch(
+            "app.opportunity_intel.catalog.PolymarketClient",
+            return_value=client,
+        ),
+        patch(
+            "app.telegram.opportunity_intel.handlers.load_top_opportunities",
+            wraps=load_top_opportunities,
+        ) as mocked,
+    ):
         await inline_callback_handler(update, context)
         mocked.assert_called()
     import app.telegram.opportunity_intel.handlers as handlers_mod
@@ -449,6 +554,10 @@ async def test_top_callback_uses_cached_path(settings):
     assert "gamma" not in source.lower()
     assert "fetch_validated_order_book" not in source
     assert "run_cycle" not in source
+    text = update.callback_query.message.edit_text.await_args.args[0]
+    assert "MARKET OPPORTUNITY" in text
+    assert "opportunity_uid" not in text
+    assert not text.lstrip().startswith("{")
 
 
 def test_sanitize_plain_strips_markup():

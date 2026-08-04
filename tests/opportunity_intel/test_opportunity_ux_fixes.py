@@ -398,19 +398,23 @@ def test_top_opportunities_reports_baseline_in_progress(settings):
 
 
 def test_top_opportunities_reports_ready_with_zero_results(settings):
-    from tests.opportunity_intel.test_telegram_ux import _seed_ready
+    from tests.opportunity_intel.test_telegram_ux import _live_gamma_client, _seed_ready
 
     _seed_ready(settings, score="55")
-    result = load_top_opportunities(settings, telegram_id=USER_ID)
+    result = load_top_opportunities(
+        settings, telegram_id=USER_ID, gamma_client=_live_gamma_client()
+    )
     assert result.status == "empty"
     assert result.message == READY_EMPTY_MESSAGE
 
 
 def test_top_opportunities_reports_ready_with_results(settings):
-    from tests.opportunity_intel.test_telegram_ux import _seed_ready
+    from tests.opportunity_intel.test_telegram_ux import _live_gamma_client, _seed_ready
 
     _seed_ready(settings, score="85")
-    result = load_top_opportunities(settings, telegram_id=USER_ID)
+    result = load_top_opportunities(
+        settings, telegram_id=USER_ID, gamma_client=_live_gamma_client()
+    )
     assert result.status == "ready"
     assert result.entries
 

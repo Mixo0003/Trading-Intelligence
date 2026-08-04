@@ -635,6 +635,56 @@ def _validate_market(
     )
 
 
+def validate_gamma_market_for_tradeability(
+    raw_event: dict[str, Any],
+    raw_market: dict[str, Any],
+    *,
+    now: datetime,
+) -> tuple[ValidatedMarket | None, DiscoveryDiagnostic | None]:
+    """Public single-market validation using the canonical discovery policy.
+
+    Applies the same event status + ``_validate_market`` rules used by complete
+    discovery. Does not treat Gamma ``updatedAt`` age as an execution-freshness
+    gate.
+    """
+    clock = _aware_utc(now, "now")
+    event_id = _validated_identifier(raw_event.get("id"))
+    if event_id is None:
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.MARKET_IDENTITY_INVALID,
+        )
+    if (
+        raw_event.get("active") is not True
+        or raw_event.get("closed") is not False
+        or raw_event.get("archived") is not False
+        or raw_event.get("resolved") is True
+    ):
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.MARKET_STATUS_INVALID,
+            event_id=event_id,
+        )
+    slug = raw_event.get("slug")
+    if build_validated_market_link(slug) is None:
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.LINK_SLUG_INVALID,
+            event_id=event_id,
+        )
+    category_ids = _category_ids(raw_event.get("tags"))
+    if category_ids is None:
+        return None, DiscoveryDiagnostic(
+            code=OpportunityDiagnosticCode.MARKET_CATEGORY_INVALID,
+            event_id=event_id,
+        )
+    return _validate_market(
+        raw_event,
+        raw_market,
+        event_id=event_id,
+        event_slug=str(slug),
+        category_ids=category_ids,
+        now=clock,
+    )
+
+
 def shortlist_outcomes(
     markets: tuple[ValidatedMarket, ...] | list[ValidatedMarket],
     *,
