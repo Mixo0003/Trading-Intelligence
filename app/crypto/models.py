@@ -144,8 +144,46 @@ class OverviewReport:
 
 
 @dataclass(frozen=True)
+class GrossArbOpportunity:
+    """Best positive gross cross-exchange price gap for one spot symbol (V3.0.0c).
+
+    Gross only — never treated as guaranteed or executable profit.
+    """
+
+    instrument: Instrument
+    market_type: MarketType
+    buy_exchange_id: str
+    buy_ask: float
+    sell_exchange_id: str
+    sell_bid: float
+    gross_spread_abs: float
+    gross_spread_pct: float
+    buy_timestamp_ms: int
+    sell_timestamp_ms: int
+    receive_timestamp_ms: int
+    age_seconds: float
+    health_status: HealthStatus
+
+
+@dataclass(frozen=True)
+class ArbReject:
+    exchange_id: str | None
+    symbol: str | None
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class ArbReport:
+    enabled: bool
+    symbols: tuple[str, ...]
+    opportunities: tuple[GrossArbOpportunity, ...]
+    rejects: tuple[ArbReject, ...]
+
+
+@dataclass(frozen=True)
 class ArbitrageCandidate:
-    """Reserved for V3.0.0c — never presented as guaranteed profit."""
+    """Legacy shape retained for tests/docs; V3.0.0c uses GrossArbOpportunity."""
 
     buy_exchange_id: str
     sell_exchange_id: str

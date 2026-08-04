@@ -196,12 +196,16 @@ async def test_crypto_and_research_stubs_are_placeholders():
     await inline_callback_handler(update, context)
     text = update.callback_query.message.edit_text.await_args.args[0]
     assert "Crypto Intelligence" in text
-    assert "placeholder" in text.lower() or "Spread Monitor" in text or "Market Overview" in text
+    assert "Spread Monitor" in text or "Market Overview" in text or "Arbitrage" in text
 
     update = _callback_update(CB_CRYPTO_ARB)
+    context.application.bot_data = {
+        "settings": make_test_settings(crypto_intel_enabled=False)
+    }
     await inline_callback_handler(update, context)
-    stub = update.callback_query.message.edit_text.await_args.args[0]
-    assert "placeholder" in stub.lower() or "Coming in V3" in stub
+    arb = update.callback_query.message.edit_text.await_args.args[0]
+    assert "Arbitrage Opportunities" in arb
+    assert "disabled" in arb.lower() or "Gross" in arb
 
     update = _callback_update(CB_RESEARCH_MENU)
     await inline_callback_handler(update, context)

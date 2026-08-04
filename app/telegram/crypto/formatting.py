@@ -5,10 +5,17 @@ from __future__ import annotations
 from app.crypto.api_result import ApiFailure, ApiSuccess
 from app.crypto.health import summarize_exchange_health
 from app.crypto.models import (
+    ArbReport,
     ExchangeHealth,
     HealthStatus,
     OverviewReport,
     SpreadQuote,
+)
+
+ARB_DISCLAIMER = (
+    "Gross price difference before fees, slippage, transfer costs, latency, "
+    "and execution risk. Not guaranteed profit and not an executable "
+    "arbitrage instruction."
 )
 
 _STATUS_LABEL = {
@@ -63,6 +70,51 @@ def format_market_overview(report: OverviewReport, *, max_reject_lines: int = 12
             )
     else:
         lines.append("No fresh overview rows.")
+
+    if report.rejects:
+        lines.append("")
+        lines.append(f"Rejected ({len(report.rejects)}):")
+        shown = 0
+        for item in report.rejects:
+            if shown >= max_reject_lines:
+                remaining = len(report.rejects) - shown
+                lines.append(f"+{remaining} more rejected")
+                break
+            where = item.exchange_id or "—"
+            sym = item.symbol or "—"
+            lines.append(f"• {sym} @{where}: {item.code} — {item.message}")
+            shown += 1
+    return "\n".join(lines)
+
+
+def format_arbitrage_opportunities(
+    report: ArbReport, *, max_reject_lines: int = 12
+) -> str:
+    symbols = ", ".join(report.symbols) if report.symbols else "(none)"
+    lines = [
+        "💱 Arbitrage Opportunities",
+        f"Watchlist: {symbols} (spot)",
+        "Read-only · public top-of-book · gross gaps only.",
+        ARB_DISCLAIMER,
+        "",
+    ]
+    if not report.enabled:
+        lines.append("Crypto Intelligence is disabled (CRYPTO_INTEL_ENABLED=false).")
+        return "\n".join(lines)
+
+    if report.opportunities:
+        for opp in report.opportunities:
+            lines.append(
+                f"• {opp.instrument.canonical_symbol}: "
+                f"buy@{opp.buy_exchange_id} ask={opp.buy_ask:.6g} → "
+                f"sell@{opp.sell_exchange_id} bid={opp.sell_bid:.6g} | "
+                f"gross={opp.gross_spread_abs:.6g} ({opp.gross_spread_pct:.4f}%) "
+                f"age={opp.age_seconds:.1f}s health={opp.health_status.value} "
+                f"buy_ts={opp.buy_timestamp_ms} sell_ts={opp.sell_timestamp_ms} "
+                f"recv_ts={opp.receive_timestamp_ms}"
+            )
+    else:
+        lines.append("No valid positive gross opportunities.")
 
     if report.rejects:
         lines.append("")
