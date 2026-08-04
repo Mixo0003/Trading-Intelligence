@@ -5,9 +5,18 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 
 from app.config.constants import (
+    DEFAULT_BINANCE_PUBLIC_BASE_URL,
+    DEFAULT_BINGX_PUBLIC_BASE_URL,
+    DEFAULT_BYBIT_PUBLIC_BASE_URL,
+    DEFAULT_CRYPTO_HTTP_TIMEOUT_SECONDS,
+    DEFAULT_CRYPTO_MAX_QUOTE_AGE_SECONDS,
+    DEFAULT_CRYPTO_SYMBOLS,
     DEFAULT_DB_PATH,
+    DEFAULT_KUCOIN_PUBLIC_BASE_URL,
     DEFAULT_LANGUAGE,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_MEXC_PUBLIC_BASE_URL,
+    DEFAULT_OKX_PUBLIC_BASE_URL,
     DEFAULT_STORAGE_ACTIVE_LOG_NAME,
     DEFAULT_STORAGE_BACKUP_DIR,
     DEFAULT_STORAGE_CACHE_DIR,
@@ -242,6 +251,18 @@ class Settings:
     opportunity_concurrency: int
     opportunity_cycle_deadline_seconds: int
     opportunity_first_run_delay_seconds: int
+
+    crypto_intel_enabled: bool
+    crypto_intel_read_only: bool
+    crypto_max_quote_age_seconds: float
+    crypto_http_timeout_seconds: float
+    crypto_symbols: list[str]
+    crypto_binance_base_url: str
+    crypto_bybit_base_url: str
+    crypto_okx_base_url: str
+    crypto_bingx_base_url: str
+    crypto_mexc_base_url: str
+    crypto_kucoin_base_url: str
 
     @property
     def scheduled_reports_configured(self) -> bool:
@@ -653,4 +674,48 @@ def load_settings() -> Settings:
             maximum=600,
             name="OPPORTUNITY_FIRST_RUN_DELAY_SECONDS",
         ),
+        crypto_intel_enabled=_parse_bool(os.getenv("CRYPTO_INTEL_ENABLED", "false")),
+        crypto_intel_read_only=_parse_bool(
+            os.getenv("CRYPTO_INTEL_READ_ONLY", "true"), default=True
+        ),
+        crypto_max_quote_age_seconds=max(
+            1.0,
+            float(
+                os.getenv(
+                    "CRYPTO_MAX_QUOTE_AGE_SECONDS",
+                    str(DEFAULT_CRYPTO_MAX_QUOTE_AGE_SECONDS),
+                )
+            ),
+        ),
+        crypto_http_timeout_seconds=max(
+            1.0,
+            float(
+                os.getenv(
+                    "CRYPTO_HTTP_TIMEOUT_SECONDS",
+                    str(DEFAULT_CRYPTO_HTTP_TIMEOUT_SECONDS),
+                )
+            ),
+        ),
+        crypto_symbols=_split_cities(
+            os.getenv("CRYPTO_SYMBOLS", DEFAULT_CRYPTO_SYMBOLS)
+        )
+        or _split_cities(DEFAULT_CRYPTO_SYMBOLS),
+        crypto_binance_base_url=os.getenv(
+            "CRYPTO_BINANCE_BASE_URL", DEFAULT_BINANCE_PUBLIC_BASE_URL
+        ).rstrip("/"),
+        crypto_bybit_base_url=os.getenv(
+            "CRYPTO_BYBIT_BASE_URL", DEFAULT_BYBIT_PUBLIC_BASE_URL
+        ).rstrip("/"),
+        crypto_okx_base_url=os.getenv(
+            "CRYPTO_OKX_BASE_URL", DEFAULT_OKX_PUBLIC_BASE_URL
+        ).rstrip("/"),
+        crypto_bingx_base_url=os.getenv(
+            "CRYPTO_BINGX_BASE_URL", DEFAULT_BINGX_PUBLIC_BASE_URL
+        ).rstrip("/"),
+        crypto_mexc_base_url=os.getenv(
+            "CRYPTO_MEXC_BASE_URL", DEFAULT_MEXC_PUBLIC_BASE_URL
+        ).rstrip("/"),
+        crypto_kucoin_base_url=os.getenv(
+            "CRYPTO_KUCOIN_BASE_URL", DEFAULT_KUCOIN_PUBLIC_BASE_URL
+        ).rstrip("/"),
     )

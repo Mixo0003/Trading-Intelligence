@@ -182,4 +182,19 @@ def maybe_alert_readonly_violation(settings: Settings) -> list[tuple[int, str, s
             summary="Read-only safety violation",
         )
         return sync_incidents_from_health(settings, overall)
+    if settings.crypto_intel_enabled and not settings.crypto_intel_read_only:
+        overall = OverallHealth(
+            status="DOWN",
+            components=(
+                ComponentStatus(
+                    component="crypto_readonly",
+                    status="DOWN",
+                    detail="READ-ONLY SAFETY VIOLATION",
+                    checked_at="",
+                ),
+            ),
+            checked_at="",
+            summary="Crypto read-only safety violation",
+        )
+        return sync_incidents_from_health(settings, overall)
     return []

@@ -93,6 +93,8 @@ _SCAN_CB = {
 _CRYPTO_STUBS = {
     CB_CRYPTO_OVERVIEW,
     CB_CRYPTO_ARB,
+}
+_CRYPTO_LIVE = {
     CB_CRYPTO_SPREAD,
     CB_CRYPTO_EXCHANGES,
 }
@@ -175,6 +177,11 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await edit_or_reply(
             update, CRYPTO_MENU_TEXT, reply_markup=crypto_inline_keyboard()
         )
+        return
+    if data in _CRYPTO_LIVE:
+        from app.telegram.crypto.handlers import handle_crypto_callback
+
+        await handle_crypto_callback(update, context, data)
         return
     if data in _CRYPTO_STUBS:
         await edit_or_reply(

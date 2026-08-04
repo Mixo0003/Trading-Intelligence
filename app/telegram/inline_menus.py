@@ -597,8 +597,9 @@ POLYMARKET_SETTINGS_TEXT = (
 )
 CRYPTO_MENU_TEXT = (
     "🪙 Crypto Intelligence\n"
-    "Coming in V3 — not live.\n"
-    "No exchange APIs are called from this menu."
+    "Read-only · public market data · paper-only.\n"
+    "Spread Monitor and Exchanges & Health are available when enabled.\n"
+    "Market Overview and Arbitrage remain placeholders."
 )
 CRYPTO_STUB_TEXT = (
     "🪙 Crypto Intelligence\n"

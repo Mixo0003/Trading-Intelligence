@@ -113,6 +113,17 @@ def make_test_settings(**overrides) -> Settings:
         opportunity_concurrency=5,
         opportunity_cycle_deadline_seconds=75,
         opportunity_first_run_delay_seconds=30,
+        crypto_intel_enabled=False,
+        crypto_intel_read_only=True,
+        crypto_max_quote_age_seconds=30.0,
+        crypto_http_timeout_seconds=8.0,
+        crypto_symbols=["BTC/USDT", "ETH/USDT"],
+        crypto_binance_base_url="https://api.binance.com",
+        crypto_bybit_base_url="https://api.bybit.com",
+        crypto_okx_base_url="https://www.okx.com",
+        crypto_bingx_base_url="https://open-api.bingx.com",
+        crypto_mexc_base_url="https://api.mexc.com",
+        crypto_kucoin_base_url="https://api.kucoin.com",
     )
     base.update(overrides)
     return Settings(**base)
