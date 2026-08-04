@@ -172,6 +172,19 @@ def crypto_overview_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def crypto_arb_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔄 Refresh", callback_data=CB_CRYPTO_ARB)],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Crypto Intelligence", callback_data=CB_CRYPTO_MENU
+                )
+            ],
+        ]
+    )
+
+
 def research_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -611,8 +624,9 @@ POLYMARKET_SETTINGS_TEXT = (
 CRYPTO_MENU_TEXT = (
     "🪙 Crypto Intelligence\n"
     "Read-only · public market data · paper-only.\n"
-    "Market Overview, Spread Monitor, and Exchanges & Health are available when enabled.\n"
-    "Arbitrage remains a placeholder."
+    "Market Overview, Arbitrage, Spread Monitor, and Exchanges & Health "
+    "are available when enabled.\n"
+    "Arbitrage shows gross price gaps only — not guaranteed profit."
 )
 CRYPTO_STUB_TEXT = (
     "🪙 Crypto Intelligence\n"

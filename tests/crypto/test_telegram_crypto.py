@@ -42,17 +42,26 @@ async def test_crypto_hub_updated_copy():
     text = update.callback_query.message.edit_text.await_args.args[0]
     assert "Crypto Intelligence" in text
     assert "Market Overview" in text
+    assert "Arbitrage" in text
     assert "Spread Monitor" in text
-    assert "placeholder" in text.lower()
+    assert "not guaranteed profit" in text.lower()
 
 
 @pytest.mark.asyncio
-async def test_arb_remains_placeholder():
-    update = _callback_update(CB_CRYPTO_ARB)
+async def test_arb_live_disabled_refresh_back(tmp_path):
+    settings = make_test_settings(
+        database_path=str(tmp_path / "arb.db"),
+        crypto_intel_enabled=False,
+        admin_ids=[1001],
+    )
+    update = _callback_update(CB_CRYPTO_ARB, user_id=42)
     context = _context()
+    context.application.bot_data = {"settings": settings}
     await inline_callback_handler(update, context)
-    stub = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Coming in V3" in stub or "placeholder" in stub.lower()
+    text = update.callback_query.message.edit_text.await_args.args[0]
+    assert "Arbitrage Opportunities" in text
+    assert "disabled" in text.lower()
+    assert "Not guaranteed profit" in text
     markup = update.callback_query.message.edit_text.await_args.kwargs["reply_markup"]
     datas = [
         btn.callback_data
@@ -60,7 +69,38 @@ async def test_arb_remains_placeholder():
         for btn in row
         if btn.callback_data
     ]
+    assert CB_CRYPTO_ARB in datas
     assert CB_CRYPTO_MENU in datas
+    update.effective_message.reply_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_arb_enabled_uses_collector(tmp_path):
+    from app.crypto.models import ArbReport
+
+    settings = make_test_settings(
+        database_path=str(tmp_path / "arb2.db"),
+        crypto_intel_enabled=True,
+        crypto_intel_read_only=True,
+    )
+    fake = ArbReport(
+        enabled=True,
+        symbols=("BTC/USDT",),
+        opportunities=(),
+        rejects=(),
+    )
+    update = _callback_update(CB_CRYPTO_ARB)
+    context = _context()
+    context.application.bot_data = {"settings": settings}
+    with patch(
+        "app.telegram.crypto.handlers.collect_arbitrage_opportunities",
+        return_value=fake,
+    ) as collect:
+        await inline_callback_handler(update, context)
+        collect.assert_called_once()
+    text = update.callback_query.message.edit_text.await_args.args[0]
+    assert "Arbitrage Opportunities" in text
+    assert "not an executable" in text.lower()
 
 
 @pytest.mark.asyncio

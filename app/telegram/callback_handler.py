@@ -90,11 +90,10 @@ _SCAN_CB = {
     CB_WX_SCAN_ALL: ScanRegion.ALL,
 }
 
-_CRYPTO_STUBS = {
-    CB_CRYPTO_ARB,
-}
+_CRYPTO_STUBS: set[str] = set()
 _CRYPTO_LIVE = {
     CB_CRYPTO_OVERVIEW,
+    CB_CRYPTO_ARB,
     CB_CRYPTO_SPREAD,
     CB_CRYPTO_EXCHANGES,
 }

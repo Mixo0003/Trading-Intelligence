@@ -16,7 +16,7 @@ START_TEXT = """🚀 TI — Trading Intelligence
 Status: ONLINE
 Mode: ANALYSIS ONLY
 
-Polymarket tools live today. Crypto Overview/Spread/Exchanges are read-only when enabled; Research remains a V3 placeholder.
+Polymarket tools live today. Crypto Overview/Arbitrage/Spread/Exchanges are read-only when enabled; Research remains a V3 placeholder.
 Does not place trades or connect a wallet.
 
 Use /menu or Telegram’s Menu button for navigation.
