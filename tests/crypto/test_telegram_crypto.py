@@ -41,26 +41,81 @@ async def test_crypto_hub_updated_copy():
     await inline_callback_handler(update, context)
     text = update.callback_query.message.edit_text.await_args.args[0]
     assert "Crypto Intelligence" in text
+    assert "Market Overview" in text
     assert "Spread Monitor" in text
-    assert "placeholders" in text.lower()
+    assert "placeholder" in text.lower()
 
 
 @pytest.mark.asyncio
-async def test_overview_and_arb_remain_placeholders():
+async def test_arb_remains_placeholder():
+    update = _callback_update(CB_CRYPTO_ARB)
     context = _context()
-    for data in (CB_CRYPTO_OVERVIEW, CB_CRYPTO_ARB):
-        update = _callback_update(data)
+    await inline_callback_handler(update, context)
+    stub = update.callback_query.message.edit_text.await_args.args[0]
+    assert "Coming in V3" in stub or "placeholder" in stub.lower()
+    markup = update.callback_query.message.edit_text.await_args.kwargs["reply_markup"]
+    datas = [
+        btn.callback_data
+        for row in markup.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    ]
+    assert CB_CRYPTO_MENU in datas
+
+
+@pytest.mark.asyncio
+async def test_overview_live_disabled_and_refresh_back(tmp_path):
+    settings = make_test_settings(
+        database_path=str(tmp_path / "ov.db"),
+        crypto_intel_enabled=False,
+        admin_ids=[1001],
+    )
+    update = _callback_update(CB_CRYPTO_OVERVIEW, user_id=42)
+    context = _context()
+    context.application.bot_data = {"settings": settings}
+    await inline_callback_handler(update, context)
+    text = update.callback_query.message.edit_text.await_args.args[0]
+    assert "Market Overview" in text
+    assert "disabled" in text.lower()
+    markup = update.callback_query.message.edit_text.await_args.kwargs["reply_markup"]
+    datas = [
+        btn.callback_data
+        for row in markup.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    ]
+    assert CB_CRYPTO_OVERVIEW in datas  # refresh
+    assert CB_CRYPTO_MENU in datas
+    update.effective_message.reply_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_overview_enabled_uses_collector(tmp_path):
+    from app.crypto.models import OverviewReport
+
+    settings = make_test_settings(
+        database_path=str(tmp_path / "ov2.db"),
+        crypto_intel_enabled=True,
+        crypto_intel_read_only=True,
+    )
+    fake = OverviewReport(
+        enabled=True,
+        symbols=("BTC/USDT",),
+        rows=(),
+        rejects=(),
+    )
+    update = _callback_update(CB_CRYPTO_OVERVIEW)
+    context = _context()
+    context.application.bot_data = {"settings": settings}
+    with patch(
+        "app.telegram.crypto.handlers.collect_market_overview",
+        return_value=fake,
+    ) as collect:
         await inline_callback_handler(update, context)
-        stub = update.callback_query.message.edit_text.await_args.args[0]
-        assert "Coming in V3" in stub or "placeholder" in stub.lower()
-        markup = update.callback_query.message.edit_text.await_args.kwargs["reply_markup"]
-        datas = [
-            btn.callback_data
-            for row in markup.inline_keyboard
-            for btn in row
-            if btn.callback_data
-        ]
-        assert CB_CRYPTO_MENU in datas
+        collect.assert_called_once()
+    text = update.callback_query.message.edit_text.await_args.args[0]
+    assert "Market Overview" in text
+    assert "not guaranteed" in text.lower()
 
 
 @pytest.mark.asyncio
