@@ -1,5 +1,72 @@
 # Changelog
 
+## V2.2.3 — Market Opportunity Scanner (2026-07-27)
+
+**Approved status:**
+
+- **Implementation (Checkpoints 1–7) complete and committed locally on `feature/v2.2.3-market-opportunity-scanner`.**
+- **Checkpoint 8 documentation + full suite + release preparation.**
+- **Production migration: not performed.**
+- **Live Telegram verification: pending.**
+- **Genuine automatic opportunity delivery: not proven.**
+
+This is **not** production GO, **not** live-verified, and **not released**.
+
+### Added / changed
+
+- Additive SQLite foundations (`opportunity_intel_v1`) for market state, metrics, signals, subscriptions, settings edits/audit, deliveries, gates, scanner/runtime state.
+- Public Gamma discovery with complete-discovery fail-closed and separate Gamma HTTP budget (max 10 attempts/cycle).
+- Public CLOB price-history and order-book clients with shared per-cycle CLOB HTTP budget (max 50 attempts including retries and STRICT confirmation books).
+- Two-cycle baseline, episode hysteresis, canonical score version 1, Normal and STRICT live policy gates.
+- Top Opportunities catalog and deterministic Market Opportunity Telegram cards.
+- Editable per-user opportunity settings with preview/confirm, revision protection, and audit.
+- Same-wave admin/user delivery selection, delivery worker (PENDING / RETRY_WAIT / CLAIMED), immutable delivery payloads.
+- Runtime scheduler with idempotent JobQueue registration, DB lock renew, cooperative deadline token, late-worker selection suppression, and health probes.
+- Retention policy registration for opportunity datasets (prune remains disabled / dry-run by default).
+- Config flags default **off**: `OPPORTUNITY_SCANNER_ENABLED`, `OPPORTUNITY_AUTO_ALERTS_ENABLED`, `OPPORTUNITY_USER_DELIVERY_ENABLED`.
+
+### Docs
+
+- `docs/MARKET_OPPORTUNITY_SCANNER.md` (new)
+- Updates: `PROJECT_STATUS.md`, `ROADMAP.md`, `CHANGELOG.md`
+
+### Deferred / mandatory backlog
+
+- WebSocket streaming, reconnect, replay, and gap recovery
+- Faster / sub-minute live scanning
+- True short-window volume spikes; trade-count reconstruction
+- Digest mode; Useful / Not useful feedback; saved watchlists
+- Free/Pro entitlements; payments
+- External forecasts; fair-value models; AI/news explanations
+- Arbitrage Intelligence; cross-market opportunities
+- Outcome-performance calibration; scoring calibration from live data
+- Fully Decimal logarithmic scoring or explicit score-v1 reproducibility policy
+- Large-wallet Copy pagination; Reduce/Close Copy alerts
+- Real trading only after separate explicit permission
+
+### Automated verification (2026-07-27, Checkpoint 8)
+
+- Temp-DB migration proof: empty, pre-existing, idempotent, rollback, retention registry, integrity `ok` — PASS (`opportunity_intel_v1`).
+- Focused foundation/retention tests: **37 passed**.
+- Full suite `pytest -q`: **1213 passed, 2 skipped, 1 warning** in 977.58s.
+- Warning: Python 3.15 date-parse DeprecationWarning in `app/polymarket/discovery.py` (pre-existing weather path; not a V2.2.3 failure).
+- Live Telegram verification: **pending**.
+
+### Controlled live / production gates (not started)
+
+- Verified production backup and integrity check
+- Additive production migration of `opportunity_intel_v1` through the approved entry point
+- Idempotent re-run; integrity `ok`; no VACUUM / journal_mode changes
+- Exactly one logical Telegram poller
+- Controlled enablement of scanner / alerts only under explicit operator instruction
+- Genuine automatic opportunity delivery and user-delivery live proof
+
+### Safety
+
+- Read-only / paper-only / public-data-only
+- No second Telegram poller launched by opportunity scheduling
+- No `.env`, production DB, or runtime artifacts modified during Checkpoint 8
+
 ## V2.2.2 — Trustworthy New/Increase Copy Alerts (2026-07-23)
 
 **Approved status:**

@@ -100,13 +100,19 @@ def _finite_positive(value: Any) -> float | None:
 
 
 def normalize_book_timestamp(
-    raw: Any, *, received_at: float
+    raw: Any,
+    *,
+    received_at: float,
+    max_quote_age_seconds: float = MAX_QUOTE_AGE_SECONDS,
 ) -> tuple[float, str] | ApiFailure:
     """Normalize book timestamp to epoch seconds.
 
     Official unit is not assumed. Accept seconds or milliseconds only when
     exactly one interpretation is consistent with ``received_at``.
     """
+    max_age = float(max_quote_age_seconds)
+    if not math.isfinite(max_age) or max_age <= 0:
+        return _failure(code="invalid_max_quote_age", message="max quote age invalid")
     if raw is None or raw == "":
         return _failure(code="missing_timestamp", message="timestamp missing")
     try:
@@ -123,7 +129,7 @@ def normalize_book_timestamp(
         age = received_at - quote_at
         if age < -CLOCK_SKEW_TOLERANCE_SECONDS:
             return False
-        if age > MAX_QUOTE_AGE_SECONDS:
+        if age > max_age:
             return False
         return True
 
@@ -194,9 +200,21 @@ def parse_validated_order_book(
     requested_asset: str,
     received_at: float | None = None,
     request_count: int = 1,
+    max_quote_age_seconds: float | None = None,
 ) -> ApiResult[ValidatedOrderBook]:
     """Fail-closed parse of one CLOB /book JSON body into a validated snapshot."""
     received = float(time.time() if received_at is None else received_at)
+    max_age = (
+        MAX_QUOTE_AGE_SECONDS
+        if max_quote_age_seconds is None
+        else float(max_quote_age_seconds)
+    )
+    if not math.isfinite(max_age) or max_age <= 0:
+        return _failure(
+            code="invalid_max_quote_age",
+            message="max quote age invalid",
+            request_count=request_count,
+        )
     if not isinstance(payload, dict):
         return _failure(
             code="wrong_type",
@@ -228,7 +246,11 @@ def parse_validated_order_book(
             request_count=request_count,
         )
 
-    ts_result = normalize_book_timestamp(payload.get("timestamp"), received_at=received)
+    ts_result = normalize_book_timestamp(
+        payload.get("timestamp"),
+        received_at=received,
+        max_quote_age_seconds=max_age,
+    )
     if isinstance(ts_result, ApiFailure):
         return ApiFailure(
             code=ts_result.code,
@@ -245,7 +267,7 @@ def parse_validated_order_book(
             message="timestamp beyond clock-skew tolerance",
             request_count=request_count,
         )
-    if quote_age > MAX_QUOTE_AGE_SECONDS:
+    if quote_age > max_age:
         return _failure(
             code="stale_quote",
             message="quote age exceeds max allowed",

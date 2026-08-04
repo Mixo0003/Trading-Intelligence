@@ -131,7 +131,32 @@ Do not perform broad refactors without a proven failing acceptance test.
 - Safety defaults unchanged: real cleanup and pruning remain disabled / dry-run; no automatic VACUUM or `journal_mode` changes; backup creation is explicit and admin-confirmed.
 - Copy freshness: baseline/watermarks/`processed_copy_events`; re-enable starts a new baseline; no alerts until baseline `COMPLETE`.
 - Health: deterministic probes, admin-only System Health UX (`ADMIN_IDS`), deduplicated incidents; AI explainer off by default.
-- The real `.env` was not modified as part of V2.1 / V2.1.1 / V2.2.1 / V2.2.2 source work.
+- The real `.env` was not modified as part of V2.1 / V2.1.1 / V2.2.1 / V2.2.2 / V2.2.3 source work.
+
+### V2.2.3 — Market Opportunity Scanner
+
+- Branch: `feature/v2.2.3-market-opportunity-scanner` (local HEAD at Checkpoint 8 start: `0316a45`).
+- Approved status:
+  - **Implementation (Checkpoints 1–7) complete and committed locally.**
+  - **Checkpoint 8 documentation + full suite + release preparation in progress on this working tree.**
+  - **Production migration: not performed.**
+  - **Live Telegram verification: pending.**
+  - **Genuine automatic opportunity delivery: not proven.**
+- This is **not** production GO and **not** a release until controlled migration and genuine live proof pass under an explicit operator prompt.
+- Delivered (code complete, defaults off):
+  - public-data-only discovery, history, and CLOB books; complete-discovery fail-closed;
+  - two-cycle baseline; canonical score version 1; Normal and STRICT live controls;
+  - Top Opportunities + deterministic Market Opportunity cards; editable settings;
+  - same-wave admin/user delivery architecture; delivery worker;
+  - scheduler with deadline containment, shared CLOB budget (50) / Gamma budget (10), health probes;
+  - additive migration marker `opportunity_intel_v1`; retention policy registration.
+- Runtime defaults remain disabled: `OPPORTUNITY_SCANNER_ENABLED=false`, `OPPORTUNITY_AUTO_ALERTS_ENABLED=false`, `OPPORTUNITY_USER_DELIVERY_ENABLED=false`.
+- Automated verification (Checkpoint 8, 2026-07-27):
+  - temp-DB migration proof PASS (`opportunity_intel_v1`);
+  - focused foundation/retention: **37 passed**;
+  - full suite: **1213 passed, 2 skipped, 1 warning** in 977.58s;
+  - live Telegram verification: **pending**.
+- See `docs/MARKET_OPPORTUNITY_SCANNER.md`, `ROADMAP.md`, `CHANGELOG.md`.
 
 ### V2.2.2 — Trustworthy New/Increase Copy Alerts
 
@@ -189,18 +214,19 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
 - Only a sanitized source-only worktree may be scanned; exclude `.env`, databases, backups, logs, caches, and runtime data.
 - Strix is **not a blocker** for merged V2.1.1 / V2.2.1 work — it remains an optional external audit.
 
-## V2.1 / V2.1.1 / V2.2.1 / V2.2.2 modules
+## V2.1 / V2.1.1 / V2.2.1 / V2.2.2 / V2.2.3 modules
 
 | Area | Path |
 |------|------|
 | Freshness | `app/copy_intel/freshness.py` |
 | Copy settings | `app/copy_intel/settings_*.py`, `app/telegram/copy_intel/*`, `docs/COPY_SETTINGS.md` |
 | Trustworthy alerts (V2.2.2) | `app/copy_intel/{api_result,data_client,position_book,trade_correlation,order_book,recommendation,paper_commit,delivery}.py`, `app/telegram/copy_intel/formatting.py`, `docs/COPY_ALERTS.md` |
+| Market Opportunity Scanner (V2.2.3) | `app/opportunity_intel/*`, `app/database/opportunity_storage.py`, `app/telegram/opportunity_intel/*`, `docs/MARKET_OPPORTUNITY_SCANNER.md` |
 | Health core | `app/health/*` |
 | Storage metrics / cleanup / backup / prune | `app/storage/*`, `app/health/storage_metrics.py`, `app/health/storage_alerts.py` |
 | Admin auth | `app/telegram/auth.py` |
 | Health + Storage UX | `app/telegram/health/*` |
-| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `docs/COPY_SETTINGS.md`, `docs/COPY_ALERTS.md`, `ROADMAP.md`, `CHANGELOG.md` |
+| Docs | `AGENTS.md`, `docs/HEALTH_MONITOR.md`, `docs/COPY_EVENT_FRESHNESS.md`, `docs/COPY_SETTINGS.md`, `docs/COPY_ALERTS.md`, `docs/MARKET_OPPORTUNITY_SCANNER.md`, `ROADMAP.md`, `CHANGELOG.md` |
 
 ## Latest live weather proof
 
@@ -282,7 +308,8 @@ Current result: one active USA event satisfies this acceptance card.
 - [x] Copy event freshness / baseline protection (V2.1);
 - [x] Storage metrics, cleanup, backup, retention pruning, admin Storage UX (V2.1.1 — merged);
 - [x] Editable Copy Settings (V2.2.1 — merged, live-verified);
-- [ ] Trustworthy New/Increase Copy Alerts (V2.2.2 — implementation and automated verification complete; live infrastructure verified; genuine supported-wallet event proof pending; large-wallet pagination support deferred).
+- [ ] Trustworthy New/Increase Copy Alerts (V2.2.2 — implementation and automated verification complete; live infrastructure verified; genuine supported-wallet event proof pending; large-wallet pagination support deferred);
+- [ ] Market Opportunity Scanner (V2.2.3 — implementation complete locally; Checkpoint 8 docs/full suite/release prep; production migration and live Telegram verification pending; defaults remain disabled).
 
 ### Phase 4 — Telegram UX
 
@@ -299,7 +326,7 @@ Only after weather MVP acceptance, evaluate separate modules for arbitrage detec
 
 Each future module must have a separate collector, normalizer, signal engine, cache, tests, and Telegram view.
 
-Next candidate: **V2.2.3 — Market Opportunity Scanner**. Candidate outcomes are active-market discovery; liquidity, volume, and freshness filters; meaningful price-movement and spread detection; executable order-book depth inspection; opportunity ranking; useful Telegram alerts or digests; stored signal history; and later post-signal outcome measurement. It remains read-only and paper-only.
+**V2.2.3 — Market Opportunity Scanner** is implemented on `feature/v2.2.3-market-opportunity-scanner` (see above). Next product candidates after V2.2.3 release gates: V2.2.4 Trader Comparison and remaining Copy deferred items. Later modules may still include digests, watchlists, and outcome measurement; they remain read-only and paper-only until separately approved.
 
 ### Phase 6 — Financial validation
 
@@ -324,7 +351,7 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-After V2.2.2 documentation finalization is explicitly approved, begin Plan / Research and Grill Me for **V2.2.3 — Market Opportunity Scanner** on a separate version branch. Keep the genuine supported-wallet V2.2.2 FOLLOW-event proof open as an evidence task; do not reinterpret it as full Live Telegram GO or release evidence. Oversized-wallet pagination support remains deferred.
+Complete **V2.2.3 Checkpoint 8** release preparation (documentation, full suite, migration proof on temporary databases only). Then, only under an explicit operator prompt: verified production backup → additive `opportunity_intel_v1` migration → controlled live Telegram verification with scanner/alerts still gated. Do not claim production GO before those gates. Keep the genuine supported-wallet V2.2.2 FOLLOW-event proof open as a separate evidence task. Oversized-wallet pagination support remains deferred.
 
 ## Fresh Cursor context startup prompt
 

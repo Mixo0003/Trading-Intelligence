@@ -44,22 +44,31 @@ def request_with_retry(
     base_delay: float = _DEFAULT_BASE_DELAY,
     max_delay: float = _DEFAULT_MAX_DELAY,
     retry_permanent: bool = False,
+    before_attempt: Callable[[int], None] | None = None,
     **kwargs: Any,
 ) -> requests.Response:
     """Issue an HTTP request, retrying only connection/timeout/429/5xx failures.
 
     Permanent client errors (400/401/403) are never retried unless
     ``retry_permanent`` is explicitly enabled (tests only).
+
+    ``before_attempt(attempt_number)`` runs before each network call so callers
+    can enforce per-attempt budgets. Every network attempt counts once.
     """
     attempts = max(1, int(max_attempts))
     last_exc: BaseException | None = None
     response: requests.Response | None = None
+    attempt_count = 0
 
     for attempt in range(1, attempts + 1):
+        if before_attempt is not None:
+            before_attempt(attempt)
+        attempt_count = attempt
         try:
             response = requests.request(method, url, **kwargs)
             status = response.status_code
             if is_permanent_status(status) and not retry_permanent:
+                setattr(response, "request_count", attempt_count)
                 return response
             if is_retryable_status(status) and attempt < attempts:
                 delay = _backoff_seconds(attempt, base=base_delay, cap=max_delay)
@@ -73,6 +82,7 @@ def request_with_retry(
                 )
                 time.sleep(delay)
                 continue
+            setattr(response, "request_count", attempt_count)
             return response
         except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as exc:
             last_exc = exc
@@ -102,6 +112,7 @@ def request_with_retry(
             time.sleep(delay)
 
     if response is not None:
+        setattr(response, "request_count", attempt_count)
         return response
     assert last_exc is not None
     raise last_exc

@@ -2210,6 +2210,30 @@ def try_acquire_job_lock(
             return False
 
 
+def renew_job_lock(
+    settings: Settings,
+    *,
+    job_name: str,
+    owner: str,
+    ttl_seconds: int,
+) -> bool:
+    """Extend lock expiry only when the caller still owns the lock."""
+    now = datetime.now(timezone.utc)
+    expires = datetime.fromtimestamp(
+        now.timestamp() + max(1, ttl_seconds), tz=timezone.utc
+    ).isoformat()
+    with get_connection(settings) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE copy_job_locks
+            SET expires_at = ?
+            WHERE job_name = ? AND owner = ?
+            """,
+            (expires, job_name, owner),
+        )
+        return cursor.rowcount == 1
+
+
 def release_job_lock(settings: Settings, *, job_name: str, owner: str) -> None:
     with get_connection(settings) as connection:
         connection.execute(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import traceback
@@ -77,6 +78,95 @@ def should_skip_wallet_poll(
     return (now_ts - last) < interval
 
 
+def _poll_wallets_sync(settings: Settings) -> tuple[list, str | None, int]:
+    """Blocking wallet poll/baseline body. Runs off the Telegram event loop."""
+    assert_read_only(settings)
+    client = CopyDataClient(settings)
+    entries = list_entries(settings)
+    labels = {e.wallet: (e.label or e.wallet[:10]) for e in entries}
+    owners = {e.wallet: e.added_by for e in entries}
+    hard_age = hard_filter_max_event_age_seconds(settings)
+    pending_recs: list[tuple[str, str, object, int | None]] = []
+    last_error = None
+    stale_rejects = 0
+    for wallet in list_enabled(settings):
+        try:
+            owner_id = owners.get(wallet)
+            if should_skip_wallet_poll(settings, wallet, owner_id=owner_id):
+                logger.debug("Copy poll skip wallet %s (user interval)", wallet[:10])
+                continue
+
+            ensure_baseline_current(settings, wallet)
+            if not baseline_is_complete(settings, wallet):
+                status = run_baseline(settings, wallet, client=client)
+                copy_storage.touch_wallet_last_polled(settings, wallet)
+                if status != "COMPLETE":
+                    last_error = f"baseline {status} for {wallet[:10]}"
+                continue
+
+            events = ingest_wallet(settings, wallet, client=client)
+            copy_storage.touch_wallet_last_polled(settings, wallet)
+            alertable = filter_alertable_events(
+                settings,
+                wallet,
+                events,
+                max_age_seconds=hard_age,
+            )
+            stale_rejects += max(0, len(events) - len(alertable))
+            owner_settings = (
+                get_user_settings(settings, owner_id)
+                if owner_id is not None
+                else get_user_settings(settings, 0)
+            )
+            for event in alertable:
+                if event.event_type in {"open", "increase"}:
+                    rec = build_recommendation(
+                        settings,
+                        event,
+                        trader_label=labels.get(wallet),
+                        client=client,
+                        min_liquidity_usd=owner_settings.min_liquidity_usd,
+                    )
+                    uid = event.event_uid or build_event_uid(event)
+                    event_ts = int(event.ts) if event.ts is not None else None
+                    include, paper_result = prepare_pending_recommendation(
+                        settings,
+                        rec,
+                        condition_id=event.condition_id or "",
+                        asset=event.asset or "",
+                    )
+                    if not include:
+                        if paper_result is not None:
+                            logger.warning(
+                                "Copy paper commit blocked delivery for %s: %s",
+                                uid[:24],
+                                paper_result.code,
+                            )
+                        continue
+                    pending_recs.append((uid, wallet, rec, event_ts))
+        except Exception as exc:
+            last_error = str(exc)
+            logger.exception("Copy intel poll failed for %s", wallet)
+    copy_storage.set_poll_state(
+        settings,
+        "last_poll_at",
+        datetime.now(timezone.utc).isoformat(),
+    )
+    copy_storage.set_poll_state(settings, "last_event_count", str(len(pending_recs)))
+    copy_storage.set_poll_state(settings, "last_stale_rejects", str(stale_rejects))
+    if pending_recs:
+        copy_storage.set_poll_state(
+            settings,
+            "last_new_event_at",
+            datetime.now(timezone.utc).isoformat(),
+        )
+    if last_error:
+        copy_storage.set_poll_state(settings, "last_error", last_error)
+    else:
+        copy_storage.set_poll_state(settings, "last_error", "")
+    return pending_recs, last_error, stale_rejects
+
+
 async def copy_intel_poll_job(context) -> None:
     settings: Settings = context.application.bot_data["settings"]
     if not settings.copy_intel_enabled:
@@ -105,95 +195,9 @@ async def copy_intel_poll_job(context) -> None:
     )
 
     try:
-        assert_read_only(settings)
-        client = CopyDataClient(settings)
-        entries = list_entries(settings)
-        labels = {e.wallet: (e.label or e.wallet[:10]) for e in entries}
-        owners = {e.wallet: e.added_by for e in entries}
-        hard_age = hard_filter_max_event_age_seconds(settings)
-        # (event_uid, wallet, recommendation, event_ts)
-        pending_recs: list[tuple[str, str, object, int | None]] = []
-        last_error = None
-        stale_rejects = 0
-        for wallet in list_enabled(settings):
-            try:
-                owner_id = owners.get(wallet)
-                if should_skip_wallet_poll(settings, wallet, owner_id=owner_id):
-                    logger.debug("Copy poll skip wallet %s (user interval)", wallet[:10])
-                    continue
-
-                # Outdated/missing baseline_version → MIGRATING; first cycle is baseline-only.
-                ensure_baseline_current(settings, wallet)
-                if not baseline_is_complete(settings, wallet):
-                    status = run_baseline(settings, wallet, client=client)
-                    copy_storage.touch_wallet_last_polled(settings, wallet)
-                    if status != "COMPLETE":
-                        last_error = f"baseline {status} for {wallet[:10]}"
-                    continue
-
-                events = ingest_wallet(settings, wallet, client=client)
-                copy_storage.touch_wallet_last_polled(settings, wallet)
-                alertable = filter_alertable_events(
-                    settings,
-                    wallet,
-                    events,
-                    max_age_seconds=hard_age,
-                )
-                stale_rejects += max(0, len(events) - len(alertable))
-                owner_settings = (
-                    get_user_settings(settings, owner_id)
-                    if owner_id is not None
-                    else get_user_settings(settings, 0)
-                )
-                for event in alertable:
-                    if event.event_type in {"open", "increase"}:
-                        rec = build_recommendation(
-                            settings,
-                            event,
-                            trader_label=labels.get(wallet),
-                            client=client,
-                            min_liquidity_usd=owner_settings.min_liquidity_usd,
-                        )
-                        uid = event.event_uid or build_event_uid(event)
-                        event_ts = int(event.ts) if event.ts is not None else None
-                        # Checkpoint 8: paper write only after immutable COPY;
-                        # failed paper write blocks later delivery eligibility.
-                        include, paper_result = prepare_pending_recommendation(
-                            settings,
-                            rec,
-                            condition_id=event.condition_id or "",
-                            asset=event.asset or "",
-                        )
-                        if not include:
-                            if paper_result is not None:
-                                logger.warning(
-                                    "Copy paper commit blocked delivery for %s: %s",
-                                    uid[:24],
-                                    paper_result.code,
-                                )
-                            continue
-                        pending_recs.append((uid, wallet, rec, event_ts))
-            except Exception as exc:
-                last_error = str(exc)
-                logger.exception("Copy intel poll failed for %s", wallet)
-        copy_storage.set_poll_state(
-            settings,
-            "last_poll_at",
-            datetime.now(timezone.utc).isoformat(),
+        pending_recs, _last_error, _stale_rejects = await asyncio.to_thread(
+            _poll_wallets_sync, settings
         )
-        copy_storage.set_poll_state(settings, "last_event_count", str(len(pending_recs)))
-        copy_storage.set_poll_state(settings, "last_stale_rejects", str(stale_rejects))
-        if pending_recs:
-            copy_storage.set_poll_state(
-                settings,
-                "last_new_event_at",
-                datetime.now(timezone.utc).isoformat(),
-            )
-        if last_error:
-            copy_storage.set_poll_state(settings, "last_error", last_error)
-        else:
-            copy_storage.set_poll_state(settings, "last_error", "")
-
         await deliver_pending_alerts(context, settings, pending_recs)
         await retry_due_alert_deliveries(context, settings)
 

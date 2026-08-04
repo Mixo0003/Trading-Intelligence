@@ -65,6 +65,24 @@ class TestThresholds:
         )
         assert status == "DOWN"
 
+    def test_subthreshold_failure_does_not_degrade_on_success(self, settings):
+        status, fails, succs = apply_consecutive_thresholds(
+            settings,
+            probe_ok=False,
+            consecutive_failures=0,
+            consecutive_successes=4,
+        )
+        assert status == "HEALTHY"
+        assert fails == 1
+        status, fails, succs = apply_consecutive_thresholds(
+            settings,
+            probe_ok=True,
+            consecutive_failures=fails,
+            consecutive_successes=0,
+        )
+        assert status == "HEALTHY"
+        assert fails == 0
+
 
 class TestAggregation:
     def test_critical_down(self):
