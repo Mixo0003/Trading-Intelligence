@@ -195,8 +195,8 @@ async def test_crypto_and_research_stubs_are_placeholders():
     context = _context()
     await inline_callback_handler(update, context)
     text = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Coming in V3" in text
-    assert "not live" in text.lower()
+    assert "Crypto Intelligence" in text
+    assert "placeholders" in text.lower() or "Spread Monitor" in text
 
     update = _callback_update(CB_CRYPTO_ARB)
     await inline_callback_handler(update, context)

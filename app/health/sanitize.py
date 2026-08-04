@@ -86,6 +86,8 @@ def sanitize_config_summary(settings) -> dict[str, Any]:
     return {
         "copy_intel_enabled": settings.copy_intel_enabled,
         "copy_intel_read_only": settings.copy_intel_read_only,
+        "crypto_intel_enabled": settings.crypto_intel_enabled,
+        "crypto_intel_read_only": settings.crypto_intel_read_only,
         "health_monitor_enabled": settings.health_monitor_enabled,
         "health_alerts_enabled": settings.health_alerts_enabled,
         "admin_count": len(settings.admin_ids),

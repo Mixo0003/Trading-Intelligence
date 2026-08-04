@@ -1,6 +1,17 @@
 PROJECT_NAME = "Trading Intelligence"
 PROJECT_VERSION = "0.1.0"
 
+# Crypto Intelligence (V3.0.0a) — public REST defaults only; no trading keys.
+DEFAULT_CRYPTO_SYMBOLS = "BTC/USDT,ETH/USDT"
+DEFAULT_CRYPTO_MAX_QUOTE_AGE_SECONDS = 30.0
+DEFAULT_CRYPTO_HTTP_TIMEOUT_SECONDS = 8.0
+DEFAULT_BINANCE_PUBLIC_BASE_URL = "https://api.binance.com"
+DEFAULT_BYBIT_PUBLIC_BASE_URL = "https://api.bybit.com"
+DEFAULT_OKX_PUBLIC_BASE_URL = "https://www.okx.com"
+DEFAULT_BINGX_PUBLIC_BASE_URL = "https://open-api.bingx.com"
+DEFAULT_MEXC_PUBLIC_BASE_URL = "https://api.mexc.com"
+DEFAULT_KUCOIN_PUBLIC_BASE_URL = "https://api.kucoin.com"
+
 DEFAULT_LANGUAGE = "en"
 SUPPORTED_LANGUAGES = ["en"]
 

@@ -292,6 +292,57 @@ def probe_copy_readonly(settings: Settings) -> ComponentStatus:
     )
 
 
+def probe_crypto_readonly(settings: Settings) -> ComponentStatus:
+    if not settings.crypto_intel_enabled:
+        return _update_state(
+            settings,
+            "crypto_readonly",
+            probe_ok=True,
+            forced_status="DISABLED",
+            detail="Crypto Intelligence disabled",
+            metrics={"enabled": False},
+        )
+    if not settings.crypto_intel_read_only:
+        return _update_state(
+            settings,
+            "crypto_readonly",
+            probe_ok=False,
+            hard_down=True,
+            detail="READ-ONLY SAFETY VIOLATION: crypto_intel_read_only is false",
+            metrics={"read_only": False},
+        )
+    return _update_state(
+        settings,
+        "crypto_readonly",
+        probe_ok=True,
+        detail="Crypto Intelligence read-only confirmed",
+        metrics={"read_only": True},
+    )
+
+
+def probe_crypto_intelligence(settings: Settings) -> ComponentStatus:
+    if not settings.crypto_intel_enabled:
+        return _update_state(
+            settings,
+            "crypto_intel",
+            probe_ok=True,
+            forced_status="DISABLED",
+            detail="Crypto Intelligence disabled",
+            metrics={"enabled": False},
+        )
+    metrics: dict = {
+        "read_only": settings.crypto_intel_read_only,
+        "symbols": list(settings.crypto_symbols),
+    }
+    return _update_state(
+        settings,
+        "crypto_intel",
+        probe_ok=True,
+        detail="Crypto Intelligence enabled (public market data)",
+        metrics=metrics,
+    )
+
+
 def probe_copy_intelligence(settings: Settings) -> ComponentStatus:
     if not settings.copy_intel_enabled:
         return _update_state(
@@ -519,6 +570,8 @@ def run_health_check(
         probe_weather(settings),
         probe_copy_intelligence(settings),
         probe_copy_readonly(settings),
+        probe_crypto_intelligence(settings),
+        probe_crypto_readonly(settings),
         probe_infrastructure(settings),
         *probe_opportunity_components(settings, bot_data=bot_data),
     ]
