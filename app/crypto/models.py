@@ -112,8 +112,40 @@ class SpreadQuote:
 
 
 @dataclass(frozen=True)
+class OverviewRow:
+    """One successful Market Overview quote (V3.0.0b)."""
+
+    exchange_id: str
+    instrument: Instrument
+    market_type: MarketType
+    best_bid: float
+    best_ask: float
+    midpoint: float
+    timestamp_ms: int
+    age_seconds: float
+    freshness: Literal["fresh"]
+    health_status: HealthStatus
+
+
+@dataclass(frozen=True)
+class OverviewReject:
+    exchange_id: str | None
+    symbol: str | None
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class OverviewReport:
+    enabled: bool
+    symbols: tuple[str, ...]
+    rows: tuple[OverviewRow, ...]
+    rejects: tuple[OverviewReject, ...]
+
+
+@dataclass(frozen=True)
 class ArbitrageCandidate:
-    """Reserved for V3.0.0b — never presented as guaranteed profit."""
+    """Reserved for V3.0.0c — never presented as guaranteed profit."""
 
     buy_exchange_id: str
     sell_exchange_id: str
