@@ -8,10 +8,25 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRe
 CB_MAIN = "nav:main"
 CB_WEATHER = "nav:weather"
 CB_COPY = "nav:copy"
-CB_TOP = "nav:top"
+CB_TOP = "nav:top"  # legacy weather top; /top command still uses this
 CB_OPP = "nav:opp"
 CB_SETTINGS = "nav:settings"
 CB_HEALTH = "nav:health"
+
+# V2.2.4 product hubs (shell only — leaf product callbacks stay nav:/wx:/copy:/opp:).
+CB_PM_MENU = "pm:menu"
+CB_PM_SETTINGS = "pm:settings"
+CB_CRYPTO_MENU = "crypto:menu"
+CB_CRYPTO_OVERVIEW = "crypto:overview"
+CB_CRYPTO_ARB = "crypto:arb"
+CB_CRYPTO_SPREAD = "crypto:spread"
+CB_CRYPTO_EXCHANGES = "crypto:exchanges"
+CB_RESEARCH_MENU = "research:menu"
+CB_RESEARCH_COIN = "research:coin"
+CB_RESEARCH_COMMODITY = "research:commodity"
+CB_RESEARCH_HISTORY = "research:history"
+CB_RESEARCH_NEWS = "research:news"
+CB_RESEARCH_COMPARE = "research:compare"
 
 CB_WX_SCAN_USA = "wx:scan:usa"
 CB_WX_SCAN_EUROPE = "wx:scan:europe"
@@ -86,10 +101,9 @@ def remove_reply_keyboard() -> ReplyKeyboardRemove:
 
 def main_inline_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
-        [InlineKeyboardButton("📋 Copy Trading Intelligence", callback_data=CB_COPY)],
-        [InlineKeyboardButton("🎯 Market Opportunities", callback_data=CB_OPP)],
-        [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_TOP)],
+        [InlineKeyboardButton("📈 Polymarket", callback_data=CB_PM_MENU)],
+        [InlineKeyboardButton("₿ Crypto Intelligence", callback_data=CB_CRYPTO_MENU)],
+        [InlineKeyboardButton("📚 Market Research", callback_data=CB_RESEARCH_MENU)],
         [InlineKeyboardButton("⚙️ Settings", callback_data=CB_SETTINGS)],
     ]
     if is_admin:
@@ -98,6 +112,82 @@ def main_inline_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🩺 System Health", callback_data=CB_HEALTH)],
         )
     return InlineKeyboardMarkup(rows)
+
+
+def polymarket_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
+            [InlineKeyboardButton("📋 Copy Intelligence", callback_data=CB_COPY)],
+            [InlineKeyboardButton("🎯 Market Opportunities", callback_data=CB_OPP)],
+            [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_OPP_TOP)],
+            [InlineKeyboardButton("🕘 Signal History", callback_data=CB_OPP_HISTORY)],
+            [InlineKeyboardButton("⚙️ Polymarket Settings", callback_data=CB_PM_SETTINGS)],
+            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def polymarket_settings_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("⚙️ Copy Settings", callback_data=CB_COPY_SETTINGS)],
+            [InlineKeyboardButton("🔔 Opp Alert Settings", callback_data=CB_OPP_ALERTS)],
+            [InlineKeyboardButton("🎛 Opp Filters", callback_data=CB_OPP_FILTERS)],
+            [InlineKeyboardButton("⬅️ Polymarket", callback_data=CB_PM_MENU)],
+        ]
+    )
+
+
+def crypto_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📊 Market Overview", callback_data=CB_CRYPTO_OVERVIEW)],
+            [
+                InlineKeyboardButton(
+                    "💱 Arbitrage Opportunities", callback_data=CB_CRYPTO_ARB
+                )
+            ],
+            [InlineKeyboardButton("↔️ Spread Monitor", callback_data=CB_CRYPTO_SPREAD)],
+            [
+                InlineKeyboardButton(
+                    "🏦 Exchanges & Health", callback_data=CB_CRYPTO_EXCHANGES
+                )
+            ],
+            [InlineKeyboardButton("↩️ Back", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def research_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🪙 Coin Analysis", callback_data=CB_RESEARCH_COIN)],
+            [
+                InlineKeyboardButton(
+                    "🛢 Commodity Analysis", callback_data=CB_RESEARCH_COMMODITY
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📈 Price History & Trends", callback_data=CB_RESEARCH_HISTORY
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📰 News & Market Drivers", callback_data=CB_RESEARCH_NEWS
+                )
+            ],
+            [InlineKeyboardButton("🔎 Compare Assets", callback_data=CB_RESEARCH_COMPARE)],
+            [InlineKeyboardButton("↩️ Back", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def stub_back_keyboard(*, hub_callback: str, hub_label: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"⬅️ {hub_label}", callback_data=hub_callback)]]
+    )
 
 
 def weather_inline_keyboard() -> InlineKeyboardMarkup:
@@ -115,7 +205,7 @@ def weather_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("📈 Top Signals", callback_data=CB_WX_TOP),
                 InlineKeyboardButton("📅 Forecasts", callback_data=CB_WX_FORECAST),
             ],
-            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+            [InlineKeyboardButton("⬅️ Polymarket", callback_data=CB_PM_MENU)],
         ]
     )
 
@@ -133,7 +223,7 @@ def copy_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("📒 Paper Portfolio", callback_data=CB_COPY_PAPER),
             ],
             [InlineKeyboardButton("⚙️ Copy Settings", callback_data=CB_COPY_SETTINGS)],
-            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+            [InlineKeyboardButton("⬅️ Polymarket", callback_data=CB_PM_MENU)],
         ]
     )
 
@@ -347,7 +437,7 @@ def opportunity_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Signal History", callback_data=CB_OPP_HISTORY),
             ],
             [InlineKeyboardButton("Scanner Status", callback_data=CB_OPP_STATUS)],
-            [InlineKeyboardButton("⬅️ Back", callback_data=CB_MAIN)],
+            [InlineKeyboardButton("⬅️ Polymarket", callback_data=CB_PM_MENU)],
         ]
     )
 
@@ -495,6 +585,36 @@ def opportunity_category_keyboard(
 
 
 MAIN_MENU_TEXT = "Trading Intelligence\nChoose a section:"
+POLYMARKET_MENU_TEXT = (
+    "📈 Polymarket\n"
+    "Weather, Copy, and Market Opportunity tools.\n"
+    "Analysis mode only — does not place trades."
+)
+POLYMARKET_SETTINGS_TEXT = (
+    "⚙️ Polymarket Settings\n"
+    "Jump to Copy or Opportunity settings.\n"
+    "No new settings schema in this version."
+)
+CRYPTO_MENU_TEXT = (
+    "🪙 Crypto Intelligence\n"
+    "Coming in V3 — not live.\n"
+    "No exchange APIs are called from this menu."
+)
+CRYPTO_STUB_TEXT = (
+    "🪙 Crypto Intelligence\n"
+    "Coming in V3 — not live.\n"
+    "This screen is a placeholder only."
+)
+RESEARCH_MENU_TEXT = (
+    "🔎 Market Research\n"
+    "Coming in V3 — not live.\n"
+    "No market-data APIs are called from this menu."
+)
+RESEARCH_STUB_TEXT = (
+    "🔎 Market Research\n"
+    "Coming in V3 — not live.\n"
+    "This screen is a placeholder only."
+)
 WEATHER_MENU_TEXT = "🌤 Weather Intelligence\nChoose an action:"
 COPY_MENU_TEXT = "📋 Copy Trading\nMode: analysis only (read-only)"
 DISCOVERY_MENU_TEXT = "🏆 Trader Discovery\nPublic Polymarket data"
