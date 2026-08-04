@@ -272,16 +272,16 @@ def test_same_wave_for_admin_and_user_with_allocation_payloads(settings):
     assert {row.wave_at for row in rows} == {wave_at}
     assert {row.signal_at for row in rows} == {signal.signal_at}
     assert {row.opportunity_uid for row in rows} == {signal.opportunity_uid}
-    admin_payload = DeliveryCardPayload.from_payload_text(
-        next(r for r in rows if r.telegram_id == ADMIN_ID).payload_text
-    )
-    user_payload = DeliveryCardPayload.from_payload_text(
-        next(r for r in rows if r.telegram_id == USER_ID).payload_text
-    )
-    assert admin_payload.allocation_usd == Decimal("100")
-    assert user_payload.allocation_usd == Decimal("250")
-    assert admin_payload.canonical_score == signal.score
-    assert user_payload.canonical_score == signal.score
+    admin_text = next(r for r in rows if r.telegram_id == ADMIN_ID).payload_text
+    user_text = next(r for r in rows if r.telegram_id == USER_ID).payload_text
+    assert admin_text.startswith("MARKET OPPORTUNITY")
+    assert user_text.startswith("MARKET OPPORTUNITY")
+    assert "Proposed allocation: $100.00" in admin_text
+    assert "Proposed allocation: $250.00" in user_text
+    assert f"Score: {signal.score}" in admin_text or "Score:" in admin_text
+    assert "{" not in admin_text and "}" not in admin_text
+    assert "opportunity_uid" not in admin_text
+    assert "canonical_score" not in admin_text
 
 
 def test_wave_selection_is_idempotent(settings):

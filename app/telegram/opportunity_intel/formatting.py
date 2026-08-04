@@ -23,48 +23,45 @@ def sanitize_plain(text: str, *, maximum: int = 500) -> str:
 
 
 def format_opportunity_card(payload: DeliveryCardPayload, *, now: datetime | None = None) -> str:
-    clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    remaining = payload.end_at.astimezone(timezone.utc) - clock
-    remaining_hours = max(0, int(remaining.total_seconds() // 3600))
-    remaining_minutes = max(0, int((remaining.total_seconds() % 3600) // 60))
-    signal_age_s = max(
-        0, int((clock - payload.signal_at.astimezone(timezone.utc)).total_seconds())
-    )
+    """Human-readable Opportunity alert / Top Opportunities card.
+
+    Never emits raw JSON, dict repr, internal UIDs, or bare reason_codes.
+    """
+    _ = now  # Absolute signal/end timestamps; clock reserved for API compat.
+    signal_family = _signal_family_label(payload.signal_family.value)
     lines = [
         "MARKET OPPORTUNITY",
-        f"Score: {_score(payload.canonical_score)} / 100",
-        "Executable Momentum (analysis only)",
+        f"{signal_family} (analysis only)",
     ]
     if payload.mode == ObservationMode.LIVE_STRICT:
         lines.extend(["LIVE / IN-PLAY", "STRICT DATA CHECKS"])
     lines.extend(
         [
             "",
-            sanitize_plain(payload.question, maximum=400),
+            f"Market: {sanitize_plain(payload.question, maximum=400)}",
             f"Outcome: {sanitize_plain(payload.outcome, maximum=80)}",
+            f"Direction: {payload.direction.value}",
+            f"Score: {_score(payload.canonical_score)} / 100",
+            f"Signal type: {signal_family}",
+            f"Why this signal triggered: {reason_codes_to_text(payload.reason_codes)}",
+            "",
+            "Price",
+            f"Trader/execution price: {_pp(payload.execution_vwap)}",
             f"Midpoint: {_pp(payload.midpoint)}",
+            f"Best bid: {_pp(payload.best_bid)}",
             f"Best ask: {_pp(payload.best_ask)}",
-            f"Paper execution VWAP: {_pp(payload.execution_vwap)}",
-            f"Paper allocation: ${_money(payload.allocation_usd)}",
-            f"Absolute spread: {_pp(payload.absolute_spread)}",
-            f"Relative spread: {_pct(payload.relative_spread)}",
-            f"Allocation slippage: {_pct(payload.slippage)}",
-            f"Liquidity: ${_money(payload.liquidity_usd)}",
-            f"24h volume: ${_money(payload.volume_24h_usd)}",
-            (
-                f"Recent move 5m/15m/1h: {_move(payload.move_5m)} / "
-                f"{_move(payload.move_15m)} / {_move(payload.move_1h)}"
-            ),
-            "Measurement windows: 5m / 15m / 1h (authoritative history timestamps)",
-            f"Bid / Ask: {_pp(payload.best_bid)} / {_pp(payload.best_ask)}",
+            "",
+            "Execution",
+            f"Proposed allocation: ${_money(payload.allocation_usd)}",
             f"Executable ask depth: ${_money(payload.executable_ask_depth_usd)}",
-            f"Time remaining: {remaining_hours}h {remaining_minutes}m",
-            f"Signal age: {signal_age_s}s",
-            f"Reasons: {reason_codes_to_text(payload.reason_codes)}",
-            (
-                "Source data (UTC): "
-                f"{payload.source_observed_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}"
-            ),
+            f"Slippage: {_pct(payload.slippage)}",
+            "",
+            "Liquidity",
+            f"Total liquidity: ${_money(payload.liquidity_usd)}",
+            f"24h volume: ${_money(payload.volume_24h_usd)}",
+            "",
+            f"Signal time (UTC): {_ts_utc(payload.signal_at)}",
+            f"Market end (UTC): {_ts_utc(payload.end_at)}",
             (
                 "Disclaimer: analysis-only paper view of executable momentum and "
                 "book quality. Not fair value, not arbitrage, no profit promise, "
@@ -73,7 +70,7 @@ def format_opportunity_card(payload: DeliveryCardPayload, *, now: datetime | Non
         ]
     )
     if payload.market_link:
-        lines.append(f"Polymarket: {payload.market_link}")
+        lines.append(f"Open market: {payload.market_link}")
     text = "\n".join(lines)
     if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
         text = text[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
@@ -217,4 +214,13 @@ def _pct(value: Decimal) -> str:
 
 
 def _money(value: Decimal) -> str:
-    return format(value.quantize(Decimal("0.01")), "f")
+    quantized = value.quantize(Decimal("0.01"))
+    return f"{quantized:,.2f}"
+
+
+def _ts_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _signal_family_label(value: str) -> str:
+    return value.replace("_", " ").title()

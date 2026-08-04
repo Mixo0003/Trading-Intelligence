@@ -22,6 +22,7 @@ from app.opportunity_intel.models import (
     OpportunityDiagnosticCode,
 )
 from app.opportunity_intel.payload import build_delivery_card_payload
+from app.telegram.opportunity_intel.formatting import format_opportunity_card
 from app.opportunity_intel.quiet_hours import is_within_quiet_hours
 from app.opportunity_intel.telegram_errors import (
     TelegramSendClassification,
@@ -187,7 +188,7 @@ def select_delivery_wave(
                 telegram_id=subscription.telegram_id,
                 opportunity_uid=signal.opportunity_uid,
                 status=DeliveryStatus.PENDING,
-                payload_text=payload.to_payload_text(),
+                payload_text=format_opportunity_card(payload),
                 signal_at=signal.signal_at,
                 wave_at=wave_ts,
                 settings_revision=subscription.settings.revision,
@@ -431,10 +432,9 @@ def classify_and_mark_send_failure(
 def _suppressed_payload_text(
     opportunity_uid: str, reason: OpportunityDiagnosticCode
 ) -> str:
-    return (
-        f'{{"opportunity_uid":"{opportunity_uid}",'
-        f'"status":"suppressed","reason":"{reason.value}"}}'
-    )
+    del opportunity_uid  # Keep out of user-facing / stored alert text.
+    label = reason.value.replace("_", " ").title()
+    return f"Opportunity alert suppressed: {label}"
 
 
 def _aware(value: datetime) -> datetime:

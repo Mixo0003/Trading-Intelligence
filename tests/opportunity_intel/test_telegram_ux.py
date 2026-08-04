@@ -330,10 +330,23 @@ def test_card_rendering_normal_and_strict():
     assert text.startswith("MARKET OPPORTUNITY")
     assert "81.5 / 100" in text
     assert "Executable Momentum" in text
-    assert "$250.00" in text
-    assert "https://polymarket.com/event/market-one" in text
+    assert "Direction: UP" in text
+    assert "Why this signal triggered: Fast 5-minute move" in text
+    assert "Trader/execution price: 0.5600" in text
+    assert "Proposed allocation: $250.00" in text
+    assert "Total liquidity: $100,000.00" in text
+    assert "24h volume: $250,000.00" in text
+    assert "Signal time (UTC):" in text
+    assert "Market end (UTC):" in text
+    assert "Open market: https://polymarket.com/event/market-one" in text
+    assert "opp_card" not in text
+    assert "source_observed_at" not in text
+    assert "wave_at" not in text
+    assert "FAST_5M_MOVE" not in text
+    assert "{" not in text and "}" not in text
     assert "<b>" not in text
-    assert "Trade" not in text
+    assert "Trade now" not in text
+    assert "place a trade" not in text.lower()
     assert "guaranteed" not in text.lower()
     assert len(text) <= 4096
 
