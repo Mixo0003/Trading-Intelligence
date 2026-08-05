@@ -158,6 +158,35 @@ def test_cache_reload_and_stale_while_refresh(tmp_path):
     assert cache.get(now=hard_expired) is None
 
 
+def test_hard_ttl_stale_while_revalidate_serves_prior_catalog(tmp_path):
+    """Hard TTL expires cold reads, but rediscovery may still evaluate prior catalog."""
+    settings = make_test_settings(database_path=str(tmp_path / "swr.db"))
+    initialize_database(settings)
+    completed = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    opportunity_storage.publish_complete_catalog(
+        settings,
+        markets=[_market()],
+        completed_at=completed,
+        discovery_session_id="sess-swr",
+        pages_completed=5,
+    )
+
+    cache = CompleteDiscoveryCache(
+        ttl_seconds=300,
+        catalog_ttl_seconds=21600,
+        session_ttl_seconds=21600,
+        settings=settings,
+        persist_catalog=True,
+    )
+    hard_expired = completed + timedelta(seconds=21601)
+    assert cache.get(now=hard_expired) is None
+    revalidate = cache.get_stale_while_revalidate(now=hard_expired)
+    assert revalidate is not None
+    assert revalidate.complete
+    assert revalidate.from_cache
+    assert len(revalidate.markets) == 1
+
+
 def test_publish_via_cache_then_restart_reload(tmp_path):
     settings = make_test_settings(database_path=str(tmp_path / "restart.db"))
     initialize_database(settings)

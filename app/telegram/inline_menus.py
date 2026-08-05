@@ -77,6 +77,8 @@ CB_OPP_TOP = "opp:top"
 CB_OPP_ALERTS = "opp:alerts"
 CB_OPP_FILTERS = "opp:filters"
 CB_OPP_LIVE = "opp:live"
+CB_OPP_LIVE_ON = "opp:live:on"
+CB_OPP_LIVE_OFF = "opp:live:off"
 CB_OPP_HISTORY = "opp:history"
 CB_OPP_STATUS = "opp:status"
 CB_OPP_BACK = "opp:back"
@@ -534,14 +536,15 @@ def opportunity_reset_confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def opportunity_live_mode_keyboard() -> InlineKeyboardMarkup:
+def opportunity_live_mode_keyboard(
+    *, back_callback: str = CB_OPP
+) -> InlineKeyboardMarkup:
+    """Working Live Mode control: ON / OFF / Back only."""
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("OFF", callback_data="oset:pv:lm:0"),
-                InlineKeyboardButton("STRICT", callback_data="oset:pv:lm:1"),
-            ],
-            [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_FILTERS)],
+            [InlineKeyboardButton("ON", callback_data=CB_OPP_LIVE_ON)],
+            [InlineKeyboardButton("OFF", callback_data=CB_OPP_LIVE_OFF)],
+            [InlineKeyboardButton("⬅️ Back", callback_data=back_callback)],
         ]
     )
 
@@ -550,8 +553,8 @@ def opportunity_alert_mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("ON_DEMAND_ONLY", callback_data="oset:pv:am:0"),
-                InlineKeyboardButton("INSTANT", callback_data="oset:pv:am:1"),
+                InlineKeyboardButton("MANUAL", callback_data="oset:pv:am:0"),
+                InlineKeyboardButton("AUTO", callback_data="oset:pv:am:1"),
             ],
             [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP_ALERTS)],
         ]

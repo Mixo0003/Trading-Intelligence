@@ -56,8 +56,10 @@ async def process_opportunity_deliveries(
     Never starts real Telegram traffic unless ``send_message`` is provided by
     the caller. When automatic alerts are disabled, returns without sending.
     """
+    from app.opportunity_intel.scanner_control import auto_alerts_armed
+
     alerts_on = (
-        settings.opportunity_auto_alerts_enabled
+        auto_alerts_armed(settings)
         if auto_alerts_enabled is None
         else bool(auto_alerts_enabled)
     )

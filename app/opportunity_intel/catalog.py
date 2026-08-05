@@ -81,7 +81,9 @@ def load_top_opportunities(
     state = opportunity_storage.load_scanner_state(settings)
     if state is None:
         progress = opportunity_storage.load_discovery_progress(settings)
-        if progress is not None or settings.opportunity_scanner_enabled:
+        from app.opportunity_intel.scanner_control import scanner_armed
+
+        if progress is not None or scanner_armed(settings):
             return TopOpportunitiesResult(
                 status="discovering",
                 entries=(),

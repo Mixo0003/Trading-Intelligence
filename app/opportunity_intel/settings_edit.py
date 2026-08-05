@@ -18,11 +18,13 @@ from app.opportunity_intel.categories import (
     KNOWN_CATEGORY_IDS,
     validate_known_category_ids,
 )
-from app.opportunity_intel.models import (
-    AlertMode,
-    LiveMode,
-    OpportunitySubscription,
+from app.opportunity_intel.display_labels import (
+    alert_mode_label,
+    live_mode_label,
+    parse_alert_mode_text,
+    parse_live_mode_text,
 )
+from app.opportunity_intel.models import LiveMode, OpportunitySubscription
 from app.opportunity_intel.settings import (
     ALLOCATION_PRESETS_USD,
     COOLDOWN_SECONDS_BOUNDS,
@@ -152,12 +154,12 @@ FIELD_INPUT_FORMATS: dict[str, tuple[str, str]] = {
         "politics",
     ),
     "live_mode": (
-        "Choose OFF or STRICT.",
+        "Choose OFF or ON.",
         "OFF",
     ),
     "alert_mode": (
-        "Choose ON_DEMAND_ONLY or INSTANT.",
-        "ON_DEMAND_ONLY",
+        "Choose MANUAL or AUTO.",
+        "MANUAL",
     ),
 }
 
@@ -223,6 +225,88 @@ def get_or_default_subscription(
     )
 
 
+def apply_live_mode_immediate(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    live_mode: LiveMode,
+) -> OpportunitySubscription:
+    """Persist Live Mode immediately without a confirm token.
+
+    Used by the Live Mode ON/OFF control screen. Preserves other fields and
+    bumps revision when a row already exists.
+    """
+    current = get_or_default_subscription(settings, telegram_id)
+    if (
+        opportunity_storage.load_subscription(settings, telegram_id) is not None
+        and current.settings.live_mode == live_mode
+    ):
+        return current
+
+    upsert_user(settings, telegram_id, None, None)
+    existing = opportunity_storage.load_subscription(settings, telegram_id)
+    if existing is None:
+        baseline = balanced_settings(revision=0)
+        opportunity_storage.save_subscription(
+            settings,
+            OpportunitySubscription(
+                telegram_id=telegram_id,
+                enabled=True,
+                settings=baseline,
+            ),
+            expected_revision=None,
+        )
+        if live_mode == baseline.live_mode:
+            return OpportunitySubscription(
+                telegram_id=telegram_id,
+                enabled=True,
+                settings=baseline,
+            )
+        proposed = replace(baseline, live_mode=live_mode, revision=1)
+        new_sub = OpportunitySubscription(
+            telegram_id=telegram_id,
+            enabled=True,
+            settings=proposed,
+        )
+        opportunity_storage.save_subscription(
+            settings, new_sub, expected_revision=0
+        )
+        opportunity_storage.write_settings_audit(
+            settings,
+            telegram_id=telegram_id,
+            from_revision=0,
+            to_revision=1,
+            changed_keys=["live_mode"],
+            old_settings=baseline,
+            new_settings=proposed,
+        )
+        return new_sub
+
+    proposed = replace(
+        existing.settings,
+        live_mode=live_mode,
+        revision=existing.settings.revision + 1,
+    )
+    new_sub = OpportunitySubscription(
+        telegram_id=telegram_id,
+        enabled=existing.enabled,
+        settings=proposed,
+    )
+    opportunity_storage.save_subscription(
+        settings, new_sub, expected_revision=existing.settings.revision
+    )
+    opportunity_storage.write_settings_audit(
+        settings,
+        telegram_id=telegram_id,
+        from_revision=existing.settings.revision,
+        to_revision=proposed.revision,
+        changed_keys=["live_mode"],
+        old_settings=existing.settings,
+        new_settings=proposed,
+    )
+    return new_sub
+
+
 def preview_field_change(
     current: OpportunityScannerSettings,
     *,
@@ -284,9 +368,9 @@ def apply_field_value(
             raise ValueError("cooldown_seconds out of bounds")
         return replace(current, cooldown_seconds=value)
     if field_key == "alert_mode":
-        return replace(current, alert_mode=AlertMode(text.upper()))
+        return replace(current, alert_mode=parse_alert_mode_text(text))
     if field_key == "live_mode":
-        return replace(current, live_mode=LiveMode(text.upper()))
+        return replace(current, live_mode=parse_live_mode_text(text))
     if field_key == "timezone_name":
         return replace(current, timezone_name=text)
     if field_key == "quiet_hours":
@@ -358,8 +442,10 @@ def create_reset_confirmation(
         "Reset Opportunity Settings to Balanced?",
         f"Score: {current.minimum_score} → {proposed.minimum_score}",
         f"Allocation: ${current.paper_allocation_usd} → ${proposed.paper_allocation_usd}",
-        f"Alert mode: {current.alert_mode.value} → {proposed.alert_mode.value}",
-        f"Live mode: {current.live_mode.value} → {proposed.live_mode.value}",
+        f"Alert mode: {alert_mode_label(current.alert_mode)} → "
+        f"{alert_mode_label(proposed.alert_mode)}",
+        f"Live mode: {live_mode_label(current.live_mode)} → "
+        f"{live_mode_label(proposed.live_mode)}",
         "Confirm to save, or Cancel.",
     ]
     return create_edit_confirmation(
@@ -515,6 +601,10 @@ def _display_value(settings: OpportunityScannerSettings, field_key: str) -> str:
         if value.all_categories:
             return "all"
         return ",".join(sorted(value.category_ids))
+    if field_key == "live_mode":
+        return live_mode_label(value)
+    if field_key == "alert_mode":
+        return alert_mode_label(value)
     if hasattr(value, "value"):
         return str(value.value)
     return str(value)

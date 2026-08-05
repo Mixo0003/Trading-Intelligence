@@ -69,7 +69,9 @@ def evaluate_opportunity_health(
     now: datetime | None = None,
 ) -> OpportunityHealthSnapshot:
     clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    if not settings.opportunity_scanner_enabled:
+    from app.opportunity_intel.scanner_control import scanner_armed
+
+    if not scanner_armed(settings):
         return OpportunityHealthSnapshot(
             state="DISABLED",
             detail="Opportunity scanner disabled",

@@ -12,9 +12,13 @@ from app.database import opportunity_storage
 from app.opportunity_intel.catalog import load_top_opportunities
 from app.opportunity_intel.categories import KNOWN_CATEGORY_IDS, KNOWN_CATEGORY_SET
 from app.opportunity_intel.settings import ALLOCATION_PRESETS_USD
+from app.opportunity_intel.models import LiveMode
+from app.opportunity_intel.scanner_control import scanner_armed
+from app.opportunity_intel.scheduler import schedule_opportunity_jobs
 from app.opportunity_intel.settings_edit import (
     ALERT_FIELD_KEYS,
     FILTER_FIELD_KEYS,
+    apply_live_mode_immediate,
     cancel_confirmation,
     create_edit_confirmation,
     create_reset_confirmation,
@@ -27,6 +31,7 @@ from app.opportunity_intel.settings_edit import (
     toggle_category_draft,
 )
 from app.opportunity_intel.status_view import build_scanner_status_view
+from app.telegram.auth import is_admin
 from app.telegram.inline_menus import (
     CB_OPP,
     CB_OPP_ALERTS,
@@ -34,6 +39,8 @@ from app.telegram.inline_menus import (
     CB_OPP_FILTERS,
     CB_OPP_HISTORY,
     CB_OPP_LIVE,
+    CB_OPP_LIVE_OFF,
+    CB_OPP_LIVE_ON,
     CB_OPP_STATUS,
     CB_OPP_TOP,
     CB_OSET_ALERT,
@@ -60,7 +67,7 @@ from app.telegram.nav import edit_or_reply, open_main_menu
 from app.telegram.opportunity_intel.formatting import (
     format_alert_settings_card,
     format_filters_card,
-    format_live_mode_help,
+    format_live_mode_screen,
     format_opportunity_card,
     format_signal_history,
 )
@@ -71,6 +78,7 @@ _SETTINGS_TOKEN_KEY = "opp_settings_confirm_token"
 _SETTINGS_EDIT_KEY = "opp_settings_edit_field"
 _CATEGORY_DRAFT_KEY = "opp_category_draft"
 _CATEGORY_ALL_KEY = "opp_category_all"
+_LIVE_BACK_KEY = "opp_live_back"
 
 
 def _settings(context: ContextTypes.DEFAULT_TYPE):
@@ -141,13 +149,23 @@ async def show_alert_settings(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.effective_user
     if user is None:
         return
+    viewer_id = int(user.id)
 
     def work():
-        sub = get_or_default_subscription(settings, int(user.id))
-        gates = opportunity_storage.load_delivery_gates(settings)
+        sub = get_or_default_subscription(settings, viewer_id)
+        view = build_scanner_status_view(
+            settings, viewer_live_mode=sub.settings.live_mode
+        )
         return format_alert_settings_card(
             sub.settings,
-            user_delivery_available=gates.user_delivery_enabled,
+            user_delivery_available=view.user_delivery_globally_available,
+            admin_delivery_available=view.admin_delivery_available,
+            is_admin_viewer=is_admin(settings, viewer_id),
+            auto_alerts_enabled=view.auto_alerts_enabled,
+            scanner_enabled=view.scanner_enabled,
+            worker_label=(
+                "stopped" if not view.scanner_enabled else view.label
+            ),
         )
 
     text = await _offload(work)
@@ -168,12 +186,79 @@ async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await edit_or_reply(update, text, reply_markup=opportunity_filters_keyboard())
 
 
-async def show_live_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def show_live_mode(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    back_callback: str = CB_OPP,
+) -> None:
+    settings = _settings(context)
+    user = update.effective_user
+    if user is None:
+        return
+    context.user_data[_LIVE_BACK_KEY] = back_callback
+
+    def work():
+        sub = get_or_default_subscription(settings, int(user.id))
+        return format_live_mode_screen(live_mode=sub.settings.live_mode)
+
+    text = await _offload(work)
     await edit_or_reply(
         update,
-        format_live_mode_help(),
-        reply_markup=opportunity_inline_keyboard(),
+        text,
+        reply_markup=opportunity_live_mode_keyboard(back_callback=back_callback),
     )
+
+
+async def _set_live_mode_from_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    live_mode: LiveMode,
+) -> None:
+    settings = _settings(context)
+    user = update.effective_user
+    if user is None:
+        return
+    operator_id = int(user.id)
+    back_callback = str(context.user_data.get(_LIVE_BACK_KEY) or CB_OPP)
+
+    def work():
+        return apply_live_mode_immediate(
+            settings, telegram_id=operator_id, live_mode=live_mode
+        )
+
+    sub = await _offload(work)
+    # Admin Live Mode arms/disarms the shared scanner job at runtime.
+    if is_admin(settings, operator_id):
+        schedule_opportunity_jobs(context.application, _settings(context))
+        if not scanner_armed(_settings(context)):
+            _remove_opportunity_scan_jobs(context.application)
+    text = format_live_mode_screen(live_mode=sub.settings.live_mode)
+    await edit_or_reply(
+        update,
+        text,
+        reply_markup=opportunity_live_mode_keyboard(back_callback=back_callback),
+    )
+
+
+def _remove_opportunity_scan_jobs(application) -> None:
+    from app.opportunity_intel.scheduler import (
+        OPPORTUNITY_SCAN_JOB_NAME,
+        OPPORTUNITY_SCAN_REGISTERED_KEY,
+    )
+
+    job_queue = getattr(application, "job_queue", None)
+    if job_queue is None:
+        application.bot_data[OPPORTUNITY_SCAN_REGISTERED_KEY] = False
+        return
+    getter = getattr(job_queue, "get_jobs_by_name", None)
+    if callable(getter):
+        for job in getter(OPPORTUNITY_SCAN_JOB_NAME) or ():
+            remover = getattr(job, "schedule_removal", None)
+            if callable(remover):
+                remover()
+    application.bot_data[OPPORTUNITY_SCAN_REGISTERED_KEY] = False
 
 
 async def show_signal_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -197,10 +282,19 @@ async def show_signal_history(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def show_scanner_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings = _settings(context)
+    user = update.effective_user
     await edit_or_reply(
         update, "Loading scanner status…", reply_markup=opportunity_inline_keyboard()
     )
-    view = await _offload(lambda: build_scanner_status_view(settings))
+
+    def work():
+        live_mode = None
+        if user is not None:
+            sub = get_or_default_subscription(settings, int(user.id))
+            live_mode = sub.settings.live_mode
+        return build_scanner_status_view(settings, viewer_live_mode=live_mode)
+
+    view = await _offload(work)
     await edit_or_reply(update, view.text, reply_markup=opportunity_inline_keyboard())
 
 
@@ -220,7 +314,17 @@ async def handle_opportunity_callback(
         await show_filters(update, context)
         return
     if data == CB_OPP_LIVE:
-        await show_live_mode(update, context)
+        await show_live_mode(update, context, back_callback=CB_OPP)
+        return
+    if data == CB_OPP_LIVE_ON:
+        await _set_live_mode_from_callback(
+            update, context, live_mode=LiveMode.STRICT
+        )
+        return
+    if data == CB_OPP_LIVE_OFF:
+        await _set_live_mode_from_callback(
+            update, context, live_mode=LiveMode.OFF
+        )
         return
     if data == CB_OPP_HISTORY:
         await show_signal_history(update, context)
@@ -316,18 +420,7 @@ async def handle_opportunity_settings_flow(
         return
 
     if data == CB_OSET_LIVE:
-        await edit_or_reply(
-            update,
-            "\n".join(
-                [
-                    field_prompt("live_mode"),
-                    "",
-                    "OFF excludes live / in-play markets from your results.",
-                    "STRICT allows them only with stricter checks.",
-                ]
-            ),
-            reply_markup=opportunity_live_mode_keyboard(),
-        )
+        await show_live_mode(update, context, back_callback=CB_OPP_FILTERS)
         return
 
     if data == CB_OSET_ALERT:
@@ -337,8 +430,9 @@ async def handle_opportunity_settings_flow(
                 [
                     field_prompt("alert_mode"),
                     "",
-                    "Personal alert mode is separate from global"
-                    " user-delivery availability.",
+                    "MANUAL: Alerts are shown only when you request them.",
+                    "AUTO: Valid alerts are sent automatically.",
+                    "Administrator delivery is separate from regular-user delivery.",
                 ]
             ),
             reply_markup=opportunity_alert_mode_keyboard(),
@@ -460,9 +554,9 @@ async def handle_opportunity_settings_flow(
         if key == "paper_allocation_usd":
             value = str(ALLOCATION_PRESETS_USD[idx])
         elif key == "live_mode":
-            value = ("OFF", "STRICT")[idx]
+            value = ("OFF", "ON")[idx]
         elif key == "alert_mode":
-            value = ("ON_DEMAND_ONLY", "INSTANT")[idx]
+            value = ("MANUAL", "AUTO")[idx]
         else:
             return
         await _begin_preview(update, context, key, value)

@@ -23,6 +23,7 @@ from app.opportunity_intel.discovery import ValidatedMarket, ValidatedOutcome
 from app.opportunity_intel.models import (
     CanonicalObservation,
     ExecutionMetrics,
+    LiveMode,
     MovementDirection,
     ObservationMode,
     OpportunityBaseline,
@@ -493,10 +494,11 @@ def test_card_rendering_normal_and_strict():
     )
     live_text = format_opportunity_card(live, now=now)
     assert "LIVE / IN-PLAY" in live_text
-    assert "STRICT DATA CHECKS" in live_text
-    help_text = format_live_mode_help().lower()
-    assert "does not imply" in help_text
-    assert "no trades are placed" in help_text
+    assert "EXTRA SAFETY CHECKS" in live_text
+    assert "STRICT" not in live_text
+    help_text = format_live_mode_help(live_mode=LiveMode.OFF)
+    assert help_text == "Live Mode\nCurrent status: OFF"
+    assert "strict" not in help_text.lower()
 
 
 def test_settings_preview_confirm_and_stolen_token(settings):

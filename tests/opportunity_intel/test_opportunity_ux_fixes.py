@@ -59,7 +59,6 @@ from app.telegram.inline_menus import (
     opportunity_inline_keyboard,
     opportunity_settings_keyboard,
 )
-from app.telegram.opportunity_intel.formatting import format_live_mode_help
 from app.telegram.opportunity_intel.handlers import (
     handle_opportunity_callback,
     opportunity_settings_text_input,
@@ -234,7 +233,8 @@ async def test_alert_settings_callback_shows_only_alert_fields(settings):
     assert text.startswith("Opportunity Alert Settings")
     assert "Alert mode" in text
     assert "Quiet hours" in text
-    assert "Global user delivery" in text
+    assert "Automatic delivery to regular users" in text
+    assert "Administrator delivery" in text
     assert "Minimum score" not in text
     assert "Maximum slippage" not in text
     assert "oset:f:qh" in _callback_data(keyboard)
@@ -329,15 +329,18 @@ def test_live_mode_button_replaces_live_markets_label():
 @pytest.mark.asyncio
 async def test_live_mode_screen_explains_filtering_not_a_market_list(settings):
     context = _context(settings)
-    text, _keyboard = await _emit(settings, context, CB_OPP_LIVE)
-    assert text.startswith("Live Mode")
+    text, keyboard = await _emit(settings, context, CB_OPP_LIVE)
+    assert text == "Live Mode\nCurrent status: OFF"
+    labels = [
+        button.text
+        for row in keyboard.inline_keyboard
+        for button in row
+    ]
+    assert labels == ["ON", "OFF", "⬅️ Back"]
     lowered = text.lower()
-    assert "off excludes live / in-play markets" in lowered
-    assert "stricter checks" in lowered
-    assert "configures filtering" in lowered
-    assert "not a list of active markets" in lowered
-    assert "no trades are placed" in lowered
-    assert format_live_mode_help() == text
+    assert "strict" not in lowered
+    assert "configures filtering" not in lowered
+    assert "scanner" not in lowered
 
 
 # --- Step 6: Top Opportunities and Scanner Status states ------------------
@@ -438,7 +441,8 @@ def test_scanner_status_separates_discovery_baseline_and_delivery(settings):
     assert "Baseline-ready markets: 0" in view.text
     assert "Qualifying opportunities: 0" in view.text
     assert "Automatic alerts: off" in view.text
-    assert "Automatic user delivery: not available globally" in view.text
+    assert "Automatic delivery to regular users: disabled" in view.text
+    assert "Administrator delivery:" in view.text
     assert "State: Baselining" in view.text
     assert "Baseline: In progress" in view.text
 
