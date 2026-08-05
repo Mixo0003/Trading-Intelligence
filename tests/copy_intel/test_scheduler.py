@@ -41,12 +41,35 @@ def test_job_registered_once():
 
 
 def test_disabled_skips_registration():
+    from app.copy_intel.scheduler import COPY_POLL_SKIP_REASON_KEY
+
     settings = make_test_settings(copy_intel_enabled=False)
     app = MagicMock()
     app.bot_data = {}
     app.job_queue = MagicMock()
     schedule_copy_intel_jobs(app, settings)
     app.job_queue.run_repeating.assert_not_called()
+    assert "COPY_INTEL_ENABLED is false" in app.bot_data[COPY_POLL_SKIP_REASON_KEY]
+
+
+def test_menu_registers_copy_jobs_exactly_once():
+    """build_telegram_application path must call schedule_copy_intel_jobs once."""
+    from app.telegram.menu import build_telegram_application
+
+    settings = make_test_settings(copy_intel_enabled=True, telegram_token="1:test")
+    with (
+        patch("app.telegram.menu.initialize_database"),
+        patch("app.telegram.menu.schedule_report_jobs"),
+        patch("app.telegram.menu.schedule_opportunity_jobs"),
+        patch("app.telegram.menu.schedule_health_jobs"),
+        patch("app.telegram.menu.schedule_copy_intel_jobs") as copy_sched,
+        patch("app.telegram.menu._build_application") as build_app,
+    ):
+        app = MagicMock()
+        app.bot_data = {}
+        build_app.return_value = app
+        build_telegram_application(settings)
+        copy_sched.assert_called_once_with(app, settings)
 
 
 @pytest.mark.asyncio

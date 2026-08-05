@@ -244,10 +244,10 @@ class CopyDataClient:
         time_period: str | None = None,
         order_by: str | None = None,
         category: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Fetch public leaderboard rows (paginated)."""
+    ) -> ApiResult[list[dict[str, Any]]]:
+        """Fetch public leaderboard rows (paginated). Fail-closed on API errors."""
         url = f"{self._settings.polymarket_data_base_url.rstrip('/')}/v1/leaderboard"
-        params: dict[str, Any] = {"limit": max(1, limit), "offset": max(0, offset)}
+        params: dict[str, Any] = {"limit": max(1, min(50, int(limit))), "offset": max(0, offset)}
         if time_period:
             params["timePeriod"] = time_period
         if order_by:
@@ -256,18 +256,47 @@ class CopyDataClient:
             params["category"] = category
         try:
             response = get_with_retry(url, params=params, timeout=30)
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-            logger.warning("Leaderboard fetch timeout/connection error")
-            return []
+            request_count = max(1, int(getattr(response, "request_count", 1) or 1))
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            logger.warning("Leaderboard fetch timeout/connection error: %s", type(exc).__name__)
+            return ApiFailure(
+                code="leaderboard_unavailable",
+                status_code=None,
+                retryable=True,
+                request_count=1,
+                message="Leaderboard API unavailable (timeout/connection)",
+            )
         if response.status_code != 200:
             logger.warning("Leaderboard fetch failed: status=%s", response.status_code)
-            return []
+            return ApiFailure(
+                code="leaderboard_http_error",
+                status_code=response.status_code,
+                retryable=is_retryable_status(response.status_code),
+                request_count=request_count,
+                message=f"Leaderboard HTTP {response.status_code}",
+            )
         try:
             payload = response.json()
         except ValueError:
             logger.warning("Leaderboard fetch returned invalid JSON")
-            return []
-        return payload if isinstance(payload, list) else []
+            return ApiFailure(
+                code="leaderboard_malformed",
+                status_code=response.status_code,
+                retryable=False,
+                request_count=request_count,
+                message="Leaderboard response was not valid JSON",
+            )
+        if not isinstance(payload, list):
+            logger.warning("Leaderboard fetch returned non-list payload")
+            return ApiFailure(
+                code="leaderboard_malformed",
+                status_code=response.status_code,
+                retryable=False,
+                request_count=request_count,
+                message="Leaderboard response was not a list",
+            )
+        rows = [row for row in payload if isinstance(row, dict)]
+        return ApiSuccess(data=rows, request_count=request_count)
 
     def fetch_leaderboard_pages(
         self,
@@ -277,22 +306,36 @@ class CopyDataClient:
         time_period: str | None = None,
         order_by: str | None = None,
         category: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> ApiResult[list[dict[str, Any]]]:
+        """Paginate leaderboard. API/malformed failure is not converted to []."""
         rows: list[dict[str, Any]] = []
+        total_requests = 0
         for page in range(max_pages):
-            batch = self.fetch_leaderboard(
+            batch_result = self.fetch_leaderboard(
                 limit=page_size,
                 offset=page * page_size,
                 time_period=time_period,
                 order_by=order_by,
                 category=category,
             )
+            if isinstance(batch_result, ApiFailure):
+                if page == 0 and not rows:
+                    return batch_result
+                # Later-page failure after some success: return what we have.
+                logger.warning(
+                    "Leaderboard pagination stopped after page %s: %s",
+                    page,
+                    batch_result.code,
+                )
+                break
+            total_requests += batch_result.request_count
+            batch = batch_result.data
             if not batch:
                 break
             rows.extend(batch)
             if len(batch) < page_size:
                 break
-        return rows
+        return ApiSuccess(data=rows, request_count=max(1, total_requests))
 
     def fetch_quote(self, token_id: str) -> MarketQuote:
         """Legacy quote helper (midpoint + book). Prefer ``fetch_validated_order_book``."""

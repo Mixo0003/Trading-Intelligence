@@ -452,18 +452,52 @@ def format_unsubscribe_confirm(*, label: str | None, wallet: str) -> str:
     )
 
 
-def format_copy_status(settings, poll_state: dict[str, str | None]) -> str:
+def format_copy_status(
+    settings,
+    poll_state: dict[str, str | None],
+    *,
+    scheduler_registered: bool = False,
+    scheduler_skip_reason: str | None = None,
+    watchlist_total: int = 0,
+    watchlist_enabled: int = 0,
+    watchlist_paused: int = 0,
+    baseline_complete: int = 0,
+    baseline_pending: int = 0,
+    delivery_pending: int = 0,
+) -> str:
+    """Admin status screen — never imply polling is active when it is not."""
+    if not settings.copy_intel_enabled:
+        polling = "DISABLED — COPY_INTEL_ENABLED is false (no poll job registered)"
+    elif scheduler_skip_reason:
+        polling = f"DISABLED — {scheduler_skip_reason}"
+    elif scheduler_registered:
+        polling = "ACTIVE — scheduler registered once"
+    else:
+        polling = "INACTIVE — scheduler not registered"
+
     lines = [
         "Copy Intel Status",
-        f"Enabled: {settings.copy_intel_enabled}",
+        f"COPY_INTEL_ENABLED: {settings.copy_intel_enabled}",
+        f"Polling: {polling}",
         f"Read-only: {settings.copy_intel_read_only}",
         f"Poll interval: {settings.copy_poll_interval_seconds}s",
+        (
+            f"Watchlist: {watchlist_total} total "
+            f"({watchlist_enabled} enabled, {watchlist_paused} paused)"
+        ),
+        (
+            f"Baseline: {baseline_complete} complete, "
+            f"{baseline_pending} pending/other"
+        ),
         f"Last poll: {poll_state.get('last_poll_at') or 'never'}",
-        f"Last events: {poll_state.get('last_event_count') or '0'}",
+        f"Last event count: {poll_state.get('last_event_count') or '0'}",
+        f"Delivery pending: {delivery_pending}",
     ]
     err = poll_state.get("last_error")
     if err:
         lines.append(f"Last error: {err[:120]}")
+    elif not settings.copy_intel_enabled:
+        lines.append("Last error: (none — polling disabled by config)")
     return "\n".join(lines)
 
 

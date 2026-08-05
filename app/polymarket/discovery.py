@@ -9,7 +9,6 @@ from app.polymarket.market_type import (
     classify_temperature_market,
 )
 from app.polymarket.models import PolymarketMarket
-from app.polymarket.pricing import extract_yes_price
 from app.weather.resolution import parse_resolution_details
 
 
@@ -70,15 +69,32 @@ def _is_confirmed_non_weather(text: str) -> bool:
     return any(marker in lower for marker in non_weather_markers)
 
 
+_FULL_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+
 def _parse_target_date(date_text: str | None) -> date | None:
     if not date_text:
         return None
     iso = re.search(r"(\d{4}-\d{2}-\d{2})", date_text)
     if iso:
         return datetime.strptime(iso.group(1), "%Y-%m-%d").date()
+    text = date_text.strip().lower()
     abbr = re.search(
         r"\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\.?\s+'?(\d{2})\b",
-        date_text.strip().lower(),
+        text,
     )
     if abbr:
         month_map = {
@@ -87,10 +103,30 @@ def _parse_target_date(date_text: str | None) -> date | None:
         }
         year = 2000 + int(abbr.group(3))
         return date(year, month_map[abbr.group(2)], int(abbr.group(1)))
-    cleaned = re.sub(r"(st|nd|rd|th)", "", date_text.strip().lower())
+    # Strip day ordinals only ("1st", "2nd") — never bare "st" inside "august".
+    cleaned = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", text)
+    full = re.search(
+        r"\b("
+        + "|".join(_FULL_MONTHS)
+        + r")\s+(\d{1,2}),?\s+(\d{4})\b",
+        cleaned,
+    )
+    if full:
+        return date(int(full.group(3)), _FULL_MONTHS[full.group(1)], int(full.group(2)))
+    full_no_year = re.search(
+        r"\b(" + "|".join(_FULL_MONTHS) + r")\s+(\d{1,2})\b",
+        cleaned,
+    )
+    if full_no_year:
+        return date(
+            datetime.now().year,
+            _FULL_MONTHS[full_no_year.group(1)],
+            int(full_no_year.group(2)),
+        )
     for fmt in ("%B %d, %Y", "%B %d %Y", "%B %d"):
         try:
-            parsed = datetime.strptime(cleaned, fmt)
+            # Title-case for platforms where %B requires capitalized months.
+            parsed = datetime.strptime(cleaned.title(), fmt)
             if parsed.year == 1900:
                 parsed = parsed.replace(year=datetime.now().year)
             return parsed.date()
@@ -131,8 +167,8 @@ def evaluate_market_eligibility(
     if market_type == TemperatureMarketType.UNKNOWN and "temperature" not in lower:
         return False, SkipReason.UNSUPPORTED_FORMAT, text
 
-    if extract_yes_price(market) is None:
-        return False, SkipReason.MISSING_PRICE, text
+    # Missing live price must not block forecast analysis. Betting validation
+    # remains fail-closed downstream; cards may render as FORECAST ONLY.
 
     resolution = parse_resolution_details(text)
     if not resolution.source:

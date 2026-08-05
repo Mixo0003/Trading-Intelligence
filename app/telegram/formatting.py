@@ -39,6 +39,7 @@ _ALLOWED_REASONS = frozenset({
     "No clear edge.",
     "Conflicting forecasts.",
     "Market price too high.",
+    "Price unavailable.",
     "Station unresolved.",
     "Morning storms may cap the high.",
     "Models disagree by 4°F.",
@@ -220,10 +221,72 @@ def format_market_result_card(analysis: MarketAnalysis) -> str:
 
 
 def format_scan_completed_summary(progress: ScanProgress) -> str:
-    """Telegram-facing scan header only. Counters/skip reasons stay internal
-    (see ScanProgress.metrics / ScanMetrics + logs), never shown here."""
+    """Telegram-facing scan header only when cards are present."""
     region = parse_scan_region(progress.scan_region, ScanRegion.ALL)
     return f"🌦 {region.display_label.upper()} SCAN COMPLETED"
+
+
+def _skip_count(progress: ScanProgress, *keys: str) -> int:
+    total = 0
+    reasons = progress.skip_reasons or {}
+    for key in keys:
+        total += int(reasons.get(key, 0) or 0)
+    return total
+
+
+def format_scan_empty_diagnostic(progress: ScanProgress) -> str:
+    """Concise diagnostic when a scan finishes with no displayable forecast cards."""
+    region = parse_scan_region(progress.scan_region, ScanRegion.ALL)
+    analyses = _analyses_for_report(progress)
+    missing_price = _skip_count(progress, "missing market price", "MISSING_PRICE")
+    missing_price += sum(
+        1
+        for item in analyses
+        if (item.validation_error or "") in {"MISSING_PRICE", "missing market price"}
+        or (item.display_reason or "").lower().startswith("price unavailable")
+    )
+    station_unresolved = _skip_count(
+        progress,
+        "missing verifiable station",
+        "STATION_UNRESOLVED",
+        "STATION_NOT_VERIFIED",
+    )
+    station_unresolved += sum(
+        1
+        for item in analyses
+        if (item.validation_error or "") in {"STATION_UNRESOLVED", "STATION_NOT_VERIFIED"}
+        or (item.display_reason or "").lower().startswith("station unresolved")
+    )
+    forecast_unavailable = _skip_count(
+        progress,
+        "FORECAST_UNAVAILABLE",
+        "INSUFFICIENT_PROVIDERS",
+    )
+    forecast_unavailable += sum(
+        1
+        for item in analyses
+        if (item.validation_error or item.betting_skip_reason or "")
+        in {"FORECAST_UNAVAILABLE", "INSUFFICIENT_PROVIDERS"}
+        or not item.forecast_display
+    )
+    outside_horizon = _skip_count(progress, "outside forecast horizon")
+    lines = [
+        f"🌦 {region.display_label.upper()} SCAN COMPLETED",
+        "",
+        "No forecast cards available.",
+        "",
+        f"Markets discovered: {progress.discovered or progress.child_markets_discovered}",
+        f"Parent events: {progress.parent_events_discovered}",
+        f"Markets eligible (in region): {progress.parent_events_in_region or progress.regional_count}",
+        f"Markets analyzed: {progress.parent_events_analyzed or len(analyses)}",
+        f"Station unresolved: {station_unresolved}",
+        f"Forecast providers unavailable: {forecast_unavailable}",
+        f"Missing price: {missing_price}",
+        f"Outside forecast horizon: {outside_horizon}",
+    ]
+    if progress.partial or progress.deadline_reached:
+        lines.append("Note: scan ended with partial results (deadline).")
+    return "\n".join(lines)
 
 
 def format_empty_report(analyzed_count: int, progress: ScanProgress | None = None) -> str:
@@ -314,16 +377,21 @@ def format_scan_report(progress: ScanProgress) -> str:
 def format_scan_delivery_messages(progress: ScanProgress) -> list[str]:
     """Split scan output into Telegram-safe message batches.
 
-    Concise cards are unchanged; only packaging/delivery changes.
+    Prefer forecast-bearing cards (including FORECAST ONLY). When none exist,
+    return a concise diagnostic summary instead of a bare SCAN COMPLETED line.
     """
     analyses = _sorted_for_scan_display(_analyses_for_report(progress))
     display_items = [
         item for item in analyses
-        if item.display_status != DISPLAY_SKIP_INSUFFICIENT
-        or has_forecast_result(item.display_status, item.forecast_display)
+        if has_forecast_result(item.display_status, item.forecast_display)
     ][:MAX_SCAN_RESULT_CARDS]
+    # Fall back to non-SKIP analyses only when they still carry a forecast.
     if not display_items:
-        display_items = analyses[:MAX_SCAN_RESULT_CARDS]
+        display_items = [
+            item for item in analyses
+            if item.display_status != DISPLAY_SKIP_INSUFFICIENT
+            and has_forecast_result(item.display_status, item.forecast_display)
+        ][:MAX_SCAN_RESULT_CARDS]
 
     completion = (
         SCAN_PARTIAL_COMPLETION_LINE
@@ -332,8 +400,8 @@ def format_scan_delivery_messages(progress: ScanProgress) -> list[str]:
     )
 
     if not display_items:
-        if progress.parent_events_discovered or progress.discovered:
-            return [format_scan_completed_summary(progress), completion]
+        if progress.parent_events_discovered or progress.discovered or progress.skipped:
+            return [format_scan_empty_diagnostic(progress), completion]
         return [NO_MARKETS_FOUND_MESSAGE]
 
     header = format_scan_completed_summary(progress)
@@ -361,9 +429,13 @@ def format_today_forecast_report(progress: ScanProgress, region: ScanRegion | No
     scan_region = region or parse_scan_region(progress.scan_region, ScanRegion.ALL)
     analyses = _forecast_analyses(_analyses_for_report(progress))
     if not analyses:
+        diagnostic = format_scan_empty_diagnostic(progress)
+        # Re-title the empty-scan diagnostic for the Forecasts button.
+        body = "\n".join(diagnostic.splitlines()[1:]).lstrip()
         return (
             f"📅 {scan_region.display_label.upper()} FORECASTS\n\n"
-            f"No current forecast results. Run a new scan."
+            f"{body}\n\n"
+            f"Use {scan_region.scan_button} to refresh."
         )
     cards = [format_today_forecast_card(item) for item in analyses[:MAX_SCAN_RESULT_CARDS]]
     return f"📅 {scan_region.display_label.upper()} FORECASTS\n\n" + "\n\n".join(cards)

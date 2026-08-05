@@ -30,6 +30,7 @@ from app.database import copy_storage
 logger = logging.getLogger(__name__)
 
 COPY_POLL_REGISTERED_KEY = "copy_intel_poll_registered"
+COPY_POLL_SKIP_REASON_KEY = "copy_intel_poll_skip_reason"
 _COPY_POLL_LOCK = "copy_intel_poll"
 
 
@@ -260,11 +261,16 @@ def _cards_to_messages(cards: list[str]) -> list[str]:
 
 def schedule_copy_intel_jobs(application, settings: Settings) -> None:
     if not settings.copy_intel_enabled:
+        application.bot_data[COPY_POLL_SKIP_REASON_KEY] = (
+            "COPY_INTEL_ENABLED is false"
+        )
+        logger.info("Copy intel polling disabled: COPY_INTEL_ENABLED is false")
         return
     if application.bot_data.get(COPY_POLL_REGISTERED_KEY):
         logger.info("Copy intel poll job already registered; skipping.")
         return
     if application.job_queue is None:
+        application.bot_data[COPY_POLL_SKIP_REASON_KEY] = "JobQueue unavailable"
         logger.warning("Job queue unavailable; copy intel polling disabled.")
         return
     interval = settings.copy_poll_interval_seconds
@@ -275,4 +281,5 @@ def schedule_copy_intel_jobs(application, settings: Settings) -> None:
         name="copy_intel_poll",
     )
     application.bot_data[COPY_POLL_REGISTERED_KEY] = True
+    application.bot_data.pop(COPY_POLL_SKIP_REASON_KEY, None)
     logger.info("Copy intel poll job scheduled every %ss", interval)

@@ -89,8 +89,12 @@ def short_display_reason(
         return "Conflicting forecasts."
     if betting_skip_reason == "INSUFFICIENT_PROVIDERS" or validation_error == "INSUFFICIENT_PROVIDERS":
         return "Insufficient sources."
+    if validation_error in {"MISSING_PRICE", "missing market price"}:
+        return "Price unavailable."
     if validation_error == "INVALID_PRICE":
         return "Market price too high."
+    if validation_error == "FORECAST_UNAVAILABLE":
+        return "Insufficient sources."
     if station_error or display_status == DISPLAY_SKIP_INSUFFICIENT:
         return "Insufficient sources."
     if display_status == DISPLAY_SKIP_MAPPING:
@@ -125,23 +129,26 @@ def compute_display_status(
     betting_valid: bool,
     recommendation_tier: str,
 ) -> str:
+    """Separate forecast display from betting eligibility.
+
+    A verified station forecast may be shown as FORECAST ONLY even when price
+    mapping or betting thresholds fail. Missing station / provider / skip_reason
+    remain unavailable (SKIP). Never invents a forecast.
+    """
     if station_error in {"STATION_UNRESOLVED", "STATION_NOT_VERIFIED"}:
         return DISPLAY_SKIP_INSUFFICIENT
     if station_error or not station_verified or forecast_stats is None or forecast_native is None:
         return DISPLAY_SKIP_INSUFFICIENT
     if forecast_stats.skip_reason:
         return DISPLAY_SKIP_INSUFFICIENT
-    if not mapping_ok or not selected_in_event:
-        return DISPLAY_SKIP_MAPPING
     if betting_valid and recommendation_tier not in {"SKIP"}:
         if recommendation_tier in {"SMALL BET", "NORMAL BET", "STRONG OPPORTUNITY"}:
             return DISPLAY_VALIDATED
         if recommendation_tier == "WATCH":
             return DISPLAY_WATCH
-    if recommendation_tier == "WATCH":
+    if recommendation_tier == "WATCH" and mapping_ok and selected_in_event:
         return DISPLAY_WATCH
-    if forecast_stats.betting_skip_reason:
-        return DISPLAY_FORECAST_ONLY
+    # Verified forecast exists; missing price / mapping / edge → FORECAST ONLY.
     return DISPLAY_FORECAST_ONLY
 
 

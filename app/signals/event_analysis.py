@@ -242,9 +242,9 @@ def _structural_validation_passed(
     if model_probability is None:
         return False, "PROBABILITY_UNAVAILABLE"
 
-    price_valid, _ = validate_actionable_price(market_price)
+    price_valid, price_code = validate_actionable_price(market_price)
     if not price_valid:
-        return False, "INVALID_PRICE"
+        return False, "MISSING_PRICE" if price_code == "missing" else "INVALID_PRICE"
 
     prob_sum = sum(item.probability for item in sibling_probs)
     if not (0.95 <= prob_sum <= 1.05):

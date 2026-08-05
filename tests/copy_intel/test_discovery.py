@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.copy_intel.data_client import CopyDataClient
 from app.copy_intel.discovery import dedupe_candidates, discover_candidates, filter_scores
 from app.copy_intel.discovery_metrics import compute_discovery_metrics
@@ -48,28 +50,53 @@ def _metrics(**overrides) -> DiscoveryMetrics:
 
 class TestDiscoveryPaginationAndDedupe:
     def test_leaderboard_pages_paginate(self, monkeypatch):
+        from app.copy_intel.api_result import ApiSuccess
+
         settings = make_test_settings()
         calls = []
 
         def fake_fetch(self, *, limit=25, offset=0, time_period=None, order_by=None, category=None):
             calls.append(offset)
             if offset >= 50:
-                return []
-            return [
-                {
-                    "proxyWallet": f"0x{'%040d' % (offset + i)}",
-                    "userName": f"u{offset + i}",
-                    "pnl": 100 - offset,
-                    "vol": 1000,
-                }
-                for i in range(limit)
-            ]
+                return ApiSuccess(data=[])
+            return ApiSuccess(
+                data=[
+                    {
+                        "proxyWallet": f"0x{'%040d' % (offset + i)}",
+                        "userName": f"u{offset + i}",
+                        "pnl": 100 - offset,
+                        "vol": 1000,
+                    }
+                    for i in range(limit)
+                ]
+            )
 
         monkeypatch.setattr(CopyDataClient, "fetch_leaderboard", fake_fetch)
         client = CopyDataClient(settings)
-        rows = client.fetch_leaderboard_pages(page_size=25, max_pages=3)
-        assert len(rows) == 50
+        result = client.fetch_leaderboard_pages(page_size=25, max_pages=3)
+        assert isinstance(result, ApiSuccess)
+        assert len(result.data) == 50
         assert calls == [0, 25, 50]
+
+    def test_leaderboard_api_failure_not_empty_list(self, monkeypatch):
+        from app.copy_intel.api_result import ApiFailure
+        from app.copy_intel.discovery import DiscoveryError, discover_candidates
+
+        settings = make_test_settings()
+
+        def fail_fetch(self, **kwargs):
+            return ApiFailure(
+                code="leaderboard_unavailable",
+                status_code=None,
+                retryable=True,
+                request_count=1,
+                message="down",
+            )
+
+        monkeypatch.setattr(CopyDataClient, "fetch_leaderboard", fail_fetch)
+        with pytest.raises(DiscoveryError) as exc:
+            discover_candidates(settings, client=CopyDataClient(settings))
+        assert exc.value.code == "api_unavailable"
 
     def test_wallet_profile_deduplication(self):
         a = DiscoveryCandidate(

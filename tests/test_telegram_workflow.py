@@ -101,12 +101,13 @@ class TestDiscoveryFiltering:
         assert ok is False
         assert reason == SkipReason.CLOSED
 
-    def test_excludes_missing_price(self):
+    def test_allows_missing_price_for_forecast_analysis(self):
+        """Missing price must not hide a verified weather forecast path."""
         seen: set[str] = set()
         market = PolymarketMarket(**{**self._valid_market().__dict__, "outcome_prices": []})
         ok, reason, _ = evaluate_market_eligibility(market, seen)
-        assert ok is False
-        assert reason == SkipReason.MISSING_PRICE
+        assert ok is True
+        assert reason is None
 
     def test_excludes_duplicate(self):
         seen: set[str] = set()

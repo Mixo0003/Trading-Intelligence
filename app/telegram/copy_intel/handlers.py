@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.config.settings import Settings
-from app.copy_intel.discovery import filter_scores, run_discovery
+from app.copy_intel.discovery import (
+    DIAG_OK,
+    DIAG_REJECTED_BY_SCORING,
+    DiscoveryError,
+    filter_scores,
+    format_discovery_diagnostic,
+    run_discovery_detailed,
+)
 from app.copy_intel.risk import assert_read_only
 from app.copy_intel.scoring import score_trader
 from app.copy_intel.settings_confirm import (
@@ -470,13 +478,37 @@ async def show_copy_status(update: Update, context: ContextTypes.DEFAULT_TYPE, *
     if not await _require_copy_admin(update, context, action="cb:copy_status"):
         return
     settings = _settings(context)
+    from app.copy_intel.freshness import baseline_is_complete
+    from app.copy_intel.scheduler import (
+        COPY_POLL_REGISTERED_KEY,
+        COPY_POLL_SKIP_REASON_KEY,
+    )
+
     poll_state = {
         "last_poll_at": copy_storage.get_poll_state(settings, "last_poll_at"),
         "last_event_count": copy_storage.get_poll_state(settings, "last_event_count"),
         "last_error": copy_storage.get_poll_state(settings, "last_error"),
         "last_discovery_count": copy_storage.get_poll_state(settings, "last_discovery_count"),
     }
-    text = format_copy_status(settings, poll_state)
+    entries = list_entries(settings)
+    enabled_count = sum(1 for e in entries if e.enabled)
+    paused_count = len(entries) - enabled_count
+    baseline_complete = sum(1 for e in entries if baseline_is_complete(settings, e.wallet))
+    baseline_pending = len(entries) - baseline_complete
+    delivery_pending = len(copy_storage.list_failed_copy_alert_deliveries(settings, limit=50))
+    bot_data = context.application.bot_data if context.application else {}
+    text = format_copy_status(
+        settings,
+        poll_state,
+        scheduler_registered=bool(bot_data.get(COPY_POLL_REGISTERED_KEY)),
+        scheduler_skip_reason=bot_data.get(COPY_POLL_SKIP_REASON_KEY),
+        watchlist_total=len(entries),
+        watchlist_enabled=enabled_count,
+        watchlist_paused=paused_count,
+        baseline_complete=baseline_complete,
+        baseline_pending=baseline_pending,
+        delivery_pending=delivery_pending,
+    )
     disc = poll_state.get("last_discovery_count")
     if disc:
         text += f"\nLast discovery candidates: {disc}"
@@ -730,18 +762,47 @@ async def copy_settings_text_input(
     await _begin_settings_preview(update, context, key, text)
 
 
+_DISCOVERY_TIMEOUT_SECONDS = 90
+
+
 async def _ensure_discovery(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Run discovery off the Telegram event loop with bounded timeout."""
     cached = context.user_data.get(_DISCOVERY_CACHE_KEY)
-    if cached:
+    if cached is not None:
         return cached
     settings = _settings(context)
     assert_read_only(settings)
     await edit_or_reply(update, "Searching traders…", reply_markup=discovery_inline_keyboard())
     telegram_id = update.effective_user.id if update.effective_user else 0
-    _candidates, scores = run_discovery(settings, telegram_id=telegram_id, analyze_limit=10)
-    context.user_data[_DISCOVERY_CACHE_KEY] = scores
-    context.user_data["copy_discovery_candidates"] = len(_candidates)
-    return scores
+
+    def _run():
+        return run_discovery_detailed(
+            settings, telegram_id=telegram_id, analyze_limit=10
+        )
+
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_run),
+            timeout=_DISCOVERY_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        raise DiscoveryError(
+            "timeout",
+            f"Discovery timed out after {_DISCOVERY_TIMEOUT_SECONDS}s. Try again later.",
+        ) from exc
+
+    if result.diagnostic_code in {
+        "api_unavailable",
+        "malformed_response",
+        "zero_candidates",
+    }:
+        raise DiscoveryError(result.diagnostic_code, result.diagnostic_message)
+
+    context.user_data[_DISCOVERY_CACHE_KEY] = result.scores
+    context.user_data["copy_discovery_candidates"] = len(result.candidates)
+    context.user_data["copy_discovery_diagnostic"] = result.diagnostic_code
+    context.user_data["copy_discovery_diagnostic_message"] = result.diagnostic_message
+    return result.scores
 
 
 async def show_discovery_list(
@@ -757,14 +818,38 @@ async def show_discovery_list(
         return
     try:
         scores = await _ensure_discovery(update, context)
+    except DiscoveryError as exc:
+        await edit_or_reply(
+            update,
+            format_discovery_diagnostic(exc.code, exc.message),
+            reply_markup=discovery_inline_keyboard(),
+        )
+        return
     except Exception as exc:
         logger.exception("Discovery failed")
         await edit_or_reply(
             update,
-            f"Discovery failed: {exc}",
+            format_discovery_diagnostic(
+                "error",
+                f"Discovery failed: {type(exc).__name__}",
+            ),
             reply_markup=discovery_inline_keyboard(),
         )
         return
+
+    diagnostic = context.user_data.get("copy_discovery_diagnostic") or DIAG_OK
+    if diagnostic == DIAG_REJECTED_BY_SCORING and not scores:
+        await edit_or_reply(
+            update,
+            format_discovery_diagnostic(
+                DIAG_REJECTED_BY_SCORING,
+                context.user_data.get("copy_discovery_diagnostic_message")
+                or "Candidates were found but rejected by scoring.",
+            ),
+            reply_markup=discovery_inline_keyboard(),
+        )
+        return
+
     filtered = filter_scores(
         scores,
         decision=decision,
@@ -772,6 +857,20 @@ async def show_discovery_list(
         high_risk_only=high_risk_only,
     )
     if not filtered:
+        if diagnostic == DIAG_REJECTED_BY_SCORING:
+            await edit_or_reply(
+                update,
+                format_discovery_diagnostic(
+                    DIAG_REJECTED_BY_SCORING,
+                    context.user_data.get("copy_discovery_diagnostic_message")
+                    or (
+                        f"Found {context.user_data.get('copy_discovery_candidates', 0)} "
+                        "candidate(s); none matched this filter after scoring."
+                    ),
+                ),
+                reply_markup=discovery_inline_keyboard(),
+            )
+            return
         filtered = scores[:5]
     else:
         filtered = filtered[:8]

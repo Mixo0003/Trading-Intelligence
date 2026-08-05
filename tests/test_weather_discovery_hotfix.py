@@ -312,7 +312,8 @@ class TestStaleForecastSnapshots:
             ],
         )
         text = format_today_forecast_report(progress, region=ScanRegion.ASIA)
-        assert "No current forecast results. Run a new scan." in text
+        assert "No forecast cards available." in text
+        assert "Scan Asia" in text
         assert "SHANGHAI" not in text
 
     def test_current_local_date_visible(self):
@@ -360,7 +361,8 @@ class TestStaleForecastSnapshots:
             ],
         )
         text = format_today_forecast_report(progress, region=ScanRegion.ALL)
-        assert text.endswith("No current forecast results. Run a new scan.")
+        assert "No forecast cards available." in text
+        assert "Scan All Regions" in text
         assert "PARIS" not in text
         assert "TOKYO" not in text
 
