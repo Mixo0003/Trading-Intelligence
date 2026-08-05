@@ -6,9 +6,22 @@ import re
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from app.opportunity_intel.models import ObservationMode
+from app.opportunity_intel.display_labels import (
+    ALERT_MODE_AUTO_DESCRIPTION,
+    ALERT_MODE_AUTO_LABEL,
+    ALERT_MODE_MANUAL_DESCRIPTION,
+    ALERT_MODE_MANUAL_LABEL,
+    LIVE_MODE_OFF_DESCRIPTION,
+    LIVE_MODE_OFF_LABEL,
+    LIVE_MODE_ON_DESCRIPTION,
+    LIVE_MODE_ON_LABEL,
+    alert_mode_label,
+    live_mode_label,
+)
+from app.opportunity_intel.models import LiveMode, ObservationMode
 from app.opportunity_intel.payload import DeliveryCardPayload
 from app.opportunity_intel.reason_text import reason_codes_to_text
+from app.opportunity_intel.status_view import ScannerStatusView
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -34,7 +47,7 @@ def format_opportunity_card(payload: DeliveryCardPayload, *, now: datetime | Non
         f"{signal_family} (analysis only)",
     ]
     if payload.mode == ObservationMode.LIVE_STRICT:
-        lines.extend(["LIVE / IN-PLAY", "STRICT DATA CHECKS"])
+        lines.extend(["LIVE / IN-PLAY", "EXTRA SAFETY CHECKS"])
     lines.extend(
         [
             "",
@@ -96,7 +109,7 @@ def format_filters_card(scanner) -> str:
             f"Maximum absolute spread: {_pp(scanner.maximum_absolute_spread)}",
             f"Maximum slippage: {_pct(scanner.maximum_slippage)}",
             f"Categories: {categories}",
-            f"Live mode: {scanner.live_mode.value}",
+            f"Live mode: {live_mode_label(scanner.live_mode)}",
             "",
             "Filters decide which markets qualify.",
             "Alert timing lives under Alert Settings.",
@@ -108,6 +121,11 @@ def format_alert_settings_card(
     scanner,
     *,
     user_delivery_available: bool,
+    admin_delivery_available: bool = False,
+    is_admin_viewer: bool = False,
+    auto_alerts_enabled: bool = False,
+    scanner_enabled: bool = False,
+    worker_label: str = "Disabled",
 ) -> str:
     """When and how alerts may reach you. No market-filter fields here."""
     quiet = "off"
@@ -116,28 +134,37 @@ def format_alert_settings_card(
             f"{scanner.quiet_hours.start.isoformat(timespec='minutes')}-"
             f"{scanner.quiet_hours.end.isoformat(timespec='minutes')}"
         )
-    alert_note = (
-        "Alerts will not be delivered while global user delivery is unavailable."
-        if scanner.alert_mode.value == "INSTANT" and not user_delivery_available
-        else (
-            "Instant alerts depend on global user-delivery availability."
-            if scanner.alert_mode.value == "INSTANT"
-            else "On-demand only: no automatic push alerts."
-        )
+    mode_label = alert_mode_label(scanner.alert_mode)
+    live_label = live_mode_label(scanner.live_mode)
+    alert_note = _alert_delivery_note(
+        alert_mode_label=mode_label,
+        live_mode_label=live_label,
+        is_admin_viewer=is_admin_viewer,
+        admin_delivery_available=admin_delivery_available,
+        user_delivery_available=user_delivery_available,
+        auto_alerts_enabled=auto_alerts_enabled,
+        scanner_enabled=scanner_enabled,
     )
     return "\n".join(
         [
             "Opportunity Alert Settings",
             f"Revision: {scanner.revision}",
             "",
-            f"Alert mode: {scanner.alert_mode.value}",
+            f"Alert mode: {mode_label}",
+            f"Live mode: {live_label}",
             f"Cooldown: {scanner.cooldown_seconds}s",
             f"Quiet hours: {quiet}",
             f"Timezone: {scanner.timezone_name}",
             f"Paper allocation: ${_money(scanner.paper_allocation_usd)}",
+            f"Scanner configuration: {'enabled' if scanner_enabled else 'disabled'}",
+            f"Scanner worker: {worker_label}",
             (
-                "Global user delivery: "
-                f"{'available' if user_delivery_available else 'unavailable'}"
+                "Automatic delivery to regular users: "
+                f"{'available' if user_delivery_available else 'disabled'}"
+            ),
+            (
+                "Administrator delivery: "
+                f"{'available' if admin_delivery_available else 'unavailable'}"
             ),
             alert_note,
             "",
@@ -175,24 +202,58 @@ def format_signal_history(signals, markets_by_asset: dict[str, tuple[str, str]])
     return text[:TELEGRAM_MAX_MESSAGE_LENGTH]
 
 
-def format_live_mode_help() -> str:
+def format_live_mode_screen(*, live_mode: LiveMode) -> str:
+    """Minimal Live Mode control text — status only, no technical copy."""
     return "\n".join(
         [
             "Live Mode",
-            "",
-            "This screen configures filtering behaviour for live / in-play markets.",
-            "It is not a list of active markets.",
-            "",
-            "OFF excludes live / in-play markets from your results.",
-            "STRICT allows them only with stricter checks: stronger freshness,",
-            "liquidity, spread, movement, and two-book consistency before a live",
-            "signal can qualify.",
-            "",
-            "REST data uncertainty causes suppression.",
-            "STRICT does not imply real-time certainty or a guaranteed opportunity.",
-            "No trades are placed from this screen.",
+            f"Current status: {live_mode_label(live_mode)}",
         ]
     )
+
+
+def format_live_mode_help(
+    *,
+    live_mode: LiveMode | None = None,
+    scanner_view: ScannerStatusView | None = None,
+) -> str:
+    """Compatibility alias for the Live Mode control screen."""
+    _ = scanner_view
+    return format_live_mode_screen(live_mode=live_mode or LiveMode.OFF)
+
+
+def _alert_delivery_note(
+    *,
+    alert_mode_label: str,
+    live_mode_label: str,
+    is_admin_viewer: bool,
+    admin_delivery_available: bool,
+    user_delivery_available: bool,
+    auto_alerts_enabled: bool,
+    scanner_enabled: bool,
+) -> str:
+    if live_mode_label == LIVE_MODE_OFF_LABEL:
+        return "Live Mode is OFF: new automatic alerts are not delivered."
+    if alert_mode_label == ALERT_MODE_MANUAL_LABEL:
+        return ALERT_MODE_MANUAL_DESCRIPTION
+    if not scanner_enabled:
+        return "Scanner is disabled: no new automatic alerts are delivered."
+    if not auto_alerts_enabled:
+        return "Automatic alerts are off for this process."
+    if is_admin_viewer:
+        if admin_delivery_available:
+            return (
+                f"{ALERT_MODE_AUTO_DESCRIPTION} "
+                "Administrator delivery is available; "
+                "regular-user delivery stays separate."
+            )
+        return (
+            "Administrator delivery is unavailable "
+            "(missing or disabled admin configuration)."
+        )
+    if user_delivery_available:
+        return ALERT_MODE_AUTO_DESCRIPTION
+    return "Automatic delivery to regular users is disabled."
 
 
 def _score(value: Decimal) -> str:
@@ -224,3 +285,23 @@ def _ts_utc(value: datetime) -> str:
 
 def _signal_family_label(value: str) -> str:
     return value.replace("_", " ").title()
+
+
+# Re-export labels for tests / handlers that import from formatting.
+__all__ = [
+    "ALERT_MODE_AUTO_DESCRIPTION",
+    "ALERT_MODE_AUTO_LABEL",
+    "ALERT_MODE_MANUAL_DESCRIPTION",
+    "ALERT_MODE_MANUAL_LABEL",
+    "LIVE_MODE_OFF_DESCRIPTION",
+    "LIVE_MODE_OFF_LABEL",
+    "LIVE_MODE_ON_DESCRIPTION",
+    "LIVE_MODE_ON_LABEL",
+    "TELEGRAM_MAX_MESSAGE_LENGTH",
+    "format_alert_settings_card",
+    "format_filters_card",
+    "format_live_mode_help",
+    "format_opportunity_card",
+    "format_signal_history",
+    "sanitize_plain",
+]

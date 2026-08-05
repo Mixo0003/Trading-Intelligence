@@ -803,9 +803,13 @@ class CompleteDiscoveryCache:
         self._persist_catalog = persist_catalog
         self._loaded_from_store = False
 
-    def _ensure_loaded_from_store(self, *, now: datetime) -> None:
-        if self._loaded_from_store or self._complete is not None:
+    def _ensure_loaded_from_store(
+        self, *, now: datetime, allow_expired: bool = False
+    ) -> None:
+        if self._complete is not None:
             self._loaded_from_store = True
+            return
+        if self._loaded_from_store and not allow_expired:
             return
         self._loaded_from_store = True
         if not self._persist_catalog or self._settings is None:
@@ -821,7 +825,9 @@ class CompleteDiscoveryCache:
         version, markets = loaded
         completed_at = version.completed_at.astimezone(timezone.utc)
         age = (now.astimezone(timezone.utc) - completed_at).total_seconds()
-        if age < 0 or age > self.catalog_ttl_seconds:
+        if age < 0:
+            return
+        if not allow_expired and age > self.catalog_ttl_seconds:
             return
         self._complete = DiscoveryResult(
             status=ResultStatus.COMPLETE,
@@ -845,6 +851,22 @@ class CompleteDiscoveryCache:
             return None
         age = (clock - result.completed_at.astimezone(timezone.utc)).total_seconds()
         if age < 0 or age > self.catalog_ttl_seconds:
+            return None
+        return replace(result, from_cache=True)
+
+    def get_stale_while_revalidate(self, *, now: datetime) -> DiscoveryResult | None:
+        """Last COMPLETE catalog for evaluation during active rediscovery.
+
+        Hard catalog TTL still blocks cold reads via ``get()``. While a refresh
+        session is running, evaluation may keep using the prior COMPLETE catalog
+        so cycle completion and delivery are not frozen for hours.
+        """
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        clock = now.astimezone(timezone.utc)
+        self._ensure_loaded_from_store(now=clock, allow_expired=True)
+        result = self._complete
+        if result is None or result.completed_at is None:
             return None
         return replace(result, from_cache=True)
 
@@ -969,11 +991,14 @@ class CompleteDiscoveryCache:
             ResultStatus.RETRYABLE_FAILURE,
         }:
             self._save_session(advanced.session)
-            if cached is not None:
-                # Stale-while-refresh: keep serving prior COMPLETE catalog.
+            serve = cached if cached is not None else self.get_stale_while_revalidate(
+                now=clock
+            )
+            if serve is not None:
+                # Stale-while-refresh/revalidate: keep evaluating prior COMPLETE.
                 return replace(
-                    cached,
-                    diagnostics=cached.diagnostics + result.diagnostics,
+                    serve,
+                    diagnostics=serve.diagnostics + result.diagnostics,
                     refresh_failure_status=result.status,
                     gamma_attempts_this_cycle=result.gamma_attempts_this_cycle,
                     gamma_attempts_cumulative=result.gamma_attempts_cumulative,
@@ -987,10 +1012,13 @@ class CompleteDiscoveryCache:
 
         # Permanent / expired: drop incomplete session; keep usable COMPLETE.
         self._save_session(None)
-        if cached is not None:
+        serve = cached if cached is not None else self.get_stale_while_revalidate(
+            now=clock
+        )
+        if serve is not None:
             return replace(
-                cached,
-                diagnostics=cached.diagnostics + result.diagnostics,
+                serve,
+                diagnostics=serve.diagnostics + result.diagnostics,
                 refresh_failure_status=result.status,
                 gamma_attempts_this_cycle=result.gamma_attempts_this_cycle,
                 gamma_attempts_cumulative=result.gamma_attempts_cumulative,

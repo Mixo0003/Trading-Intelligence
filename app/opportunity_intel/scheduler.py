@@ -20,6 +20,7 @@ from app.opportunity_intel.runtime import (
     record_skipped_overlap,
     start_managed_cycle,
 )
+from app.opportunity_intel.scanner_control import auto_alerts_armed, scanner_armed
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ async def _renew_lock_loop(
 async def market_opportunity_scan_job(context) -> None:
     """Return quickly; blocking scan/delivery work runs off the event loop."""
     settings: Settings = context.application.bot_data["settings"]
-    if not settings.opportunity_scanner_enabled:
+    if not scanner_armed(settings):
         return
 
     active = context.application.bot_data.get(_ACTIVE_HANDLE_KEY)
@@ -142,6 +143,17 @@ async def market_opportunity_scan_job(context) -> None:
 
             # Wait off the event loop without occupying the Opportunity worker pool.
             result = await asyncio.to_thread(await_managed_cycle, handle)
+            cycle = result.cycle
+            logger.info(
+                "Opportunity cycle outcome: timed_out=%s storage_ok=%s "
+                "selection_ran=%s discovery=%s signals=%s diagnostics=%s",
+                result.timed_out,
+                None if cycle is None else cycle.storage_ok,
+                result.selection_ran,
+                None if cycle is None else getattr(cycle.discovery_status, "value", cycle.discovery_status),
+                None if cycle is None else cycle.signals_created,
+                [code.value for code in result.diagnostic_codes][:8],
+            )
             if result.timed_out and not handle.future.done():
                 def _on_late(_fut) -> None:
                     try:
@@ -167,7 +179,7 @@ async def market_opportunity_scan_job(context) -> None:
                 return
 
             if (
-                settings.opportunity_auto_alerts_enabled
+                auto_alerts_armed(settings)
                 and result.enabled
                 and not result.timed_out
                 and result.cycle is not None
@@ -177,6 +189,7 @@ async def market_opportunity_scan_job(context) -> None:
                     settings,
                     send_message=context.bot.send_message,
                     now=datetime.now(timezone.utc),
+                    auto_alerts_enabled=True,
                 )
             finish_job_execution(
                 settings,
@@ -226,9 +239,9 @@ async def market_opportunity_scan_job(context) -> None:
 
 
 def schedule_opportunity_jobs(application, settings: Settings) -> None:
-    """Idempotent registration. Disabled scanner registers nothing."""
-    if not settings.opportunity_scanner_enabled:
-        logger.info("Opportunity scanner disabled; scan job not registered")
+    """Idempotent registration. Unarmed scanner registers nothing."""
+    if not scanner_armed(settings):
+        logger.info("Opportunity scanner unarmed; scan job not registered")
         return
     if application.bot_data.get(OPPORTUNITY_SCAN_REGISTERED_KEY):
         logger.info("Opportunity scan job already registered; skipping.")

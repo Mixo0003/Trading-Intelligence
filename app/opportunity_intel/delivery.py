@@ -133,6 +133,10 @@ def select_delivery_wave(
     suppressed: list[OpportunityDelivery] = []
 
     for subscription in opportunity_storage.list_subscriptions(settings):
+        # Live Mode OFF blocks new automatic alert delivery (on-demand Top
+        # Opportunities remain available via qualify_recipient alone).
+        if subscription.settings.live_mode == LiveMode.OFF:
+            continue
         admin_recipient = is_admin(settings, subscription.telegram_id)
         last_sent = opportunity_storage.last_sent_at_for_opportunity_key(
             settings,
@@ -245,6 +249,8 @@ def recheck_delivery_authorization(
         return False, OpportunityDiagnosticCode.SUBSCRIPTION_DISABLED
     if subscription.settings.alert_mode != AlertMode.INSTANT:
         return False, OpportunityDiagnosticCode.ALERT_MODE_NOT_INSTANT
+    if subscription.settings.live_mode == LiveMode.OFF:
+        return False, OpportunityDiagnosticCode.LIVE_MODE_OFF
     if subscription.settings.revision != settings_revision:
         return False, OpportunityDiagnosticCode.SETTINGS_REVISION_CHANGED
 

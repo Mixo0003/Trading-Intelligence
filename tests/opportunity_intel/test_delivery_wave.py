@@ -219,7 +219,7 @@ def _instant_sub(
     allocation: str = "100",
     enabled: bool = True,
     alert_mode: AlertMode = AlertMode.INSTANT,
-    live_mode: LiveMode = LiveMode.OFF,
+    live_mode: LiveMode = LiveMode.STRICT,
     categories: CategoryAllowlist | None = None,
     quiet_hours: QuietHours | None = None,
     timezone_name: str = "UTC",
@@ -381,7 +381,7 @@ def test_category_live_slippage_filters(settings):
         _instant_sub(
             ADMIN_ID,
             revision=1,
-            live_mode=LiveMode.OFF,
+            live_mode=LiveMode.STRICT,
             categories=CategoryAllowlist(all_categories=False, category_ids=frozenset({"politics"})),
             maximum_slippage="0.005",
         ),

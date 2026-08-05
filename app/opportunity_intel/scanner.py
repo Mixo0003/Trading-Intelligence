@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 from app.config.settings import Settings
 from app.copy_intel.order_book import ValidatedOrderBook
@@ -248,6 +251,13 @@ class OpportunityScannerService:
             int(budget_snap.gamma_attempts_used),
         )
         if discovery.status == ResultStatus.IN_PROGRESS:
+            logger.info(
+                "Opportunity cycle discovery-only: session still IN_PROGRESS "
+                "(pages_this_cycle=%s pages_cumulative=%s); "
+                "last_complete_cycle_at unchanged; no delivery selection",
+                discovery.pages_this_cycle,
+                discovery.pages_cumulative,
+            )
             self._heartbeat_discovery_progress(
                 now=current,
                 discovery=discovery,
@@ -320,6 +330,11 @@ class OpportunityScannerService:
         shortlist, budget_skipped = self._apply_book_budgets(shortlist)
         if self.deadline_token is not None and self.deadline_token.expired:
             snap = self.request_budget.snapshot()
+            logger.warning(
+                "Opportunity cycle aborted before evaluation: deadline exceeded "
+                "(shortlisted=%s); last_complete_cycle_at unchanged",
+                len(shortlist),
+            )
             return ScannerCycleResult(
                 cycle_id=cycle_id,
                 discovery_status=ResultStatus.COMPLETE,
@@ -477,6 +492,12 @@ class OpportunityScannerService:
 
         if self.deadline_token is not None and self.deadline_token.expired:
             # Cooperative stop before opening the SQLite write transaction.
+            logger.warning(
+                "Opportunity cycle aborted before commit: deadline exceeded "
+                "(eligible=%s rejected=%s); last_complete_cycle_at unchanged",
+                counters["observations_eligible"],
+                counters["observations_rejected"],
+            )
             return ScannerCycleResult(
                 cycle_id=cycle_id,
                 discovery_status=ResultStatus.COMPLETE,

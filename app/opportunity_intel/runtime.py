@@ -23,6 +23,7 @@ from app.opportunity_intel.discovery import (
 from app.opportunity_intel.models import LiveMode, OpportunityDiagnosticCode, ScannerStatus
 from app.opportunity_intel.request_budget import CycleRequestBudget
 from app.opportunity_intel.scanner import OpportunityScannerService, ScannerCycleResult
+from app.opportunity_intel.scanner_control import scanner_armed
 from app.opportunity_intel.versions import (
     LOCAL_CLOB_REQUEST_CAP_PER_CYCLE,
     LOCAL_GAMMA_REQUEST_CAP_PER_CYCLE,
@@ -217,7 +218,7 @@ def persist_runtime_snapshot(
 ) -> None:
     cycle = result.cycle
     payload = {
-        "enabled": bool(settings.opportunity_scanner_enabled),
+        "enabled": bool(scanner_armed(settings)),
         "last_attempt_at": now.astimezone(timezone.utc).isoformat(),
         "skipped_overlaps": int(skipped_overlaps),
         "timed_out": bool(result.timed_out),
@@ -416,7 +417,7 @@ def start_managed_cycle(
 ) -> ManagedCycleHandle | CycleRuntimeResult:
     """Submit one cycle to the shared executor. Caller awaits with containment."""
     clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    if not settings.opportunity_scanner_enabled:
+    if not scanner_armed(settings):
         return CycleRuntimeResult(enabled=False)
 
     opportunity_storage.initialize_opportunity_schema(settings)
@@ -613,7 +614,7 @@ def run_opportunity_scan_cycle(
     When ``skip_deadline`` is False, uses managed containment: timeout returns
     immediately while the executor future remains tracked.
     """
-    if not settings.opportunity_scanner_enabled:
+    if not scanner_armed(settings):
         return CycleRuntimeResult(enabled=False)
     if skip_deadline:
         clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
