@@ -267,6 +267,8 @@ class Settings:
     market_opportunity_enabled: bool
     market_opportunity_auto_alerts_enabled: bool
     market_opportunity_read_only: bool
+    eia_api_key: str
+    fred_api_key: str
 
     @property
     def scheduled_reports_configured(self) -> bool:
@@ -731,4 +733,6 @@ def load_settings() -> Settings:
         market_opportunity_read_only=_parse_bool(
             os.getenv("MARKET_OPPORTUNITY_READ_ONLY", "true"), default=True
         ),
+        eia_api_key=os.getenv("EIA_API_KEY", "").strip(),
+        fred_api_key=os.getenv("FRED_API_KEY", "").strip(),
     )

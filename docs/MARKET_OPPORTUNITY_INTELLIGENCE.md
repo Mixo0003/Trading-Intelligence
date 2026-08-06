@@ -60,11 +60,40 @@ System Health may report Overall DEGRADED because `copy_intel` is DOWN while `co
 
 ### Roadmap
 
-- **V4.2** — Gold + WTI live paper detectors
+- **V4.1** — Foundation (merged)
+- **V4.2** — WTI-first paper detectors (EIA RWTC + WCESTUS1); Gold deferred (no licensed feed)
 - **V4.3** — Silver + Natural Gas
-- **V4.4** — Crypto & cross-market (V3 unfinished universe/L2/funding remain backlog)
+- **V4.4** — Crypto & cross-market (V3 unfinished universe/L2/funding stay backlog)
 - **V4.5** — Scoring & Top Opportunities
 - **V4.6** — Paper outcomes & confidence calibration
+
+### V4.2 notes (in progress on feature branch)
+
+- Instrument: EIA WTI Cushing Spot — Daily (`RWTC`) — **official daily print**, not a live
+  futures tick; high/low equal close on EIA daily observations.
+- Inventory: `WCESTUS1` U.S. Ending Stocks excluding SPR of Crude Oil (weekly, MBBL)
+- Optional FRED `DCOILWTICO` same-period cross-check (confidence ≤ MEDIUM when missing;
+  System Health may show **DEGRADED** for FRED without suppressing publish)
+- Admin scanner; no auto-alerts; `market_opportunity_v1` reused (no new migration)
+- Defaults remain disabled / read-only / no auto-alerts
+- Stage A candidates are memory-only; Stage B persists validated paper opportunities only
+- Gold: deferred — no licensed/ToS-cleared price feed; no runnable Gold detectors
+- UA_INVEST / third-party signal services: **not integrated** in V4.2; recorded as a
+  possible **V4.4** product-reference track only (no scraping, no unpaid reuse)
+
+### V4.2 System Health / Telegram notification policy
+
+`MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED` does **not** gate health Telegram sends
+(`HEALTH_ALERTS_ENABLED` does). MOI-specific rules:
+
+- Before first EIA refresh (warmup): System Health may be DEGRADED; **no Telegram**
+- Optional FRED missing/unavailable with EIA healthy: System Health DEGRADED; **no Telegram**
+- Confirmed EIA RWTC missing/stale: Telegram only after `HEALTH_FAILURE_THRESHOLD`
+  consecutive failures; **one** alert per incident/detail
+- EIA recovery to HEALTHY: **one** recovery Telegram (even if FRED still DEGRADED)
+- Incident `updated` transitions never create new Telegram sends
+- Runtime status detail is **merged** across MOI jobs so outcomes/idle cannot wipe
+  EIA/FRED/detector diagnostics
 
 ### Crypto V3 pause
 

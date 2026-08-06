@@ -143,10 +143,10 @@ Version naming: **V4.1**, **V4.2**, **V4.3**… (no letter suffixes).
 
 Sibling product to Polymarket Opportunity Scanner (`app/opportunity_intel` / `opp:`). Lives in `app/market_opportunity/` with Telegram namespace `moi:*`.
 
-- [x] **V4.1** Market Opportunity Foundation — paper-only models, lifecycle, empty detector registry, additive `market_opportunity_v1`, admin-only Telegram shell, flags default off; **no live detectors / no auto alerts** (implementation + live verify complete on branch; commit/PR pending)
-- [ ] **V4.2** First focused market intelligence — Gold + WTI only (paper)
+- [x] **V4.1** Market Opportunity Foundation — paper-only models, lifecycle, empty detector registry, additive `market_opportunity_v1`, admin-only Telegram shell, flags default off; **no live detectors / no auto alerts**
+- [ ] **V4.2** WTI-first paper opportunity intelligence (EIA RWTC + WCESTUS1; Gold deferred until licensed feed)
 - [ ] **V4.3** Commodity expansion — Silver + Natural Gas
-- [ ] **V4.4** Crypto & cross-market intelligence (reuse public quotes; unfinished V3 universe/L2/funding stay backlog)
+- [ ] **V4.4** Crypto & cross-market intelligence (reuse public quotes; unfinished V3 universe/L2/funding stay backlog; UA_INVEST or similar third-party signal services only with written consent — research reference only in V4.2)
 - [ ] **V4.5** Opportunity scoring & Top Opportunities
 - [ ] **V4.6** Paper outcome tracking & calibration
 
