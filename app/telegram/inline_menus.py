@@ -24,6 +24,8 @@ CB_CRYPTO_EXCHANGES = "crypto:exchanges"
 # V4.1 Market Opportunity Intelligence (admin-only hub; distinct from opp:)
 CB_MOI_MENU = "moi:menu"
 CB_MOI_TOP = "moi:top"
+CB_MOI_WTI = "moi:wti"
+CB_MOI_GOLD = "moi:gold"
 CB_MOI_DETAIL = "moi:detail"
 CB_MOI_EVIDENCE = "moi:evidence"
 CB_MOI_RISKS = "moi:risks"
@@ -182,6 +184,8 @@ def moi_hub_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_MOI_TOP)],
+            [InlineKeyboardButton("🛢 WTI", callback_data=CB_MOI_WTI)],
+            [InlineKeyboardButton("🥇 Gold (deferred)", callback_data=CB_MOI_GOLD)],
             [InlineKeyboardButton("📄 Detail", callback_data=CB_MOI_DETAIL)],
             [InlineKeyboardButton("🔎 Evidence", callback_data=CB_MOI_EVIDENCE)],
             [InlineKeyboardButton("⚠️ Risks", callback_data=CB_MOI_RISKS)],

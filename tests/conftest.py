@@ -127,6 +127,8 @@ def make_test_settings(**overrides) -> Settings:
         market_opportunity_enabled=False,
         market_opportunity_auto_alerts_enabled=False,
         market_opportunity_read_only=True,
+        eia_api_key="",
+        fred_api_key="",
     )
     base.update(overrides)
     return Settings(**base)

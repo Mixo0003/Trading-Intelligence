@@ -17,5 +17,5 @@ def assert_paper_only(settings: Settings) -> None:
         )
     if settings.market_opportunity_auto_alerts_enabled:
         raise MarketOpportunitySafetyError(
-            "MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED must remain false in V4.1"
+            "MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED must remain false"
         )

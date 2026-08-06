@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — V4.2 WTI Opportunity Intelligence
+
+**Branch:** `feature/v4.2-wti-opportunity-intelligence`
+
+### Added / changed
+
+- WTI-first paper detectors (`wti_trend`, `wti_breakout`, `wti_inventory`) on EIA
+  `RWTC` + `WCESTUS1` (U.S. commercial crude stocks excluding SPR).
+- `RWTC` treated as official **daily** EIA print (not live futures); as-of date required
+  on evidence / price cards.
+- Optional FRED `DCOILWTICO` same-period cross-check; missing FRED caps confidence
+  at MEDIUM and may leave System Health **DEGRADED** (does not suppress publish;
+  does **not** send Telegram health alerts by itself).
+- Stage A/B pipeline, deterministic geometry, checked-in blackout calendar,
+  paper outcome measurement, storage upsert/list APIs on `market_opportunity_v1`.
+- Admin Telegram WTI list + Gold deferred stub; no auto-alerts; no Gold detectors.
+- MOI JobQueue runtime status **merges** detail slices (outcomes cannot wipe EIA).
+- Health Telegram policy: warmup and optional-FRED DEGRADED suppressed; confirmed EIA
+  failure alerts once after threshold; one EIA recovery notice; no `updated`-spam.
+- Defaults remain: module disabled, read-only, auto-alerts false.
+- UA_INVEST noted as V4.4 product-reference only — **not** integrated.
+
 ## V4.1 — Market Opportunity Foundation (release prep)
 
 **Branch:** `feature/v4.1-market-opportunity-foundation`

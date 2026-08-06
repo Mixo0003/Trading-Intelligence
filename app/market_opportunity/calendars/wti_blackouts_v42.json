@@ -1,0 +1,99 @@
+{
+  "timezone_display": "America/New_York",
+  "version": "v4.2",
+  "policy": {
+    "WPSR": {"before_hours": 2, "after_hours": 2},
+    "CPI": {"before_hours": 1, "after_hours": 2},
+    "FOMC": {"before_hours": 2, "after_hours": 3}
+  },
+  "events": [
+    {
+      "id": "wpsr-2026-07-30",
+      "kind": "WPSR",
+      "anchor_utc": "2026-07-30T14:30:00+00:00",
+      "start_utc": "2026-07-30T12:30:00+00:00",
+      "end_utc": "2026-07-30T16:30:00+00:00",
+      "note": "EIA WPSR ±2h around 10:30 ET"
+    },
+    {
+      "id": "wpsr-2026-08-06",
+      "kind": "WPSR",
+      "anchor_utc": "2026-08-06T14:30:00+00:00",
+      "start_utc": "2026-08-06T12:30:00+00:00",
+      "end_utc": "2026-08-06T16:30:00+00:00",
+      "note": "EIA WPSR Thu Aug 6 2026 10:30 ET = 14:30 UTC; expanded ±2h"
+    },
+    {
+      "id": "wpsr-2026-08-13",
+      "kind": "WPSR",
+      "anchor_utc": "2026-08-13T14:30:00+00:00",
+      "start_utc": "2026-08-13T12:30:00+00:00",
+      "end_utc": "2026-08-13T16:30:00+00:00",
+      "note": "EIA WPSR ±2h around 10:30 ET"
+    },
+    {
+      "id": "wpsr-2026-08-20",
+      "kind": "WPSR",
+      "anchor_utc": "2026-08-20T14:30:00+00:00",
+      "start_utc": "2026-08-20T12:30:00+00:00",
+      "end_utc": "2026-08-20T16:30:00+00:00",
+      "note": "EIA WPSR ±2h around 10:30 ET"
+    },
+    {
+      "id": "wpsr-2026-08-27",
+      "kind": "WPSR",
+      "anchor_utc": "2026-08-27T14:30:00+00:00",
+      "start_utc": "2026-08-27T12:30:00+00:00",
+      "end_utc": "2026-08-27T16:30:00+00:00",
+      "note": "EIA WPSR ±2h around 10:30 ET"
+    },
+    {
+      "id": "wpsr-2026-09-03",
+      "kind": "WPSR",
+      "anchor_utc": "2026-09-03T14:30:00+00:00",
+      "start_utc": "2026-09-03T12:30:00+00:00",
+      "end_utc": "2026-09-03T16:30:00+00:00",
+      "note": "EIA WPSR ±2h around 10:30 ET"
+    },
+    {
+      "id": "wpsr-2026-09-10",
+      "kind": "WPSR",
+      "anchor_utc": "2026-09-10T14:30:00+00:00",
+      "start_utc": "2026-09-10T12:30:00+00:00",
+      "end_utc": "2026-09-10T16:30:00+00:00",
+      "note": "EIA WPSR ±2h around 10:30 ET"
+    },
+    {
+      "id": "cpi-2026-08-12",
+      "kind": "CPI",
+      "anchor_utc": "2026-08-12T12:30:00+00:00",
+      "start_utc": "2026-08-12T11:30:00+00:00",
+      "end_utc": "2026-08-12T14:30:00+00:00",
+      "note": "CPI placeholder 8:30 ET; window 1h before / 2h after"
+    },
+    {
+      "id": "cpi-2026-09-11",
+      "kind": "CPI",
+      "anchor_utc": "2026-09-11T12:30:00+00:00",
+      "start_utc": "2026-09-11T11:30:00+00:00",
+      "end_utc": "2026-09-11T14:30:00+00:00",
+      "note": "CPI placeholder 8:30 ET; window 1h before / 2h after"
+    },
+    {
+      "id": "fomc-2026-07-30",
+      "kind": "FOMC",
+      "anchor_utc": "2026-07-30T18:00:00+00:00",
+      "start_utc": "2026-07-30T16:00:00+00:00",
+      "end_utc": "2026-07-30T21:00:00+00:00",
+      "note": "FOMC placeholder 14:00 ET; window 2h before / 3h after"
+    },
+    {
+      "id": "fomc-2026-09-17",
+      "kind": "FOMC",
+      "anchor_utc": "2026-09-17T18:00:00+00:00",
+      "start_utc": "2026-09-17T16:00:00+00:00",
+      "end_utc": "2026-09-17T21:00:00+00:00",
+      "note": "FOMC placeholder 14:00 ET; window 2h before / 3h after"
+    }
+  ]
+}
