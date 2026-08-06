@@ -3,7 +3,11 @@ from datetime import date, timedelta
 import pytest
 from unittest.mock import MagicMock
 
-from app.polymarket.discovery import SkipReason, evaluate_market_eligibility
+from app.polymarket.discovery import (
+    SkipReason,
+    _parse_target_date,
+    evaluate_market_eligibility,
+)
 from app.polymarket.market_type import (
     TemperatureMarketType,
     ThresholdDirection,
@@ -46,6 +50,17 @@ def _market(
 def _horizon_target_date_str(*, days_ahead: int = 2) -> str:
     """Target date within the default 7-day forecast eligibility window."""
     return (date.today() + timedelta(days=days_ahead)).strftime("%B %d, %Y")
+
+
+class TestParseTargetDate:
+    def test_accepts_zero_padded_and_unpadded_august_day(self):
+        """Regression: ordinal strip must not corrupt 'august'; accept 07 and 7."""
+        assert _parse_target_date("August 07, 2026") == date(2026, 8, 7)
+        assert _parse_target_date("August 7, 2026") == date(2026, 8, 7)
+
+    def test_accepts_day_ordinals_without_breaking_month_names(self):
+        assert _parse_target_date("August 1st, 2026") == date(2026, 8, 1)
+        assert _parse_target_date("March 3rd, 2026") == date(2026, 3, 3)
 
 
 class TestMarketTypeClassification:
