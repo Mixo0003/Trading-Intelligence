@@ -38,9 +38,9 @@ class TestAdminVisibility:
 
     def test_health_menu_structure(self):
         labels = _labels(health_inline_keyboard())
-        assert "📊 Health Summary" in labels
+        assert "📊 Зведення" in labels
         assert "📦 Storage" in labels
-        assert "🧪 Run Self-Test" in labels
+        assert "🧪 Self-Test" in labels
         assert "⬅️ Main Menu" in labels
 
     def test_is_admin(self, settings):

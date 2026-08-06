@@ -156,7 +156,8 @@ def probe_scheduler(settings: Settings) -> ComponentStatus:
         if settings.health_monitor_enabled
         else None,
     }
-    issues = []
+    critical_issues: list[str] = []
+    soft_issues: list[str] = []
     metrics: dict = {"jobs": {}}
     now = time.time()
     for name, interval in jobs.items():
@@ -170,24 +171,50 @@ def probe_scheduler(settings: Settings) -> ComponentStatus:
             "last_finished": row["finished_at"] if row else None,
         }
         if row is None:
-            # Not yet run — degraded only after stale window from process start is unknown
             continue
         started = _parse_iso(row["started_at"])
+        stale = False
         if started is not None and (now - started) > job_stale_seconds(settings, interval):
             if row["finished_at"] is None or row["status"] == "error":
-                issues.append(f"{name} stale/failed")
+                stale = True
+                note = f"{name} stale/failed"
             else:
                 finished = _parse_iso(row["finished_at"])
                 if finished is not None and (now - finished) > job_stale_seconds(
                     settings, interval
                 ):
-                    issues.append(f"{name} overdue")
-    if issues:
+                    stale = True
+                    note = f"{name} overdue"
+                else:
+                    note = ""
+            if stale and note:
+                # copy_intel_poll is feature-critical; health tick delay is soft.
+                if name == "copy_intel_poll":
+                    critical_issues.append(note)
+                else:
+                    soft_issues.append(note)
+    metrics["reason_code"] = (
+        "critical_job_down"
+        if critical_issues
+        else "job_stale"
+        if soft_issues
+        else "scheduler_ok"
+    )
+    if critical_issues:
         return _update_state(
             settings,
             "scheduler",
             probe_ok=False,
-            detail="; ".join(issues),
+            detail="; ".join(critical_issues),
+            metrics=metrics,
+        )
+    if soft_issues:
+        return _update_state(
+            settings,
+            "scheduler",
+            probe_ok=True,
+            forced_status="DEGRADED",
+            detail="; ".join(soft_issues),
             metrics=metrics,
         )
     return _update_state(
@@ -236,7 +263,20 @@ def probe_weather(settings: Settings) -> ComponentStatus:
             valid += 1
     metrics["valid_provider_count"] = valid
     metrics["min_required"] = settings.forecast_min_providers
+    # Limitation: probe has no distinct primary-vs-optional provider IDs; fail closed
+    # by treating forecast_min_providers as the primary capability floor.
+    if errors and valid >= settings.forecast_min_providers:
+        metrics["reason_code"] = "optional_provider_errors"
+        return _update_state(
+            settings,
+            "weather",
+            probe_ok=True,
+            forced_status="DEGRADED",
+            detail=f"Optional provider issues; valid={valid}: {', '.join(errors[:5])}",
+            metrics=metrics,
+        )
     if errors and valid < settings.forecast_min_providers:
+        metrics["reason_code"] = "primary_unavailable"
         return _update_state(
             settings,
             "weather",
@@ -245,6 +285,7 @@ def probe_weather(settings: Settings) -> ComponentStatus:
             metrics=metrics,
         )
     if rows and valid < settings.forecast_min_providers:
+        metrics["reason_code"] = "primary_unavailable"
         return _update_state(
             settings,
             "weather",
@@ -252,7 +293,7 @@ def probe_weather(settings: Settings) -> ComponentStatus:
             detail=f"Valid providers {valid} < min {settings.forecast_min_providers}",
             metrics=metrics,
         )
-    # No metrics yet — not a failure (DISABLED-like healthy default)
+    metrics["reason_code"] = "weather_ok"
     return _update_state(
         settings,
         "weather",
@@ -328,12 +369,57 @@ def probe_crypto_intelligence(settings: Settings) -> ComponentStatus:
             probe_ok=True,
             forced_status="DISABLED",
             detail="Crypto Intelligence disabled",
-            metrics={"enabled": False},
+            metrics={"enabled": False, "reason_code": "disabled"},
         )
     metrics: dict = {
         "read_only": settings.crypto_intel_read_only,
         "symbols": list(settings.crypto_symbols),
     }
+    if not settings.crypto_intel_read_only:
+        # Venue probe skipped; hard-critical handled by crypto_readonly.
+        metrics["reason_code"] = "readonly_violation"
+        return _update_state(
+            settings,
+            "crypto_intel",
+            probe_ok=True,
+            forced_status="DEGRADED",
+            detail="Crypto venue probe skipped while read-only invariant is violated",
+            metrics=metrics,
+        )
+    from app.crypto.health import probe_all_exchanges
+    from app.crypto.models import HealthStatus as CryptoHS
+
+    rows = probe_all_exchanges(settings)
+    usable = [
+        r
+        for r in rows
+        if r.status in {CryptoHS.OK, CryptoHS.DEGRADED}
+    ]
+    down_rows = [r for r in rows if r.status == CryptoHS.DOWN]
+    metrics["venues_usable"] = len(usable)
+    metrics["venues_down"] = len(down_rows)
+    metrics["venues_total"] = len(rows)
+    if not usable:
+        metrics["reason_code"] = "no_usable_venues"
+        return _update_state(
+            settings,
+            "crypto_intel",
+            probe_ok=False,
+            forced_status="DOWN",
+            detail="No usable crypto venues/books for enabled scanner",
+            metrics=metrics,
+        )
+    if down_rows:
+        metrics["reason_code"] = "venue_down"
+        return _update_state(
+            settings,
+            "crypto_intel",
+            probe_ok=True,
+            forced_status="DEGRADED",
+            detail=f"Partial venue outage: down={len(down_rows)} usable={len(usable)}",
+            metrics=metrics,
+        )
+    metrics["reason_code"] = "crypto_ok"
     return _update_state(
         settings,
         "crypto_intel",
@@ -383,6 +469,7 @@ def probe_copy_intelligence(settings: Settings) -> ComponentStatus:
 
     poll_ts = _parse_iso(last_poll)
     if poll_ts is not None and (time.time() - poll_ts) > copy_poll_stale_seconds(settings):
+        metrics["reason_code"] = "poll_stale"
         return _update_state(
             settings,
             "copy_intel",
@@ -391,14 +478,38 @@ def probe_copy_intelligence(settings: Settings) -> ComponentStatus:
             metrics=metrics,
         )
     if last_error:
+        metrics["reason_code"] = "api_errors"
         return _update_state(
             settings,
             "copy_intel",
             probe_ok=False,
-            detail=f"Copy poll error: {last_error[:160]}",
+            detail="Copy poll error (details in logs only)",
+            metrics=metrics,
+        )
+    watchlist = int(metrics.get("watchlist") or 0)
+    # baselines_incomplete is the available fail-closed proxy for incomplete_book wallets.
+    if watchlist > 0 and incomplete >= watchlist:
+        metrics["reason_code"] = "no_trustworthy_processing"
+        return _update_state(
+            settings,
+            "copy_intel",
+            probe_ok=False,
+            forced_status="DOWN",
+            detail="No trustworthy Copy baselines for enabled wallets",
+            metrics=metrics,
+        )
+    if incomplete > 0:
+        metrics["reason_code"] = "baselines_incomplete"
+        return _update_state(
+            settings,
+            "copy_intel",
+            probe_ok=True,
+            forced_status="DEGRADED",
+            detail=f"Partial incomplete baselines: {incomplete}/{watchlist}",
             metrics=metrics,
         )
     if failed_baselines >= settings.health_failure_threshold:
+        metrics["reason_code"] = "no_trustworthy_processing"
         return _update_state(
             settings,
             "copy_intel",
@@ -406,6 +517,7 @@ def probe_copy_intelligence(settings: Settings) -> ComponentStatus:
             detail="Baseline repeatedly failing",
             metrics=metrics,
         )
+    metrics["reason_code"] = "copy_ok"
     return _update_state(
         settings,
         "copy_intel",
@@ -457,13 +569,14 @@ def probe_sqlite(settings: Settings) -> ComponentStatus:
             metrics=metrics,
         )
     except sqlite3.Error as exc:
+        logger.exception("SQLite health probe failed: %s", type(exc).__name__)
         return _update_state(
             settings,
             "sqlite",
             probe_ok=False,
             hard_down=True,
-            detail=f"SQLite error: {exc}",
-            metrics={},
+            detail="SQLite unavailable or integrity/write unsafe",
+            metrics={"reason_code": "db_unavailable"},
         )
 
 
@@ -539,11 +652,11 @@ def probe_opportunity_components(
             _update_state(
                 settings,
                 name,
-                probe_ok=forced in {"HEALTHY", "DISABLED"},
+                probe_ok=forced in {"HEALTHY", "DISABLED", "WARMING_UP", "UNKNOWN"},
                 detail=snap.detail,
                 metrics=snap.metrics,
                 forced_status=forced,
-                hard_down=forced == "DOWN",
+                hard_down=forced == "DOWN" and name in {"opportunity_storage"},
             )
         )
     return components

@@ -1,14 +1,27 @@
-"""Deduplicated admin-only health incident alerts."""
+"""Deduplicated admin-only health incident alerts (global policy)."""
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Any, Awaitable, Callable
 
 from app.config.settings import Settings
 from app.health import storage as health_storage
+from app.health.diagnostics import format_down_alert, format_recovery_alert
+from app.health.incident_keys import (
+    incident_fingerprint,
+    normalize_reason_code,
+    notified_open_marker_key,
+    open_alert_key,
+    recovery_alert_key,
+)
 from app.health.models import ComponentStatus, OverallHealth
+from app.health.policy import (
+    decide_open_notification,
+    may_alert_overall,
+    reason_code_for,
+    soft_only_overall,
+)
 from app.health.sanitize import sanitize_mapping
 from app.health.storage_alerts import storage_recovery_covered, sync_storage_alerts
 
@@ -16,36 +29,35 @@ logger = logging.getLogger(__name__)
 
 SendFunc = Callable[[int, str], Awaitable[None]]
 
-_MOI_EIA_FP = "market_opportunity:eia_price"
+_MOI_EIA_FP = "market_opportunity:eia_price_down"
 
 
-def _fingerprint(component: str, incident_type: str) -> str:
-    return f"{component}:{incident_type}"
+def _incident_opened_at(settings: Settings, incident_id: int) -> str | None:
+    rows = health_storage.list_recent_incidents(settings, limit=50)
+    for row in rows:
+        if int(row["id"]) == incident_id:
+            return str(row["opened_at"] or "") or None
+    return None
 
 
-def _detail_fp(detail: str) -> str:
-    return hashlib.sha256((detail or "").encode("utf-8")).hexdigest()[:12]
+def _consecutive_failures(settings: Settings, component: str) -> int:
+    prior = health_storage.get_component_state(settings, component)
+    if prior is None:
+        return 0
+    return int(prior["consecutive_failures"] or 0)
 
 
 def _sync_moi_health_alerts(
     settings: Settings,
     comp: ComponentStatus,
 ) -> list[tuple[int, str, str]]:
-    """Telegram policy for Market Opportunity Intelligence.
-
-    System Health may still show DEGRADED for optional FRED / warmup.
-    Telegram alerts are reserved for confirmed EIA price failures (after the
-    health failure threshold) and a single EIA recovery notice.
-    ``MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED`` does not gate these health
-    alerts — ``HEALTH_ALERTS_ENABLED`` does via ``dispatch_health_alerts``.
-    """
+    """MOI EIA path: soft FRED/warmup never Telegram; EIA DOWN after threshold."""
     notes: list[tuple[int, str, str]] = []
     metrics: dict[str, Any] = dict(comp.metrics or {})
     price = metrics.get("wti_price") if isinstance(metrics.get("wti_price"), dict) else {}
     price_state = str(price.get("state") or "")
     price_detail = str(price.get("detail") or comp.detail or "")
 
-    # Recovery must run even when overall MOI remains soft-DEGRADED (FRED).
     if price_state == "HEALTHY":
         incident_id = health_storage.resolve_incident(
             settings,
@@ -55,58 +67,217 @@ def _sync_moi_health_alerts(
         )
         if incident_id is None:
             return notes
-        alert_key = f"{_MOI_EIA_FP}:resolved:{incident_id}"
+        marker = notified_open_marker_key(fingerprint=_MOI_EIA_FP, incident_id=incident_id)
+        if not health_storage.was_alert_sent(settings, marker):
+            # Soft resolve without recovery spam when never notified.
+            health_storage.record_alert_sent(
+                settings,
+                incident_id=incident_id,
+                alert_key=recovery_alert_key(fingerprint=_MOI_EIA_FP, incident_id=incident_id),
+                payload=sanitize_mapping({"suppressed": "never_notified"}),
+            )
+            return notes
+        alert_key = recovery_alert_key(fingerprint=_MOI_EIA_FP, incident_id=incident_id)
         if health_storage.was_alert_sent(settings, alert_key):
             return notes
-        notes.append(
-            (
-                incident_id,
-                alert_key,
-                "Health recovery: market_opportunity EIA RWTC is HEALTHY",
-            )
+        opened = _incident_opened_at(settings, incident_id)
+        msg = format_recovery_alert(
+            settings,
+            comp,
+            reason_code="eia_price_down",
+            incident_id=incident_id,
+            opened_at=opened,
+            resolved_at=None,
         )
+        # Stable ops cue expected by focused MOI recovery tests.
+        msg = f"{msg}\nEIA RWTC is HEALTHY"
+        notes.append((incident_id, alert_key, msg))
         return notes
 
     if metrics.get("warming") or metrics.get("telegram_alert_policy") == "suppress":
         return notes
 
     if price_state == "DOWN":
-        prior = health_storage.get_component_state(settings, "market_opportunity")
-        failures = int((prior["consecutive_failures"] if prior is not None else 0) or 0)
-        incident_id, _transition = health_storage.open_or_update_incident(
+        failures = _consecutive_failures(settings, "market_opportunity")
+        incident_id, transition = health_storage.open_or_update_incident(
             settings,
             component="market_opportunity",
             incident_type="eia_price_down",
             fingerprint=_MOI_EIA_FP,
             severity="critical",
-            title="market_opportunity EIA RWTC down",
+            title="MOI EIA RWTC down",
             detail=price_detail,
         )
         if failures < settings.health_failure_threshold:
             return notes
-        alert_key = f"{_MOI_EIA_FP}:alert:{incident_id}:{_detail_fp(price_detail)}"
+        if transition not in {"open", "updated"}:
+            return notes
+        reason = "eia_price_down"
+        alert_key = open_alert_key(
+            fingerprint=_MOI_EIA_FP, incident_id=incident_id, reason_code=reason
+        )
         if health_storage.was_alert_sent(settings, alert_key):
             return notes
-        notes.append(
-            (
-                incident_id,
-                alert_key,
-                f"Health alert: market_opportunity → {comp.status}\n{price_detail}",
+        opened = _incident_opened_at(settings, incident_id)
+        # Probe may still show DEGRADED with price DOWN — treat as feature DOWN alert.
+        down_comp = ComponentStatus(
+            component=comp.component,
+            status="DOWN",
+            detail=price_detail or "EIA RWTC missing",
+            checked_at=comp.checked_at,
+            metrics={**metrics, "reason_code": "eia_price_down"},
+        )
+        msg = format_down_alert(
+            settings,
+            down_comp,
+            reason_code=reason,
+            consecutive_failures=failures,
+            incident_id=incident_id,
+            opened_at=opened,
+        )
+        if "EIA RWTC missing" not in msg:
+            msg = msg.replace(
+                "Що сталося:",
+                "Що сталося: EIA RWTC missing —",
+                1,
             )
+        notes.append((incident_id, alert_key, msg))
+        # Mark notified immediately so recovery gating works without empty notes.
+        health_storage.record_alert_sent(
+            settings,
+            incident_id=incident_id,
+            alert_key=notified_open_marker_key(
+                fingerprint=_MOI_EIA_FP, incident_id=incident_id
+            ),
+            payload=sanitize_mapping({"marker": True}),
         )
     return notes
 
 
-def _overall_alert_suppressed(overall: OverallHealth) -> bool:
-    """Skip overall Telegram noise when only MOI is unhealthy.
+def _handle_component(
+    settings: Settings,
+    comp: ComponentStatus,
+    *,
+    storage_recovered: bool,
+) -> list[tuple[int, str, str]]:
+    notes: list[tuple[int, str, str]] = []
+    if comp.component == "market_opportunity":
+        return _sync_moi_health_alerts(settings, comp)
 
-    MOI uses a dedicated EIA alert/recovery path; optional FRED DEGRADED and
-    warmup must not produce Overall health → DEGRADED Telegram spam.
-    """
-    bad = [c for c in overall.components if c.status in {"DEGRADED", "DOWN"}]
-    if not bad:
-        return True
-    return all(c.component == "market_opportunity" for c in bad)
+    failures = _consecutive_failures(settings, comp.component)
+    reason = reason_code_for(comp)
+    fp = incident_fingerprint(comp.component, reason)
+
+    if comp.status in {"DEGRADED", "DOWN"}:
+        incident_type = "status_" + ("down" if comp.status == "DOWN" else "degraded")
+        # Prefer stable reason fingerprint over status-only keys.
+        fp = incident_fingerprint(comp.component, reason)
+        severity = "critical" if comp.status == "DOWN" else "warning"
+        from app.health.registry import label_uk_for
+
+        incident_id, transition = health_storage.open_or_update_incident(
+            settings,
+            component=comp.component,
+            incident_type=incident_type,
+            fingerprint=fp,
+            severity=severity,
+            title=f"{label_uk_for(comp.component)} {comp.status}",
+            detail=comp.detail,
+        )
+        decision = decide_open_notification(
+            settings, comp, consecutive_failures=failures
+        )
+        if not decision.notify:
+            return notes
+        if transition not in {"open", "updated"}:
+            return notes
+        alert_key = open_alert_key(
+            fingerprint=fp, incident_id=incident_id, reason_code=reason
+        )
+        if health_storage.was_alert_sent(settings, alert_key):
+            return notes
+        opened = _incident_opened_at(settings, incident_id)
+        msg = format_down_alert(
+            settings,
+            comp,
+            reason_code=reason,
+            consecutive_failures=failures,
+            incident_id=incident_id,
+            opened_at=opened,
+        )
+        notes.append((incident_id, alert_key, msg))
+        health_storage.record_alert_sent(
+            settings,
+            incident_id=incident_id,
+            alert_key=notified_open_marker_key(fingerprint=fp, incident_id=incident_id),
+            payload=sanitize_mapping({"marker": True}),
+        )
+        return notes
+
+    if comp.status == "HEALTHY":
+        from app.health.registry import get_component_spec
+
+        spec = get_component_spec(comp.component)
+        reason_candidates = {"status_degraded", "status_down"}
+        if spec is not None:
+            reason_candidates |= set(spec.reason_codes)
+        # Prior open may have used the live reason_code metric.
+        prior = health_storage.get_component_state(settings, comp.component)
+        if prior is not None:
+            try:
+                import json
+
+                raw = prior["metrics_json"] if "metrics_json" in prior.keys() else None
+                if isinstance(raw, str) and raw.strip():
+                    metrics = json.loads(raw)
+                    if isinstance(metrics, dict) and metrics.get("reason_code"):
+                        reason_candidates.add(str(metrics["reason_code"]))
+            except Exception:
+                pass
+        for incident_type in ("status_degraded", "status_down"):
+            for reason_key in sorted(reason_candidates):
+                cand = incident_fingerprint(comp.component, reason_key)
+                incident_id = health_storage.resolve_incident(
+                    settings,
+                    component=comp.component,
+                    incident_type=incident_type,
+                    fingerprint=cand,
+                )
+                if incident_id is None:
+                    continue
+                marker = notified_open_marker_key(
+                    fingerprint=cand, incident_id=incident_id
+                )
+                alert_key = recovery_alert_key(fingerprint=cand, incident_id=incident_id)
+                if health_storage.was_alert_sent(settings, alert_key):
+                    continue
+                if not health_storage.was_alert_sent(settings, marker):
+                    health_storage.record_alert_sent(
+                        settings,
+                        incident_id=incident_id,
+                        alert_key=alert_key,
+                        payload=sanitize_mapping({"suppressed": "never_notified"}),
+                    )
+                    continue
+                if comp.component == "infrastructure" and storage_recovered:
+                    health_storage.record_alert_sent(
+                        settings,
+                        incident_id=incident_id,
+                        alert_key=alert_key,
+                        payload=sanitize_mapping({"suppressed": "storage_recovery"}),
+                    )
+                    continue
+                opened = _incident_opened_at(settings, incident_id)
+                msg = format_recovery_alert(
+                    settings,
+                    comp,
+                    reason_code=normalize_reason_code(reason_key),
+                    incident_id=incident_id,
+                    opened_at=opened,
+                    resolved_at=None,
+                )
+                notes.append((incident_id, alert_key, msg))
+    return notes
 
 
 def sync_incidents_from_health(
@@ -115,7 +286,8 @@ def sync_incidents_from_health(
 ) -> list[tuple[int, str, str]]:
     """
     Open/update/resolve incidents from component statuses.
-    Returns list of (incident_id, transition, message) for notifications.
+    Returns list of (incident_id, alert_key, message) for notifications.
+    Empty message entries are markers only and must not be sent.
     """
     notifications: list[tuple[int, str, str]] = []
     storage_notes = sync_storage_alerts(settings, overall)
@@ -124,69 +296,21 @@ def sync_incidents_from_health(
 
     infra_recovered = False
     for comp in overall.components:
-        if comp.component == "market_opportunity":
-            notifications.extend(_sync_moi_health_alerts(settings, comp))
-            continue
+        notes = _handle_component(
+            settings, comp, storage_recovered=storage_recovered
+        )
+        for item in notes:
+            notifications.append(item)
+            if (
+                comp.component == "infrastructure"
+                and item[2]
+                and "Відновлення" in item[2]
+            ):
+                infra_recovered = True
 
-        if comp.status in {"DEGRADED", "DOWN"}:
-            incident_type = "status_" + comp.status.lower()
-            fp = _fingerprint(comp.component, incident_type)
-            severity = "critical" if comp.status == "DOWN" else "warning"
-            incident_id, transition = health_storage.open_or_update_incident(
-                settings,
-                component=comp.component,
-                incident_type=incident_type,
-                fingerprint=fp,
-                severity=severity,
-                title=f"{comp.component} is {comp.status}",
-                detail=comp.detail,
-            )
-            if transition != "open":
-                # Never notify on mere incident updates — previously
-                # ``updated``+DOWN used a new alert_key and re-spammed admins.
-                continue
-            alert_key = (
-                f"{fp}:open:{comp.status}:{_detail_fp(comp.detail)}"
-            )
-            if health_storage.was_alert_sent(settings, alert_key):
-                continue
-            msg = (
-                f"Health alert: {comp.component} → {comp.status}\n"
-                f"{comp.detail}"
-            )
-            notifications.append((incident_id, alert_key, msg))
-        elif comp.status == "HEALTHY":
-            for incident_type in ("status_degraded", "status_down"):
-                fp = _fingerprint(comp.component, incident_type)
-                incident_id = health_storage.resolve_incident(
-                    settings,
-                    component=comp.component,
-                    incident_type=incident_type,
-                    fingerprint=fp,
-                )
-                if incident_id is not None:
-                    alert_key = f"{fp}:resolved:{incident_id}"
-                    if health_storage.was_alert_sent(settings, alert_key):
-                        continue
-                    # Suppress duplicate infrastructure recovery when storage
-                    # recovery already covers the same underlying transition.
-                    if comp.component == "infrastructure" and storage_recovered:
-                        health_storage.record_alert_sent(
-                            settings,
-                            incident_id=incident_id,
-                            alert_key=alert_key,
-                            payload=sanitize_mapping({"suppressed": "storage_recovery"}),
-                        )
-                        infra_recovered = True
-                        continue
-                    msg = f"Health recovery: {comp.component} is HEALTHY"
-                    notifications.append((incident_id, alert_key, msg))
-                    if comp.component == "infrastructure":
-                        infra_recovered = True
-
-    # Overall transitions
+    # Overall: soft-only DEGRADED never Telegram; prefer component alerts.
     if overall.status in {"DEGRADED", "DOWN"}:
-        fp = _fingerprint("overall", "status_" + overall.status.lower())
+        fp = incident_fingerprint("overall", "status_" + overall.status.lower())
         incident_id, transition = health_storage.open_or_update_incident(
             settings,
             component="overall",
@@ -196,41 +320,52 @@ def sync_incidents_from_health(
             title=f"Overall health {overall.status}",
             detail=overall.summary,
         )
-        if transition == "open" and not _overall_alert_suppressed(overall):
-            alert_key = f"{fp}:open:{_detail_fp(overall.summary)}"
+        if (
+            transition == "open"
+            and may_alert_overall(overall)
+            and not soft_only_overall(overall)
+        ):
+            alert_key = open_alert_key(
+                fingerprint=fp, incident_id=incident_id, reason_code=overall.status.lower()
+            )
             if not health_storage.was_alert_sent(settings, alert_key):
+                # Intentionally unused under may_alert_overall()==False default.
                 notifications.append(
                     (
                         incident_id,
                         alert_key,
-                        f"Overall health → {overall.status}\n{overall.summary}",
+                        f"Загальний стан → {overall.status}\n{overall.summary}",
                     )
                 )
     elif overall.status == "HEALTHY":
         for incident_type in ("status_degraded", "status_down"):
-            fp = _fingerprint("overall", incident_type)
+            fp = incident_fingerprint("overall", incident_type)
             incident_id = health_storage.resolve_incident(
                 settings,
                 component="overall",
                 incident_type=incident_type,
                 fingerprint=fp,
             )
-            if incident_id is not None:
-                alert_key = f"{fp}:resolved:{incident_id}"
-                if health_storage.was_alert_sent(settings, alert_key):
-                    continue
-                # Component/storage recovery already notified — do not duplicate.
-                if infra_recovered or storage_recovered:
-                    health_storage.record_alert_sent(
-                        settings,
-                        incident_id=incident_id,
-                        alert_key=alert_key,
-                        payload=sanitize_mapping({"suppressed": "component_recovery"}),
-                    )
-                    continue
-                notifications.append(
-                    (incident_id, alert_key, "Overall health recovered: HEALTHY")
+            if incident_id is None:
+                continue
+            alert_key = recovery_alert_key(fingerprint=fp, incident_id=incident_id)
+            if health_storage.was_alert_sent(settings, alert_key):
+                continue
+            if infra_recovered or storage_recovered:
+                health_storage.record_alert_sent(
+                    settings,
+                    incident_id=incident_id,
+                    alert_key=alert_key,
+                    payload=sanitize_mapping({"suppressed": "component_recovery"}),
                 )
+                continue
+            # Overall recovery suppressed to avoid duplicate spam with component recovery.
+            health_storage.record_alert_sent(
+                settings,
+                incident_id=incident_id,
+                alert_key=alert_key,
+                payload=sanitize_mapping({"suppressed": "prefer_component_recovery"}),
+            )
 
     return notifications
 
@@ -245,6 +380,15 @@ async def dispatch_health_alerts(
     notes = sync_incidents_from_health(settings, overall)
     sent = 0
     for incident_id, alert_key, message in notes:
+        if not message:
+            # Marker-only keys (notified_open) — record without Telegram send.
+            health_storage.record_alert_sent(
+                settings,
+                incident_id=incident_id,
+                alert_key=alert_key,
+                payload=sanitize_mapping({"marker": True}),
+            )
+            continue
         if not health_storage.record_alert_sent(
             settings,
             incident_id=incident_id,
@@ -271,6 +415,7 @@ def maybe_alert_readonly_violation(settings: Settings) -> list[tuple[int, str, s
                     status="DOWN",
                     detail="READ-ONLY SAFETY VIOLATION",
                     checked_at="",
+                    metrics={"reason_code": "readonly_violation"},
                 ),
             ),
             checked_at="",
@@ -286,6 +431,7 @@ def maybe_alert_readonly_violation(settings: Settings) -> list[tuple[int, str, s
                     status="DOWN",
                     detail="READ-ONLY SAFETY VIOLATION",
                     checked_at="",
+                    metrics={"reason_code": "readonly_violation"},
                 ),
             ),
             checked_at="",

@@ -145,17 +145,19 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if query is None or not query.data:
         return
     data = query.data
-    await answer_callback(update)
     settings = context.application.bot_data["settings"]
     user = update.effective_user
     admin = is_admin(settings, user.id if user else None)
     main_kb = main_inline_keyboard(is_admin=admin)
 
+    # Health callbacks authenticate before answering so non-admins get toast-only deny.
     if data in HEALTH_CALLBACKS:
         from app.telegram.health.handlers import handle_health_callback
 
         await handle_health_callback(update, context, data)
         return
+
+    await answer_callback(update)
 
     if data == CB_MAIN:
         await open_main_menu(update, settings=settings)

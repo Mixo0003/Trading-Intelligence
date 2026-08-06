@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — V4.2.1 Global Admin Health and Diagnostics
+
+**Branch:** `feature/v4.2.1-global-admin-health`
+
+### Added / changed
+
+- Global admin-only health framework: registry, severity model
+  (`WARMING_UP` / `UNKNOWN`), Ukrainian diagnostic builder, alert policy.
+- System Health UI grouped by product area; raw component IDs never shown in Telegram.
+- Soft DEGRADED (including `opportunity_books` coverage) is UI-only; confirmed
+  hard/feature-critical DOWN alerts after `HEALTH_FAILURE_THRESHOLD`.
+- Non-admin health callbacks deny via toast only; missing `ADMIN_IDS` sends zero alerts.
+- Documented limitation: external process-death monitoring requires a VPS/systemd
+  watchdog (not implemented in-bot).
+
 ## Unreleased — V4.2 WTI Opportunity Intelligence
 
 **Branch:** `feature/v4.2-wti-opportunity-intelligence`

@@ -8,8 +8,9 @@ from typing import Any
 
 from app.config.settings import Settings
 from app.health import storage as health_storage
-from app.health.models import OverallHealth
-from app.health.sanitize import sanitize_mapping
+from app.health.diagnostics import format_hard_event_alert, format_recovery_alert
+from app.health.models import ComponentStatus, OverallHealth
+from app.health.sanitize import redact_string, sanitize_mapping
 from app.storage.backup import backup_status, revalidate_verified_backup_for_pruning
 from app.storage.cleanup import get_last_cleanup_report
 from app.storage.retention_prune import get_last_prune_report
@@ -51,6 +52,43 @@ def _save_watermark(settings: Settings, watermark: dict[str, Any]) -> None:
     )
 
 
+def _storage_message(
+    settings: Settings,
+    *,
+    reason_code: str,
+    what_happened_uk: str,
+    incident_id: int,
+    opened_at: str | None = None,
+) -> str:
+    return format_hard_event_alert(
+        settings,
+        component_id="storage",
+        reason_code=reason_code,
+        what_happened_uk=what_happened_uk,
+        consecutive_failures=settings.health_failure_threshold,
+        incident_id=incident_id,
+        opened_at=opened_at or _now_iso(),
+        severity_uk="Критично",
+    )
+
+
+def _storage_recovery_message(settings: Settings, *, incident_id: int) -> str:
+    comp = ComponentStatus(
+        component="storage",
+        status="HEALTHY",
+        detail="Storage recovered",
+        checked_at=_now_iso(),
+    )
+    return format_recovery_alert(
+        settings,
+        comp,
+        reason_code="storage_level",
+        incident_id=incident_id,
+        opened_at=None,
+        resolved_at=_now_iso(),
+    )
+
+
 def _enqueue(
     settings: Settings,
     *,
@@ -60,7 +98,8 @@ def _enqueue(
     title: str,
     detail: str,
     alert_key: str,
-    message: str,
+    reason_code: str,
+    what_happened_uk: str,
     notifications: list[tuple[int, str, str]],
 ) -> None:
     if health_storage.was_alert_sent(settings, alert_key):
@@ -75,8 +114,13 @@ def _enqueue(
         detail=detail,
     )
     if transition not in {"open", "updated"}:
-        # Still allow recovery-style keys tied to resolved incidents below.
         pass
+    message = _storage_message(
+        settings,
+        reason_code=reason_code,
+        what_happened_uk=what_happened_uk,
+        incident_id=incident_id,
+    )
     notifications.append((incident_id, alert_key, message))
 
 
@@ -86,7 +130,6 @@ def _resolve_and_notify(
     incident_type: str,
     fingerprint: str,
     alert_key: str,
-    message: str,
     notifications: list[tuple[int, str, str]],
 ) -> None:
     if health_storage.was_alert_sent(settings, alert_key):
@@ -98,15 +141,14 @@ def _resolve_and_notify(
         fingerprint=fingerprint,
     )
     if incident_id is None:
-        # Create a resolved watermark incident so alert_key can be recorded.
         incident_id, _ = health_storage.open_or_update_incident(
             settings,
             component="storage",
             incident_type=incident_type,
             fingerprint=fingerprint,
             severity="info",
-            title="Storage recovered",
-            detail=message,
+            title="Сховище відновлено",
+            detail="storage recovered",
         )
         health_storage.resolve_incident(
             settings,
@@ -114,6 +156,7 @@ def _resolve_and_notify(
             incident_type=incident_type,
             fingerprint=fingerprint,
         )
+    message = _storage_recovery_message(settings, incident_id=incident_id)
     notifications.append((incident_id, alert_key, message))
 
 
@@ -123,7 +166,8 @@ def sync_storage_alerts(
 ) -> list[tuple[int, str, str]]:
     """
     Emit one alert per actual storage state transition.
-    Uses persisted watermark so restart does not replay recoveries.
+    Soft DEGRADED / cleanup delays / retention gate: watermark only (no Telegram).
+    Hard CRITICAL / backup FAILED: structured Ukrainian admin alerts.
     """
     notifications: list[tuple[int, str, str]] = []
     infra = next((c for c in overall.components if c.component == "infrastructure"), None)
@@ -146,7 +190,6 @@ def sync_storage_alerts(
     prev_gate = str(watermark.get("retention_gate") or "")
     prev_backup_label = str(watermark.get("backup_label") or "")
 
-    # First observation after restart/install: seed watermark silently (no replay).
     if not prev_level:
         _save_watermark(
             settings,
@@ -165,38 +208,31 @@ def sync_storage_alerts(
 
     if prev_level != level:
         if prev_level == "HEALTHY" and level == "DEGRADED":
-            _enqueue(
-                settings,
-                incident_type="storage_level",
-                fingerprint="storage:level",
-                severity="warning",
-                title="Storage DEGRADED",
-                detail=str(metrics.get("storage_detail") or "Storage degraded"),
-                alert_key=f"storage:level:{prev_level}->{level}",
-                message=f"Storage alert: HEALTHY → DEGRADED\n{metrics.get('storage_detail') or ''}".strip(),
-                notifications=notifications,
-            )
+            # Soft storage DEGRADED while writes remain safe — UI only.
+            logger.info("Storage level DEGRADED (Telegram suppressed)")
         elif prev_level in {"HEALTHY", "DEGRADED"} and level == "CRITICAL":
+            detail = redact_string(str(metrics.get("storage_detail") or "critical"))
             _enqueue(
                 settings,
                 incident_type="storage_level",
                 fingerprint="storage:level",
                 severity="critical",
-                title="Storage CRITICAL",
-                detail=str(metrics.get("storage_detail") or "Storage critical"),
+                title="Сховище критичне",
+                detail=detail,
                 alert_key=f"storage:level:{prev_level}->{level}",
-                message=f"Storage alert: {prev_level} → CRITICAL\n{metrics.get('storage_detail') or ''}".strip(),
+                reason_code="storage_critical",
+                what_happened_uk=f"Рівень сховища {prev_level} → CRITICAL",
                 notifications=notifications,
             )
         elif level == "HEALTHY" and prev_level in {"DEGRADED", "CRITICAL"}:
-            _resolve_and_notify(
-                settings,
-                incident_type="storage_level",
-                fingerprint="storage:level",
-                alert_key=f"storage:level:{prev_level}->HEALTHY",
-                message=f"Storage recovery: {prev_level} → HEALTHY",
-                notifications=notifications,
-            )
+            if prev_level == "CRITICAL":
+                _resolve_and_notify(
+                    settings,
+                    incident_type="storage_level",
+                    fingerprint="storage:level",
+                    alert_key=f"storage:level:{prev_level}->HEALTHY",
+                    notifications=notifications,
+                )
 
     if prev_backup == "VERIFIED" and backup_status_value == "FAILED":
         _enqueue(
@@ -205,13 +241,14 @@ def sync_storage_alerts(
             fingerprint="storage:backup",
             severity="critical",
             title="Backup FAILED",
-            detail=backup.detail or "backup failed",
+            detail=redact_string(backup.detail or "backup failed"),
             alert_key=f"storage:backup:VERIFIED->FAILED:{backup.backup_label or 'none'}",
-            message=f"Storage alert: backup VERIFIED → FAILED\n{backup.detail}",
+            reason_code="backup_failed",
+            what_happened_uk="Перевірений backup перейшов у стан FAILED",
             notifications=notifications,
         )
 
-    # Verified backup becoming too old (one alert per backup label).
+    # Soft: verified backup age / retention gate / cleanup / prune — watermark only.
     age_alerted = str(watermark.get("backup_age_alerted_label") or "")
     max_age = settings.storage_retention_prune_max_backup_age_seconds
     if (
@@ -221,67 +258,21 @@ def sync_storage_alerts(
         and (backup.backup_label or "") != age_alerted
     ):
         label = backup.backup_label or "(none)"
-        _enqueue(
-            settings,
-            incident_type="backup_age",
-            fingerprint=f"storage:backup_age:{label}",
-            severity="warning",
-            title="Verified backup too old",
-            detail=f"age_seconds={int(backup.age_seconds)}",
-            alert_key=f"storage:backup_age:{label}:{int(backup.age_seconds // max_age)}",
-            message=(
-                f"Storage alert: verified backup too old\n"
-                f"Label: {label}\nAge seconds: {int(backup.age_seconds)}"
-            ),
-            notifications=notifications,
-        )
+        logger.info("Verified backup too old label=%s (Telegram suppressed)", label)
         watermark["backup_age_alerted_label"] = label
 
     if prev_gate == "READY" and retention_gate == "BLOCKED":
-        _enqueue(
-            settings,
-            incident_type="retention_gate",
-            fingerprint="storage:retention_gate",
-            severity="warning",
-            title="Retention gate BLOCKED",
-            detail=gate.detail or gate.failure_code or "blocked",
-            alert_key=f"storage:gate:READY->BLOCKED:{gate.failure_code or 'blocked'}",
-            message=(
-                f"Storage alert: retention gate READY → BLOCKED\n"
-                f"{gate.failure_code or gate.detail}"
-            ),
-            notifications=notifications,
+        logger.info(
+            "Retention gate BLOCKED code=%s (Telegram suppressed)",
+            gate.failure_code or "blocked",
         )
 
     cleanup = get_last_cleanup_report()
-    if cleanup is not None and cleanup.status in {"failed", "lock_busy"} and cleanup.errors:
-        key = f"cleanup:{cleanup.status}:{cleanup.checked_at}:{cleanup.errors}"
-        if key != str(watermark.get("cleanup_failure_key") or ""):
-            _enqueue(
-                settings,
-                incident_type="cleanup_failure",
-                fingerprint="storage:cleanup_failure",
-                severity="warning",
-                title="File cleanup failure",
-                detail=cleanup.detail or cleanup.status,
-                alert_key=f"storage:cleanup_failure:{cleanup.checked_at}",
-                message=f"Storage alert: file cleanup failure ({cleanup.status})",
-                notifications=notifications,
-            )
-            watermark["cleanup_failure_key"] = key
-    elif cleanup is not None and cleanup.status == "failed":
+    if cleanup is not None and cleanup.status in {"failed", "lock_busy"}:
         key = f"cleanup:{cleanup.status}:{cleanup.checked_at}"
         if key != str(watermark.get("cleanup_failure_key") or ""):
-            _enqueue(
-                settings,
-                incident_type="cleanup_failure",
-                fingerprint="storage:cleanup_failure",
-                severity="warning",
-                title="File cleanup failure",
-                detail=cleanup.detail or cleanup.status,
-                alert_key=f"storage:cleanup_failure:{cleanup.checked_at}",
-                message=f"Storage alert: file cleanup failure ({cleanup.status})",
-                notifications=notifications,
+            logger.info(
+                "File cleanup status=%s (Telegram suppressed)", cleanup.status
             )
             watermark["cleanup_failure_key"] = key
 
@@ -289,19 +280,9 @@ def sync_storage_alerts(
     if prune is not None and prune.status == "FAILED":
         key = f"prune:{prune.failure_code}:{prune.finished_at}"
         if key != str(watermark.get("prune_failure_key") or ""):
-            _enqueue(
-                settings,
-                incident_type="prune_failure",
-                fingerprint="storage:prune_failure",
-                severity="warning",
-                title="Retention pruning failure",
-                detail=prune.detail or prune.failure_code,
-                alert_key=f"storage:prune_failure:{prune.finished_at}:{prune.failure_code}",
-                message=(
-                    f"Storage alert: retention pruning failure\n"
-                    f"{prune.failure_code or prune.detail}"
-                ),
-                notifications=notifications,
+            logger.info(
+                "Retention prune FAILED code=%s (Telegram suppressed)",
+                prune.failure_code,
             )
             watermark["prune_failure_key"] = key
 
