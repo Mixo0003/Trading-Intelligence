@@ -21,6 +21,15 @@ CB_CRYPTO_OVERVIEW = "crypto:overview"
 CB_CRYPTO_ARB = "crypto:arb"
 CB_CRYPTO_SPREAD = "crypto:spread"
 CB_CRYPTO_EXCHANGES = "crypto:exchanges"
+# V4.1 Market Opportunity Intelligence (admin-only hub; distinct from opp:)
+CB_MOI_MENU = "moi:menu"
+CB_MOI_TOP = "moi:top"
+CB_MOI_DETAIL = "moi:detail"
+CB_MOI_EVIDENCE = "moi:evidence"
+CB_MOI_RISKS = "moi:risks"
+CB_MOI_HISTORY = "moi:history"
+CB_MOI_STATS = "moi:stats"
+CB_MOI_FILTERS = "moi:filters"
 CB_RESEARCH_MENU = "research:menu"
 CB_RESEARCH_COIN = "research:coin"
 CB_RESEARCH_COMMODITY = "research:commodity"
@@ -113,6 +122,14 @@ def main_inline_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
             -1,
             [InlineKeyboardButton("🩺 System Health", callback_data=CB_HEALTH)],
         )
+        rows.insert(
+            -1,
+            [
+                InlineKeyboardButton(
+                    "📊 Market Opportunities", callback_data=CB_MOI_MENU
+                )
+            ],
+        )
     return InlineKeyboardMarkup(rows)
 
 
@@ -121,7 +138,7 @@ def polymarket_inline_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("🌤 Weather Intelligence", callback_data=CB_WEATHER)],
             [InlineKeyboardButton("📋 Copy Intelligence", callback_data=CB_COPY)],
-            [InlineKeyboardButton("🎯 Market Opportunities", callback_data=CB_OPP)],
+            [InlineKeyboardButton("🎯 Opportunity Scanner", callback_data=CB_OPP)],
             [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_OPP_TOP)],
             [InlineKeyboardButton("🕘 Signal History", callback_data=CB_OPP_HISTORY)],
             [InlineKeyboardButton("⚙️ Polymarket Settings", callback_data=CB_PM_SETTINGS)],
@@ -157,6 +174,34 @@ def crypto_inline_keyboard() -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton("↩️ Back", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def moi_hub_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📊 Top Opportunities", callback_data=CB_MOI_TOP)],
+            [InlineKeyboardButton("📄 Detail", callback_data=CB_MOI_DETAIL)],
+            [InlineKeyboardButton("🔎 Evidence", callback_data=CB_MOI_EVIDENCE)],
+            [InlineKeyboardButton("⚠️ Risks", callback_data=CB_MOI_RISKS)],
+            [InlineKeyboardButton("🕘 Paper History", callback_data=CB_MOI_HISTORY)],
+            [InlineKeyboardButton("📈 Performance", callback_data=CB_MOI_STATS)],
+            [InlineKeyboardButton("🎛 Filters", callback_data=CB_MOI_FILTERS)],
+            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
+        ]
+    )
+
+
+def moi_submenu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⬅️ Market Opportunities", callback_data=CB_MOI_MENU
+                )
+            ],
+            [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
         ]
     )
 

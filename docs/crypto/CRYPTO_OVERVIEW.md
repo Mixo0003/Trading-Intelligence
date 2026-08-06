@@ -15,6 +15,10 @@ Read-only public market-data product under the V2.2.4 Product Menu.
 
 - Entire Market Research hub (`research:*`)
 
+## Development status
+
+Further V3 Crypto Intelligence expansion is **paused** (not abandoned). V3.0.0a/b/c leaves remain intact. Unfinished V3 work (global universe, user exchange selection, L2 executable arb, listings, funding/basis/paper execution, 24h stats, net arb) is recorded on the V4 roadmap backlog. New priority: Market Opportunity Intelligence (`docs/MARKET_OPPORTUNITY_INTELLIGENCE.md`).
+
 ## Safety
 
 - Public REST only; no trading API keys.

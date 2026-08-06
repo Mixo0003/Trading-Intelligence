@@ -177,6 +177,11 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             update, CRYPTO_MENU_TEXT, reply_markup=crypto_inline_keyboard()
         )
         return
+    if data.startswith("moi:"):
+        from app.telegram.market_opportunity.handlers import handle_moi_callback
+
+        await handle_moi_callback(update, context, data)
+        return
     if data in _CRYPTO_LIVE:
         from app.telegram.crypto.handlers import handle_crypto_callback
 

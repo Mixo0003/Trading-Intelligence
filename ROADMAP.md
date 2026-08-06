@@ -137,6 +137,35 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
 - [ ] Fully Decimal logarithmic scoring or explicit score-v1 reproducibility policy
 - [ ] Live execution / real trading (explicitly out of scope until approved)
 
+## V4 — Market Opportunity Intelligence
+
+Version naming: **V4.1**, **V4.2**, **V4.3**… (no letter suffixes).
+
+Sibling product to Polymarket Opportunity Scanner (`app/opportunity_intel` / `opp:`). Lives in `app/market_opportunity/` with Telegram namespace `moi:*`.
+
+- [x] **V4.1** Market Opportunity Foundation — paper-only models, lifecycle, empty detector registry, additive `market_opportunity_v1`, admin-only Telegram shell, flags default off; **no live detectors / no auto alerts** (implementation + live verify complete on branch; commit/PR pending)
+- [ ] **V4.2** First focused market intelligence — Gold + WTI only (paper)
+- [ ] **V4.3** Commodity expansion — Silver + Natural Gas
+- [ ] **V4.4** Crypto & cross-market intelligence (reuse public quotes; unfinished V3 universe/L2/funding stay backlog)
+- [ ] **V4.5** Opportunity scoring & Top Opportunities
+- [ ] **V4.6** Paper outcome tracking & calibration
+
+### Known non-blocking health note (pre-existing)
+
+System Health may show Overall DEGRADED / `copy_intel` DOWN from repeated large-wallet `incomplete_book` baselines. `copy_readonly` remains HEALTHY; Copy jobs keep running; incomplete-baseline wallets stay fail-closed. Not caused by V4.1; large-wallet pagination remains backlog.
+
+### Crypto V3 — paused (not abandoned)
+
+V3.0.0a/b/c leaves remain intact and stable. Further V3 build-out is paused. Backlog:
+
+- Global market universe; all active markets on Binance/Bybit/BingX/MEXC/OKX/KuCoin
+- User-selected exchanges
+- L2 executable arbitrage
+- New-listing detection
+- Funding, basis, and paper execution
+- Market Research hub (`research:*` still placeholder)
+- 24h statistics; net fee/slippage/transfer arb
+
 ## Product development gate
 
 Before starting a major version or feature, ask:

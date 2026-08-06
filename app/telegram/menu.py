@@ -4,6 +4,7 @@ from app.config.settings import Settings
 from app.copy_intel.scheduler import schedule_copy_intel_jobs
 from app.database.storage import initialize_database
 from app.health.scheduler import schedule_health_jobs
+from app.market_opportunity.scheduler import schedule_market_opportunity_jobs
 from app.opportunity_intel.scheduler import schedule_opportunity_jobs
 from app.telegram.callback_handler import inline_callback_handler
 from app.telegram.copy_intel.handlers import (
@@ -89,6 +90,7 @@ def build_telegram_application(settings: Settings) -> Application:
     schedule_report_jobs(app, settings)
     schedule_copy_intel_jobs(app, settings)
     schedule_opportunity_jobs(app, settings)
+    schedule_market_opportunity_jobs(app, settings)
     schedule_health_jobs(app, settings)
     return app
 

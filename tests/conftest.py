@@ -124,6 +124,9 @@ def make_test_settings(**overrides) -> Settings:
         crypto_bingx_base_url="https://open-api.bingx.com",
         crypto_mexc_base_url="https://api.mexc.com",
         crypto_kucoin_base_url="https://api.kucoin.com",
+        market_opportunity_enabled=False,
+        market_opportunity_auto_alerts_enabled=False,
+        market_opportunity_read_only=True,
     )
     base.update(overrides)
     return Settings(**base)

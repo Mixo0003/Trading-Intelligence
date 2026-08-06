@@ -78,7 +78,10 @@ class TestProductHubKeyboards:
         admin = _labels(main_inline_keyboard(is_admin=True))
         assert "🩺 System Health" not in guest
         assert "🩺 System Health" in admin
+        assert "📊 Market Opportunities" not in guest
+        assert "📊 Market Opportunities" in admin
         assert admin.index("🩺 System Health") < admin.index("⚙️ Settings")
+        assert admin.index("📊 Market Opportunities") < admin.index("⚙️ Settings")
 
     def test_polymarket_submenu_routes(self):
         datas = _datas(polymarket_inline_keyboard())
@@ -91,6 +94,9 @@ class TestProductHubKeyboards:
             CB_PM_SETTINGS,
             CB_MAIN,
         ]
+        labels = _labels(polymarket_inline_keyboard())
+        assert "🎯 Opportunity Scanner" in labels
+        assert "🎯 Market Opportunities" not in labels
         assert CB_TOP not in datas
         assert CB_WX_TOP not in datas
 
@@ -124,12 +130,22 @@ class TestProductHubKeyboards:
         assert CB_MAIN in research
 
     def test_namespace_isolation(self):
-        leaf_prefixes = ("wx:", "copy:", "disc:", "cset:", "opp:", "oset:", "health:")
+        leaf_prefixes = (
+            "wx:",
+            "copy:",
+            "disc:",
+            "cset:",
+            "opp:",
+            "oset:",
+            "health:",
+            "moi:",
+        )
         main_datas = _datas(main_inline_keyboard(is_admin=True))
         assert all(
             d.startswith("pm:")
             or d.startswith("crypto:")
             or d.startswith("research:")
+            or d.startswith("moi:")
             or d.startswith("nav:")
             for d in main_datas
         )
@@ -138,6 +154,7 @@ class TestProductHubKeyboards:
         assert any(d.startswith("nav:") for d in pm_datas)
         assert any(d.startswith("opp:") for d in pm_datas)
         assert all(not d.startswith("wx:") for d in pm_datas)
+        assert all(not d.startswith("moi:") for d in pm_datas)
         # Weather keeps wx: actions; only hub back uses pm:menu.
         weather_datas = _datas(weather_inline_keyboard())
         assert any(d.startswith("wx:") for d in weather_datas)

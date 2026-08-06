@@ -549,6 +549,21 @@ def probe_opportunity_components(
     return components
 
 
+def probe_market_opportunity(settings: Settings) -> ComponentStatus:
+    from app.market_opportunity.health import evaluate_moi_health
+
+    snap = evaluate_moi_health(settings)
+    return _update_state(
+        settings,
+        "market_opportunity",
+        probe_ok=bool(snap["probe_ok"]),
+        detail=str(snap["detail"]),
+        metrics=dict(snap.get("metrics") or {}),
+        forced_status=str(snap["state"]),
+        hard_down=bool(snap.get("hard_down")),
+    )
+
+
 def run_health_check(
     settings: Settings,
     *,
@@ -572,6 +587,7 @@ def run_health_check(
         probe_copy_readonly(settings),
         probe_crypto_intelligence(settings),
         probe_crypto_readonly(settings),
+        probe_market_opportunity(settings),
         probe_infrastructure(settings),
         *probe_opportunity_components(settings, bot_data=bot_data),
     ]
