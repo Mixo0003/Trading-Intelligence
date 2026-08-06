@@ -87,7 +87,13 @@ def _parse_target_date(date_text: str | None) -> date | None:
         }
         year = 2000 + int(abbr.group(3))
         return date(year, month_map[abbr.group(2)], int(abbr.group(1)))
-    cleaned = re.sub(r"(st|nd|rd|th)", "", date_text.strip().lower())
+    # Strip day ordinals only (1st/2nd/3rd/4th). Do not strip substrings inside
+    # month names — e.g. "august" must not become "augu".
+    cleaned = re.sub(
+        r"\b(\d{1,2})(st|nd|rd|th)\b",
+        r"\1",
+        date_text.strip().lower(),
+    )
     for fmt in ("%B %d, %Y", "%B %d %Y", "%B %d"):
         try:
             parsed = datetime.strptime(cleaned, fmt)

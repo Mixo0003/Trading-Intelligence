@@ -81,9 +81,15 @@ Do not skip stages. Limited Grill Me applies per feature from **V2.2.2 onward** 
 |--------|--------|-------------|
 | Weather Intelligence | Forecasts, scans, signal formatting | Place trades, own Copy alerts |
 | Copy Intelligence | Read-only discovery, watchlist, paper alerts | Sign trades, disable read-only, alert baseline history |
-| Crypto Intelligence | Public market-data reads, spread/health display, paper-only hooks | Trading keys, orders, withdrawals, transfers, wallet access, CCXT in V3.0.0a |
+| Crypto Intelligence | Public market-data reads, spread/health display, paper-only hooks | Trading keys, orders, withdrawals, transfers, wallet access, CCXT in V3.0.0a; further V3 expansion is paused (backlog) |
+| Market Opportunity Intelligence (V4.x) | Paper-only opportunity model, validation, admin Telegram shell (`moi:*`), outcome stubs | Live detectors in V4.1, auto-alerts, invented prices/confidence %, real trading, keys, wallet |
 | Health Monitor | Deterministic probes, admin diagnostics, incidents | Depend on AI for status, edit `.env`, restart processes, trade |
 | Storage | Metrics, explicit-path cleanup, online backup, gated prune | Bypass dry-run/disabled defaults, commit runtime data, expose absolute paths |
+
+## Version naming (V4)
+
+- Use **V4.1**, **V4.2**, **V4.3**… — never letter suffixes (no V4.0.0a).
+- Market Opportunity Intelligence is a sibling of Polymarket Opportunity Scanner (`opp:`), not an extension of `app/opportunity_intel`.
 
 ## Copy freshness
 

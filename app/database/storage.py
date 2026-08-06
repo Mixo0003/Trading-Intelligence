@@ -81,12 +81,14 @@ def initialize_database(settings: Settings) -> None:
         _ensure_column(connection, "analysis_records", "payload", "TEXT")
 
     from app.database.copy_storage import initialize_copy_schema
+    from app.database.market_opportunity_storage import initialize_market_opportunity_schema
     from app.database.opportunity_storage import initialize_opportunity_schema
     from app.health.storage import initialize_health_schema
 
     initialize_copy_schema(settings)
     initialize_health_schema(settings)
     initialize_opportunity_schema(settings)
+    initialize_market_opportunity_schema(settings)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, col_type: str) -> None:

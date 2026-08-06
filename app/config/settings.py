@@ -264,6 +264,10 @@ class Settings:
     crypto_mexc_base_url: str
     crypto_kucoin_base_url: str
 
+    market_opportunity_enabled: bool
+    market_opportunity_auto_alerts_enabled: bool
+    market_opportunity_read_only: bool
+
     @property
     def scheduled_reports_configured(self) -> bool:
         return bool(
@@ -718,4 +722,13 @@ def load_settings() -> Settings:
         crypto_kucoin_base_url=os.getenv(
             "CRYPTO_KUCOIN_BASE_URL", DEFAULT_KUCOIN_PUBLIC_BASE_URL
         ).rstrip("/"),
+        market_opportunity_enabled=_parse_bool(
+            os.getenv("MARKET_OPPORTUNITY_ENABLED", "false")
+        ),
+        market_opportunity_auto_alerts_enabled=_parse_bool(
+            os.getenv("MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED", "false")
+        ),
+        market_opportunity_read_only=_parse_bool(
+            os.getenv("MARKET_OPPORTUNITY_READ_ONLY", "true"), default=True
+        ),
     )

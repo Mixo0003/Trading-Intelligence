@@ -1,5 +1,35 @@
 # Changelog
 
+## V4.1 — Market Opportunity Foundation (release prep)
+
+**Branch:** `feature/v4.1-market-opportunity-foundation`
+
+### Added / changed
+
+- New sibling module `app/market_opportunity/` (not an extension of `app/opportunity_intel`).
+- Paper-only Opportunity models, lifecycle guards, LOW/MEDIUM/HIGH confidence bands.
+- Empty detector registry (no Gold/WTI/Silver/NatGas detectors).
+- Additive schema marker `market_opportunity_v1` (`moi_*` tables).
+- Admin-only Telegram hub **Market Opportunities** (`moi:*`).
+- Polymarket menu label rename: Market Opportunities → Opportunity Scanner (label only).
+- Flags default off: `MARKET_OPPORTUNITY_ENABLED`, `MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED`; `MARKET_OPPORTUNITY_READ_ONLY=true`.
+- Crypto V3.0.0a/b/c behavior unchanged; further V3 work paused to backlog.
+- Weather eligibility date parse: strip day ordinals only so month names like **August** are not corrupted; accepts `August 7, 2026` and `August 07, 2026`.
+- See `docs/MARKET_OPPORTUNITY_INTELLIGENCE.md`.
+
+### Verification
+
+- Focused V4.1 tests green; full suite **1421 passed, 2 skipped, 0 failed**.
+- Verified production backup + `PRAGMA quick_check=ok`; additive `market_opportunity_v1` applied under operator gate.
+- Single-poller restart from this branch; manual Live Telegram verification **PASS**.
+- MOI remains DISABLED / read-only; no live detectors; no auto-alerts.
+
+### Known pre-existing limitation (non-blocking)
+
+- System Health may show Overall **DEGRADED** because `copy_intel` is **DOWN** while `copy_readonly` stays **HEALTHY**.
+- Cause: repeated `incomplete_book` baseline failures for large enabled wallets (public pagination window).
+- Copy jobs continue; affected wallets remain fail-closed (no alerts). Predates V4.1; Copy behavior unchanged in this release.
+
 ## V2.2.3 — Market Opportunity Scanner (2026-07-27)
 
 **Approved status:**
