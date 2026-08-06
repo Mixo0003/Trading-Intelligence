@@ -5,9 +5,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-HealthStatus = Literal["HEALTHY", "DEGRADED", "DOWN", "DISABLED"]
+# WARMING_UP / UNKNOWN are first-class for UI/policy; legacy rows may only
+# contain the original four strings — treat unknown stored values carefully.
+HealthStatus = Literal[
+    "HEALTHY",
+    "DEGRADED",
+    "DOWN",
+    "DISABLED",
+    "WARMING_UP",
+    "UNKNOWN",
+]
 StorageHealthLevel = Literal["HEALTHY", "DEGRADED", "CRITICAL"]
 IncidentState = Literal["open", "updated", "acknowledged", "suppressed", "resolved"]
+
+ProductArea = Literal[
+    "runtime",
+    "storage",
+    "polymarket",
+    "weather",
+    "copy",
+    "crypto",
+    "market_opportunities",
+    "delivery",
+    "external_source",
+]
+Criticality = Literal["hard_critical", "feature_critical", "optional"]
+AlertPolicy = Literal["never", "on_confirmed_down", "immediate_hard_down"]
+RecoveryPolicy = Literal["none", "once_after_notified_down"]
 
 
 @dataclass(frozen=True)

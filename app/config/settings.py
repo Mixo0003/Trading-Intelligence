@@ -68,7 +68,9 @@ from app.config.constants import (
 )
 
 
-load_dotenv()
+# utf-8-sig strips a leading BOM so Windows-saved .env keys like
+# TELEGRAM_TOKEN are recognized (BOM otherwise prefixes the first key).
+load_dotenv(encoding="utf-8-sig")
 
 if TYPE_CHECKING:
     from app.region.types import ScanRegion

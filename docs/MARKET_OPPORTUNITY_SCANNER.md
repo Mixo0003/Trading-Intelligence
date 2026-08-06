@@ -170,7 +170,7 @@ the validated tradeable subset.
 | Late worker | In-flight guard and lock remain until the executor future completes; late completion suppresses wave selection and Telegram sends |
 | Cooperative abort | Deadline token checked before/after request batches and before opening the SQLite commit |
 | Budgets | Shared CLOB cap 50; separate Gamma cap 10; sanitized metrics only |
-| Health | Deterministic opportunity probes mapped into System Health; admin-only |
+| Health | Deterministic opportunity probes mapped into System Health; admin-only; soft book-coverage DEGRADED is UI-only (see `docs/HEALTH_MONITOR.md`) |
 | Shutdown | Cancel awaiting asyncio tasks; expire deadline token on non-cancellable executor work |
 
 Chosen late-worker approach: **cooperative deadline + suppress downstream

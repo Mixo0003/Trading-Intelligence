@@ -1,95 +1,122 @@
-# Health Monitor (V2.1)
+# Health Monitor (V4.2.1)
 
-Deterministic operational health for Telegram, scheduler, weather providers, Copy Intelligence, and infrastructure.
+Deterministic operational health for **all** Trading Intelligence product areas:
+Core Runtime, Storage, Polymarket, Weather, Copy, Crypto, Market Opportunities,
+Delivery, and External Sources.
 
-## Access
+## Access (admin-only)
 
-- Visible only to Telegram users listed in `ADMIN_IDS`.
-- Main menu shows **System Health** only for admins.
-- Every health callback, `/health`, and self-test re-checks admin authorization.
-- Unauthorized attempts receive `Access denied.` and a sanitized log entry (`user_id_hash` only).
+- Visible only to Telegram users listed in `ADMIN_IDS` (authorization uses
+  **Telegram `user_id`**, never `chat_id` alone).
+- Main menu shows **System Health** only for admins (UX only — not the security boundary).
+- Every health command, callback, detail screen, and storage action re-checks admin authorization.
+- Unauthorized `/health` → chat reply `Access denied.`
+- Unauthorized health callback → **callback toast only** `Access denied.` (no health body, no chat pollution).
+- Missing/invalid `ADMIN_IDS` fails closed: no button, deny all health access, **zero** automatic alerts.
+- Unauthorized attempts log a sanitized `user_id_hash` only.
+
+## Global registry and diagnostics
+
+Every emitted component is registered in `app/health/registry.py` with:
+
+- stable internal `component_id` (logs/DB only)
+- Ukrainian user-facing label
+- product area, criticality, impacts, fail-safe, admin action
+- alert / recovery policy and normalized reason codes
+- UI group
+
+Telegram/UI **never** shows raw component IDs. Unregistered IDs render as
+«Невідомий компонент».
+
+Hard-failure admin alerts use structured Ukrainian sections:
+`Що сталося`, `Вплив`, `Безпека`, `Підтверджено`, `Початок`, `Дія`.
 
 ## Status values
 
-`HEALTHY` | `DEGRADED` | `DOWN` | `DISABLED`
+`HEALTHY` | `DEGRADED` | `DOWN` | `DISABLED` | `WARMING_UP` | `UNKNOWN`
+
+| Status | Meaning | Telegram |
+|--------|---------|----------|
+| HEALTHY | Normal | Recovery only if a DOWN was previously notified |
+| DEGRADED | Reduced but usable | **UI only** (no Telegram by default) |
+| DOWN | Materially unavailable / unsafe | After threshold (or immediate hard safety) |
+| DISABLED | Intentionally off | Never (not a failure) |
+| WARMING_UP | Fair first-check pending | Never |
+| UNKNOWN | Insufficient evidence | Never until a fair check |
+
+## Criticality
+
+- **hard_critical** — poller conflict, SQLite integrity/write unsafe, read-only violations
+- **feature_critical** — primary discovery/weather/EIA/zero executable books/no usable venues
+- **optional** — FRED, partial history, single optional provider
 
 ## Thresholds (defaults)
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `HEALTH_FAILURE_THRESHOLD` | 3 | Consecutive failures → DEGRADED |
+| `HEALTH_FAILURE_THRESHOLD` | 3 | Consecutive failures → confirmed DOWN alert (feature-critical) |
 | `HEALTH_RECOVERY_THRESHOLD` | 2 | Consecutive successes after failure → HEALTHY |
 | `HEALTH_JOB_STALE_MULTIPLIER` | 2 | Job overdue if silent longer than interval × multiplier |
 | `HEALTH_CHECK_INTERVAL_SECONDS` | 300 | `health_monitor_tick` period |
 
-DOWN is used for hard faults (SQLite unavailable, Telegram getUpdates conflict / duplicate process, copy read-only violation) or failures ≥ 2× failure threshold.
+Immediate hard-down is reserved for verified safety invariants already supported
+in code (e.g. read-only violation, poller conflict, SQLite hard fault).
 
 ## Overall aggregation
 
 1. Critical DOWN (`telegram`, `sqlite`, `copy_readonly`) → overall DOWN.
-2. Else any non-disabled DOWN/DEGRADED → overall DEGRADED.
-3. Else HEALTHY.
-4. DISABLED components are excluded.
+2. Else any non-disabled DOWN/DEGRADED → overall DEGRADED (UI truthful).
+3. Soft-only overall DEGRADED → **no** overall Telegram.
+4. Prefer specific capability alerts over overall spam.
+5. `WARMING_UP` / `UNKNOWN` / `DISABLED` do not drive false overall failures alone.
 
-## Components
+## opportunity_books
 
-- **Telegram** — polling, last update, conflicts, startup timeout.
-- **Scheduler** — job executions, stale/failed/overdue jobs.
-- **Weather** — provider metrics, valid provider count vs `FORECAST_MIN_PROVIDERS`.
-- **Copy Intelligence** — poll freshness, baseline failures, stale rejects, API errors.
-- **copy_readonly** — asserts `COPY_INTEL_READ_ONLY=true` when copy is enabled.
-- **SQLite / infrastructure** — schema, disk free, sanitized config summary.
+- Status from **own** book metrics only (no inherit from delivery/history/stale).
+- Reduced but usable coverage → DEGRADED, admin UI only.
+- Zero valid executable books after attempts → DOWN; Telegram after failure threshold.
+- Incomplete/unverified books remain fail-closed for publication.
 
-## Alerts
+## MOI (Market Opportunity Intelligence)
 
-Admin-only, deduplicated by `(component, incident_type, fingerprint)`:
+- Optional FRED missing → DEGRADED, no Telegram.
+- Warmup → no Telegram.
+- Confirmed EIA RWTC failure → one alert after threshold; one recovery.
 
-- open → updated → acknowledged → suppressed → resolved
-- Notify on open, severity escalate to DOWN, and recovery
-- No spam while an incident remains open
+## Limitation: process death
+
+A stopped bot process **cannot** report its own death. In-process poller
+conflict/runtime diagnostics are in scope. External systemd/VPS watchdog
+monitoring is **not** implemented by the bot and must be provided separately.
+
+## Probe classification limitations (fail closed)
+
+- **Weather:** no global module DISABLED flag and no labeled primary provider in
+  metrics; `forecast_min_providers` is the primary capability floor. Optional
+  provider HTTP errors while the floor is met → DEGRADED UI only.
+- **Copy:** `baselines_incomplete` is the available aggregate proxy for
+  fail-closed / incomplete_book wallets (no per-wallet IDs in Telegram).
+- **Scheduler:** only `copy_intel_poll` and `health_monitor_tick` are currently
+  interval-probed; copy poll is treated as feature-critical, health tick delay
+  as soft DEGRADED. Opportunity scanner job liveness is covered via
+  `opportunity_scheduler` metrics, not this probe.
+- **Crypto:** exchange venue health is mapped when read-only is intact; read-only
+  violations are owned by `crypto_readonly`.
+- **storage_transitions:** internal watermark row in `component_states` only — not
+  a System Health probe component and never rendered in Telegram.
+
+## Telegram UX
+
+Admin System Health groups:
+
+- Core Runtime, Storage, Polymarket, Weather, Copy Intelligence,
+  Crypto Intelligence, Market Opportunities, Delivery, External Sources
+
+Storage destructive actions remain confirm-gated, dry-run by default, and
+never expose absolute private paths.
 
 ## AI boundary
 
 - Core status never depends on AI.
 - `HEALTH_AI_EXPLAINER_ENABLED` defaults false.
 - AI must never restart processes, edit `.env`, run git, expose secrets, change thresholds, or trade.
-
-## Telegram UX
-
-Edit-in-place English menu under **System Health**: Summary, Weather Providers, Copy Intelligence, Jobs & Scheduler, Database & Cache, **Storage**, Retention Dry-Run, Backup Status, Recent Incidents, Run Self-Test, Health Settings, Main Menu.
-
-### Storage menu (admin-only, V2.1.1)
-
-Compact Storage section under System Health. Every entry re-checks `ADMIN_IDS`. Telegram shows logical path labels only (`live_database`, `logs`, `cache`, `backup`, `proof_artifacts`) — never absolute private paths, secrets, wallets, Telegram IDs, raw SQL, or message contents.
-
-| Action | Kind | Behavior |
-|--------|------|----------|
-| **Metrics** | Preview-only | Sanitized disk, DB/WAL sizes, storage level, config flags. Read-only. |
-| **Backup Status** | Preview-only | Last backup label/status/age and integrity-gate readiness. No files created. |
-| **Create Backup** | Explicit confirmation | Online SQLite backup + integrity check. Requires admin confirm token; refuses if backup dir unset or free space too low. |
-| **File Cleanup Preview** | Preview-only | Inventory of eligible files under configured roots; dry-run style report. Deletes nothing. |
-| **Retention Preview** | Preview-only | Read-only SQLite retention audit / candidate counts. Deletes no rows. |
-| **Run Safe Cleanup** | Explicit confirmation | Bounded explicit-path cleanup. Blocked unless enabled and not dry-run; still requires admin confirm + locks/budgets. |
-| **Run Retention Batch** | Explicit confirmation | Bounded prune. Requires verified-backup gate, enabled + non-dry-run settings, admin confirm, locks/row budgets. |
-| **Maintenance History** | Preview-only | Sanitized recent cleanup / backup / prune outcomes. |
-| **Refresh** | Preview-only | Re-renders Storage summary from current metrics. |
-
-#### Defaults and gates
-
-- `STORAGE_CLEANUP_ENABLED=false`, `STORAGE_CLEANUP_DRY_RUN=true` by default.
-- `STORAGE_RETENTION_PRUNE_ENABLED=false`, `STORAGE_RETENTION_PRUNE_DRY_RUN=true` by default.
-- `STORAGE_BACKUP_ENABLED=false` by default; backup dir must be an absolute configured path.
-- Retention prune requires a recent **verified** backup (age gate); otherwise gate status is BLOCKED.
-- No automatic VACUUM and no automatic `journal_mode` changes.
-- Confirmation tokens are bound to admin identity, database identity, and preview fingerprints. Handlers never bypass service-layer gates.
-
-### Storage alerts
-
-Admin-only, watermarked transitions (restart-safe):
-
-- storage HEALTHY → DEGRADED / DEGRADED → CRITICAL / recovery → HEALTHY
-- backup VERIFIED → FAILED; verified backup too old
-- retention gate READY → BLOCKED
-- cleanup/pruning failure
-
-Component recovery and overall recovery are deduplicated for the same underlying transition.

@@ -83,6 +83,8 @@ System Health may report Overall DEGRADED because `copy_intel` is DOWN while `co
 
 ### V4.2 System Health / Telegram notification policy
 
+Shared global rules (V4.2.1+): see [`docs/HEALTH_MONITOR.md`](HEALTH_MONITOR.md).
+
 `MARKET_OPPORTUNITY_AUTO_ALERTS_ENABLED` does **not** gate health Telegram sends
 (`HEALTH_ALERTS_ENABLED` does). MOI-specific rules:
 
@@ -94,6 +96,7 @@ System Health may report Overall DEGRADED because `copy_intel` is DOWN while `co
 - Incident `updated` transitions never create new Telegram sends
 - Runtime status detail is **merged** across MOI jobs so outcomes/idle cannot wipe
   EIA/FRED/detector diagnostics
+- Soft DEGRADED never uses raw internal component IDs in Telegram (Ukrainian diagnostics)
 
 ### Crypto V3 pause
 

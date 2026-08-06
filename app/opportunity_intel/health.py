@@ -25,8 +25,8 @@ OpportunityHealthState = Literal[
 # Maps opportunity-specific states onto the global health monitor statuses.
 _COMPONENT_STATUS_MAP: dict[OpportunityHealthState, str] = {
     "DISABLED": "DISABLED",
-    "NOT_INITIALIZED": "HEALTHY",
-    "BASELINING": "HEALTHY",
+    "NOT_INITIALIZED": "WARMING_UP",
+    "BASELINING": "WARMING_UP",
     "HEALTHY": "HEALTHY",
     "DEGRADED": "DEGRADED",
     "STALE": "DEGRADED",
@@ -137,6 +137,10 @@ def evaluate_opportunity_health(
         "observations_eligible": int(runtime.get("observations_eligible") or 0),
         "book_failure_ratio": round(book_ratio, 4),
         "history_failure_ratio": round(history_ratio, 4),
+        "books_valid": books_valid,
+        "books_failed": books_failed,
+        "histories_valid": histories_valid,
+        "histories_failed": histories_failed,
         "skipped_overlaps": skipped_overlaps,
         "delivery_pending": pending,
         "delivery_retry": retry_wait,
@@ -315,22 +319,55 @@ def evaluate_component_states(
 
     history_ratio = float(metrics.get("history_failure_ratio") or 0.0)
     book_ratio = float(metrics.get("book_failure_ratio") or 0.0)
+    books_valid = int(metrics.get("books_valid") or 0)
+    books_failed_metric = int(metrics.get("books_failed") or 0)
+    books_attempted = books_valid + books_failed_metric
+
     history_state: OpportunityHealthState = (
         "DEGRADED" if history_ratio >= DEGRADED_FAILURE_RATIO else state
     )
-    books_state: OpportunityHealthState = (
-        "DEGRADED" if book_ratio >= DEGRADED_FAILURE_RATIO else state
-    )
+    # opportunity_books: own metrics only — never inherit delivery/history/stale.
+    if books_attempted <= 0:
+        books_state = (
+            "BASELINING"
+            if state in {"BASELINING", "NOT_INITIALIZED"}
+            else "HEALTHY"
+            if state != "DISABLED"
+            else "DISABLED"
+        )
+        books_reason = "no_book_attempts"
+        books_detail = "Книги ордерів: спроб ще не було"
+    elif books_valid <= 0:
+        books_state = "DOWN"
+        books_reason = "zero_valid_books"
+        books_detail = "Книги ордерів: немає валідних executable книг"
+    elif book_ratio >= DEGRADED_FAILURE_RATIO:
+        books_state = "DEGRADED"
+        books_reason = "reduced_book_coverage"
+        books_detail = "Книги ордерів: зменшене покриття"
+    else:
+        books_state = "HEALTHY"
+        books_reason = "books_healthy"
+        books_detail = "Книги ордерів: покриття в нормі"
     if state == "DOWN":
         history_state = "DOWN"
-        books_state = "DOWN"
 
     delivery_state: OpportunityHealthState = state
-    if int(metrics.get("delivery_dead_letter") or 0) > 0 or int(
+    delivery_enabled = bool(
+        getattr(settings, "opportunity_auto_alerts_enabled", False)
+        or getattr(settings, "opportunity_user_delivery_enabled", False)
+    )
+    if not delivery_enabled:
+        delivery_state = "DISABLED"
+    elif int(metrics.get("delivery_dead_letter") or 0) > 0 or int(
         metrics.get("delivery_retry") or 0
     ) >= 5:
         delivery_state = "DEGRADED" if state != "DOWN" else "DOWN"
-    if state in {"HEALTHY", "BASELINING", "NOT_INITIALIZED"} and delivery_state == "DEGRADED":
+    if (
+        delivery_enabled
+        and state in {"HEALTHY", "BASELINING", "NOT_INITIALIZED"}
+        and delivery_state == "DEGRADED"
+    ):
         # Delivery may degrade independently.
         pass
 
@@ -348,12 +385,33 @@ def evaluate_component_states(
     if int(metrics.get("skipped_overlaps") or 0) > 10 and state == "HEALTHY":
         scheduler_state = "DEGRADED"
 
+    def _books_snap() -> OpportunityHealthSnapshot:
+        return OpportunityHealthSnapshot(
+            state=books_state,
+            detail=books_detail,
+            metrics={
+                **metrics,
+                "opportunity_state": books_state,
+                "reason_code": books_reason,
+                "books_valid": books_valid,
+                "books_failed": books_failed_metric,
+                "book_failure_ratio": book_ratio,
+            },
+        )
+
     return {
         "opportunity_discovery": _snap(discovery_state, f"Discovery {discovery_state}"),
         "opportunity_history": _snap(history_state, f"History {history_state}"),
-        "opportunity_books": _snap(books_state, f"Books {books_state}"),
+        "opportunity_books": _books_snap(),
         "opportunity_scheduler": _snap(scheduler_state, f"Scheduler {scheduler_state}"),
         "opportunity_storage": _snap(storage_state, f"Storage {storage_state}"),
-        "opportunity_delivery": _snap(delivery_state, f"Delivery {delivery_state}"),
+        "opportunity_delivery": _snap(
+            delivery_state,
+            (
+                "Delivery DISABLED"
+                if delivery_state == "DISABLED"
+                else f"Delivery {delivery_state}"
+            ),
+        ),
         "opportunity_baseline": _snap(baseline_state, f"Baseline {baseline_state}"),
     }

@@ -353,7 +353,7 @@ class TestFormattingAndHistory:
 
 
 class TestStorageAlerts:
-    def test_level_transitions_and_no_duplicate_recovery(self, isolated):
+    def test_soft_degraded_storage_no_telegram(self, isolated):
         settings, *_ = isolated
         degraded = OverallHealth(
             status="DEGRADED",
@@ -372,6 +372,44 @@ class TestStorageAlerts:
             checked_at="t",
             summary="degraded",
         )
+        sync_storage_alerts(
+            settings,
+            OverallHealth(
+                status="HEALTHY",
+                components=(
+                    ComponentStatus(
+                        "infrastructure",
+                        "HEALTHY",
+                        "Storage OK",
+                        "t",
+                        metrics={"storage_level": "HEALTHY", "storage_detail": "Storage OK"},
+                    ),
+                ),
+                checked_at="t",
+                summary="ok",
+            ),
+        )
+        assert sync_storage_alerts(settings, degraded) == []
+
+    def test_level_transitions_and_no_duplicate_recovery(self, isolated):
+        settings, *_ = isolated
+        critical = OverallHealth(
+            status="DEGRADED",
+            components=(
+                ComponentStatus(
+                    "infrastructure",
+                    "DOWN",
+                    "Storage critical",
+                    "t",
+                    metrics={
+                        "storage_level": "CRITICAL",
+                        "storage_detail": "Storage critical: free_bytes",
+                    },
+                ),
+            ),
+            checked_at="t",
+            summary="critical",
+        )
         # Seed watermark
         sync_storage_alerts(settings, OverallHealth(
             status="HEALTHY",
@@ -387,13 +425,13 @@ class TestStorageAlerts:
             checked_at="t",
             summary="ok",
         ))
-        first = sync_storage_alerts(settings, degraded)
-        assert any("HEALTHY → DEGRADED" in msg for _, _, msg in first)
+        first = sync_storage_alerts(settings, critical)
+        assert any("CRITICAL" in msg for _, _, msg in first)
         for incident_id, alert_key, _ in first:
             health_storage.record_alert_sent(
                 settings, incident_id=incident_id, alert_key=alert_key
             )
-        second = sync_storage_alerts(settings, degraded)
+        second = sync_storage_alerts(settings, critical)
         assert second == []
 
         healthy = OverallHealth(
@@ -411,13 +449,15 @@ class TestStorageAlerts:
             summary="ok",
         )
         recovery = sync_incidents_from_health(settings, healthy)
-        recovery_msgs = [m for _, _, m in recovery]
-        storage_recovery = [m for m in recovery_msgs if m.startswith("Storage recovery")]
+        recovery_msgs = [m for _, _, m in recovery if m]
+        storage_recovery = [
+            m
+            for m in recovery_msgs
+            if "Відновлення" in m and ("сховищ" in m.lower() or "Сховище" in m or "сховища" in m)
+        ]
         overall_recovery = [m for m in recovery_msgs if "Overall health recovered" in m]
-        infra_recovery = [m for m in recovery_msgs if m == "Health recovery: infrastructure is HEALTHY"]
         assert len(storage_recovery) == 1
         assert overall_recovery == []
-        assert infra_recovery == []
 
     def test_restart_does_not_replay_recovery(self, isolated):
         settings, *_ = isolated
@@ -473,17 +513,17 @@ class TestStorageAlerts:
             components=(
                 ComponentStatus(
                     "infrastructure",
-                    "DEGRADED",
-                    "Storage degraded",
+                    "DOWN",
+                    "Storage critical",
                     "t",
                     metrics={
-                        "storage_level": "DEGRADED",
-                        "storage_detail": "Storage degraded",
+                        "storage_level": "CRITICAL",
+                        "storage_detail": "Storage critical",
                     },
                 ),
             ),
             checked_at="t",
-            summary="degraded",
+            summary="critical",
         )
         sent_to: list[int] = []
 

@@ -4,36 +4,29 @@ from __future__ import annotations
 
 from app.config.settings import Settings
 from app.health import storage as health_storage
+from app.health.diagnostics import format_component_ui_row, format_grouped_summary
 from app.health.models import OverallHealth
-from app.health.sanitize import sanitize_config_summary, sanitize_mapping
+from app.health.registry import STATUS_LABEL_UK, UI_GROUP_ORDER, label_uk_for
+from app.health.sanitize import redact_string, sanitize_config_summary, sanitize_mapping
 from app.health.self_test import run_self_test
 
 
 def format_health_summary(overall: OverallHealth) -> str:
-    lines = [
-        "📊 Health Summary",
-        f"Overall: {overall.status}",
-        overall.summary,
-        f"Checked: {overall.checked_at}",
-        "",
-        "Components:",
-    ]
-    for comp in overall.components:
-        lines.append(f"• {comp.component}: {comp.status} — {comp.detail}")
-    return "\n".join(lines)
+    return format_grouped_summary(overall, groups_order=UI_GROUP_ORDER)
 
 
 def format_weather_health(settings: Settings) -> str:
     rows = health_storage.list_provider_metrics(settings)
-    lines = ["🌦 Weather Providers"]
+    lines = ["🌦 Weather Intelligence"]
     if not rows:
-        lines.append("No provider metrics recorded yet.")
+        lines.append("Метрик провайдерів ще немає.")
         return "\n".join(lines)
     for row in rows:
         lines.append(
             f"• {row['provider']}: ok={row['success_count']} fail={row['failure_count']} "
             f"code={row['last_status_code'] or '-'}"
         )
+    lines.append("Застарілі прогнози не показуються як актуальні.")
     return "\n".join(lines)
 
 
@@ -42,24 +35,12 @@ def format_copy_health(settings: Settings, overall: OverallHealth) -> str:
     ro = next((c for c in overall.components if c.component == "copy_readonly"), None)
     lines = ["👥 Copy Intelligence"]
     if copy:
-        lines.append(f"Status: {copy.status}")
-        lines.append(copy.detail)
-        metrics = sanitize_mapping(copy.metrics)
-        for key in (
-            "last_poll_at",
-            "last_new_event_at",
-            "watchlist",
-            "baselines_incomplete",
-            "stale_rejects",
-            "read_only",
-        ):
-            if key in metrics:
-                lines.append(f"{key}: {metrics[key]}")
+        lines.append(format_component_ui_row(copy))
     if ro:
-        lines.append(f"Read-only: {ro.status} — {ro.detail}")
+        lines.append(format_component_ui_row(ro))
     lines.append("")
-    lines.append("Use Rebuild Copy Baselines to re-seed active subscriptions.")
-    lines.append("No wallet addresses or secrets are shown.")
+    lines.append("Rebuild Copy Baselines пересіває активні підписки.")
+    lines.append("Адреси гаманців і секрети не показуються.")
     return "\n".join(lines)
 
 
@@ -112,82 +93,35 @@ def format_jobs_health(settings: Settings) -> str:
 def format_db_health(settings: Settings, overall: OverallHealth) -> str:
     sqlite_c = next((c for c in overall.components if c.component == "sqlite"), None)
     infra = next((c for c in overall.components if c.component == "infrastructure"), None)
-    lines = ["🗄 Database & Cache"]
+    lines = ["🗄 Сховище / SQLite"]
     if sqlite_c:
-        lines.append(f"SQLite: {sqlite_c.status} — {sqlite_c.detail}")
-        metrics = sanitize_mapping(sqlite_c.metrics)
-        if "database" in metrics:
-            lines.append(f"DB: {metrics['database']}")
-        if "table_count" in metrics:
-            lines.append(f"Tables: {metrics['table_count']}")
+        lines.append(format_component_ui_row(sqlite_c))
     if infra:
-        lines.append(f"Infrastructure: {infra.status} — {infra.detail}")
+        lines.append(format_component_ui_row(infra))
         metrics = sanitize_mapping(infra.metrics)
         level = metrics.get("storage_level")
         if level is not None:
             lines.append(f"Storage level: {level}")
+            lines.append(f"Рівень сховища: {level}")
         disk = metrics.get("disk_free_mb")
         if disk is not None:
             lines.append(f"Disk free MB: {disk}")
-        free_pct = metrics.get("disk_free_percent")
-        if free_pct is not None:
-            lines.append(f"Disk free %: {free_pct}")
-        db_size = metrics.get("database_size_bytes")
-        if db_size is not None:
-            lines.append(f"DB size bytes: {db_size}")
-        journal_mode = metrics.get("journal_mode")
-        if journal_mode:
-            lines.append(f"Journal mode: {journal_mode}")
-        path_labels = metrics.get("path_labels")
-        if isinstance(path_labels, dict):
-            lines.append(
-                "Paths: "
-                + ", ".join(f"{k}={v}" for k, v in path_labels.items())
-            )
-        row_counts = metrics.get("table_row_counts")
-        if isinstance(row_counts, dict) and row_counts:
-            highlight = (
-                "processed_copy_events",
-                "copy_trade_events",
-                "health_checks",
-                "copy_alert_deliveries",
-            )
-            for name in highlight:
-                if name in row_counts:
-                    lines.append(f"{name}: {row_counts[name]}")
-        # Phase 2 read-only cleanup preview (no destructive actions).
-        if "cleanup_candidate_count" in metrics:
+        if metrics.get("cleanup_candidate_count") is not None:
             lines.append(f"Cleanup candidates: {metrics['cleanup_candidate_count']}")
-        if "cleanup_reclaimable_bytes" in metrics:
-            lines.append(f"Cleanup reclaimable bytes: {metrics['cleanup_reclaimable_bytes']}")
-        if metrics.get("cleanup_status") is not None:
-            lines.append(f"Cleanup inventory: {metrics.get('cleanup_status')}")
-        if metrics.get("cleanup_last_status") is not None:
-            lines.append(f"Cleanup last status: {metrics.get('cleanup_last_status')}")
-        if "cleanup_enabled" in metrics or "cleanup_dry_run" in str(metrics):
+        if metrics.get("cleanup_reclaimable_bytes") is not None:
+            lines.append(
+                f"Cleanup reclaimable bytes: {metrics['cleanup_reclaimable_bytes']}"
+            )
+        if metrics.get("backup_status") is not None:
+            lines.append(f"Backup status: {metrics.get('backup_status')}")
+        if "cleanup_enabled" in metrics:
             lines.append(
                 "Cleanup enabled: "
                 f"{metrics.get('cleanup_enabled', False)}; "
                 f"dry-run: {metrics.get('cleanup_dry_run', True)}"
             )
-        if "backup_configured" in metrics:
-            lines.append(
-                "Backup configured: "
-                + ("yes" if metrics.get("backup_configured") else "no")
-            )
-        if metrics.get("backup_status") is not None:
-            lines.append(f"Backup status: {metrics.get('backup_status')}")
-        if metrics.get("backup_label") and metrics.get("backup_label") != "(none)":
-            lines.append(f"Backup label: {metrics.get('backup_label')}")
-        if metrics.get("backup_integrity") is not None:
-            lines.append(f"Backup integrity: {metrics.get('backup_integrity')}")
-        if metrics.get("backup_expired_candidates") is not None:
-            lines.append(
-                f"Expired backup candidates: {metrics.get('backup_expired_candidates')}"
-            )
-        if metrics.get("backup_retention_gate") is not None:
-            lines.append(f"Retention gate: {metrics.get('backup_retention_gate')}")
     lines.append("Configured DB: live_database")
+    lines.append("Абсолютні шляхи та секрети не показуються.")
     return "\n".join(lines)
 
 
@@ -198,25 +132,26 @@ def format_backup_status(settings: Settings) -> str:
     report = backup_status(settings)
     lines = [
         "💾 Online Backup Status",
-        "Read-only status — no restore or prune.",
+        "Статус online backup — лише перегляд, без restore/prune.",
         f"Configured: {'yes' if report.configured else 'no'}",
+        f"Налаштовано: {'так' if report.configured else 'ні'}",
         f"Status: {report.status}",
-        f"Detail: {report.detail}",
+        f"Detail: {redact_string(str(report.detail or ''))}",
     ]
     if report.backup_label:
-        lines.append(f"Label: {report.backup_label}")
+        lines.append(f"Мітка: {report.backup_label}")
     if report.backup_size_bytes is not None:
-        lines.append(f"Size bytes: {report.backup_size_bytes}")
+        lines.append(f"Розмір (байти): {report.backup_size_bytes}")
     if report.integrity_result:
-        lines.append(f"Integrity: {report.integrity_result}")
+        lines.append(f"Цілісність: {report.integrity_result}")
     if report.created_at:
-        lines.append(f"Verified at: {report.created_at}")
+        lines.append(f"Перевірено: {report.created_at}")
     if report.age_seconds is not None:
-        lines.append(f"Age seconds: {report.age_seconds}")
-    lines.append(f"Expired candidates (dry-run): {report.expired_candidate_count}")
-    lines.append(f"Future retention gate: {report.future_retention_gate}")
-    lines.append("Path label: backup")
-    lines.append("No absolute paths, usernames, or secrets shown.")
+        lines.append(f"Вік (с): {report.age_seconds}")
+    lines.append(f"Застарілі кандидати (dry-run): {report.expired_candidate_count}")
+    lines.append(f"Retention gate: {report.future_retention_gate}")
+    lines.append("Мітка шляху: backup")
+    lines.append("Абсолютні шляхи та секрети не показуються.")
     return "\n".join(lines)
 
 
@@ -308,13 +243,18 @@ def format_retention_preview(settings: Settings, *, page: int = 0, page_size: in
 
 def format_incidents(settings: Settings) -> str:
     rows = health_storage.list_recent_incidents(settings, limit=15)
-    lines = ["🚨 Recent Incidents"]
+    lines = ["🚨 Останні інциденти"]
     if not rows:
-        lines.append("No incidents recorded.")
+        lines.append("Інцидентів немає.")
         return "\n".join(lines)
     for row in rows:
+        label = label_uk_for(str(row["component"]))
+        title = str(row["title"] or "")
+        # Never echo raw component ids if they leaked into stored titles.
+        for cid in (str(row["component"]),):
+            title = title.replace(cid, label)
         lines.append(
-            f"• [{row['state']}] {row['component']} {row['severity']}: {row['title']}"
+            f"• [{row['state']}] {label} {row['severity']}: {title}"
         )
     return "\n".join(lines)
 
@@ -322,13 +262,16 @@ def format_incidents(settings: Settings) -> str:
 def format_self_test(settings: Settings, *, bot_data: dict | None = None) -> str:
     result = run_self_test(settings, bot_data=bot_data)
     lines = [
-        "🧪 Self-Test Results",
-        f"Overall: {result['overall']}",
+        "🧪 Self-Test",
+        f"Загалом: {STATUS_LABEL_UK.get(result['overall'], result['overall'])}",
         result["summary"],
         "",
     ]
     for comp in result["components"]:
-        lines.append(f"• {comp['component']}: {comp['status']}")
+        lines.append(
+            f"• {label_uk_for(comp['component'])}: "
+            f"{STATUS_LABEL_UK.get(comp['status'], comp['status'])}"
+        )
     return "\n".join(lines)
 
 

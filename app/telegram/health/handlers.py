@@ -124,8 +124,13 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def show_health_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings = _settings(context)
-    if not await require_admin(update, settings, action="cb:health_menu"):
+    if not await require_admin(
+        update, settings, action="cb:health_menu", deny_via_callback_toast=True
+    ):
         return
+    from app.telegram.nav import answer_callback
+
+    await answer_callback(update)
     await edit_or_reply(update, HEALTH_MENU_TEXT, reply_markup=health_inline_keyboard())
 
 
@@ -218,8 +223,16 @@ async def handle_health_callback(
     data: str,
 ) -> None:
     settings = _settings(context)
-    if not await require_admin(update, settings, action=f"cb:{data}"):
+    if not await require_admin(
+        update,
+        settings,
+        action=f"cb:{data}",
+        deny_via_callback_toast=True,
+    ):
         return
+    from app.telegram.nav import answer_callback
+
+    await answer_callback(update)
 
     if data == CB_HEALTH:
         await edit_or_reply(update, HEALTH_MENU_TEXT, reply_markup=health_inline_keyboard())

@@ -106,24 +106,39 @@ class TestMoiHealthAlertPolicy:
         assert notes == []
 
     def test_repeated_identical_health_state_one_notification(self, settings):
-        # Include a second degraded component so overall Telegram is not
-        # suppressed; assert the same component/status/detail alerts once.
+        # Soft DEGRADED must not Telegram; use hard-critical DOWN instead.
+        from app.health import storage as hs
+
+        hs.upsert_component_state(
+            settings,
+            component="copy_readonly",
+            status="DOWN",
+            consecutive_failures=1,
+            consecutive_successes=0,
+            detail="READ-ONLY SAFETY VIOLATION",
+            metrics={"reason_code": "readonly_violation"},
+        )
         overall = OverallHealth(
-            status="DEGRADED",
+            status="DOWN",
             components=(
-                ComponentStatus("weather", "DEGRADED", "providers low", "t"),
-                ComponentStatus("copy_intel", "DEGRADED", "wallet stale", "t"),
+                ComponentStatus(
+                    "copy_readonly",
+                    "DOWN",
+                    "READ-ONLY SAFETY VIOLATION",
+                    "t",
+                    {"reason_code": "readonly_violation"},
+                ),
             ),
             checked_at="t",
-            summary="degraded",
+            summary="down",
         )
-        first = sync_incidents_from_health(settings, overall)
-        weather_notes = [n for n in first if n[2].startswith("Health alert: weather")]
-        assert len(weather_notes) == 1
+        first = [n for n in sync_incidents_from_health(settings, overall) if n[2]]
+        assert len(first) == 1
+        assert "copy_readonly" not in first[0][2]
         _record(first, settings)
-        second = sync_incidents_from_health(settings, overall)
+        second = [n for n in sync_incidents_from_health(settings, overall) if n[2]]
         assert second == []
-        third = sync_incidents_from_health(settings, overall)
+        third = [n for n in sync_incidents_from_health(settings, overall) if n[2]]
         assert third == []
 
     def test_persistent_eia_failure_after_threshold_one_alert(self, settings):

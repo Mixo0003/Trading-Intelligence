@@ -44,7 +44,11 @@ CB_HEALTH_STORAGE_REFRESH = "health:storage_refresh"
 CB_HEALTH_STORAGE_RETENTION_PAGE = "health:storage_ret_page"
 CB_HEALTH_STORAGE_HISTORY_PAGE = "health:storage_hist_page"
 
-HEALTH_MENU_TEXT = "🩺 System Health\nAdmin diagnostics — choose a section:"
+HEALTH_MENU_TEXT = (
+    "🩺 System Health\n"
+    "Адмін-діагностика Trading Intelligence.\n"
+    "Оберіть розділ:"
+)
 STORAGE_MENU_TITLE = "📦 Storage"
 
 HEALTH_CALLBACKS = frozenset(
@@ -91,16 +95,30 @@ HEALTH_CALLBACKS = frozenset(
 def health_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📊 Health Summary", callback_data=CB_HEALTH_SUMMARY)],
+            [InlineKeyboardButton("📊 Зведення", callback_data=CB_HEALTH_SUMMARY)],
             [
-                InlineKeyboardButton("🌦 Weather Providers", callback_data=CB_HEALTH_WEATHER),
-                InlineKeyboardButton("👥 Copy Intelligence", callback_data=CB_HEALTH_COPY),
+                InlineKeyboardButton("⚙️ Core Runtime", callback_data=CB_HEALTH_JOBS),
+                InlineKeyboardButton("📦 Storage", callback_data=CB_HEALTH_STORAGE),
             ],
             [
-                InlineKeyboardButton("⏱ Jobs & Scheduler", callback_data=CB_HEALTH_JOBS),
-                InlineKeyboardButton("🗄 Database & Cache", callback_data=CB_HEALTH_DB),
+                InlineKeyboardButton("🎯 Polymarket", callback_data=CB_HEALTH_SUMMARY),
+                InlineKeyboardButton("🌦 Weather", callback_data=CB_HEALTH_WEATHER),
             ],
-            [InlineKeyboardButton("📦 Storage", callback_data=CB_HEALTH_STORAGE)],
+            [
+                InlineKeyboardButton("👥 Copy", callback_data=CB_HEALTH_COPY),
+                InlineKeyboardButton("₿ Crypto", callback_data=CB_HEALTH_SUMMARY),
+            ],
+            [
+                InlineKeyboardButton(
+                    "📈 Market Opportunities", callback_data=CB_HEALTH_SUMMARY
+                ),
+                InlineKeyboardButton("📬 Delivery", callback_data=CB_HEALTH_SUMMARY),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🌐 External Sources", callback_data=CB_HEALTH_SUMMARY
+                ),
+            ],
             [
                 InlineKeyboardButton(
                     "📋 Retention Dry-Run", callback_data=CB_HEALTH_RETENTION
@@ -108,10 +126,10 @@ def health_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("💾 Backup Status", callback_data=CB_HEALTH_BACKUP),
             ],
             [
-                InlineKeyboardButton("🚨 Recent Incidents", callback_data=CB_HEALTH_INCIDENTS),
-                InlineKeyboardButton("🧪 Run Self-Test", callback_data=CB_HEALTH_SELFTEST),
+                InlineKeyboardButton("🚨 Інциденти", callback_data=CB_HEALTH_INCIDENTS),
+                InlineKeyboardButton("🧪 Self-Test", callback_data=CB_HEALTH_SELFTEST),
             ],
-            [InlineKeyboardButton("⚙️ Health Settings", callback_data=CB_HEALTH_SETTINGS)],
+            [InlineKeyboardButton("⚙️ Налаштування", callback_data=CB_HEALTH_SETTINGS)],
             [InlineKeyboardButton("⬅️ Main Menu", callback_data=CB_MAIN)],
         ]
     )
