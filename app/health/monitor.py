@@ -553,13 +553,18 @@ def probe_market_opportunity(settings: Settings) -> ComponentStatus:
     from app.market_opportunity.health import evaluate_moi_health
 
     snap = evaluate_moi_health(settings)
+    metrics = dict(snap.get("metrics") or {})
+    state = str(snap["state"])
+    # Keep System Health truthful via forced_status, but warmup / soft-degrade
+    # use probe_ok=True so consecutive-failure counters (and Telegram gating)
+    # do not treat them as confirmed EIA outages.
     return _update_state(
         settings,
         "market_opportunity",
         probe_ok=bool(snap["probe_ok"]),
         detail=str(snap["detail"]),
-        metrics=dict(snap.get("metrics") or {}),
-        forced_status=str(snap["state"]),
+        metrics=metrics,
+        forced_status=state,
         hard_down=bool(snap.get("hard_down")),
     )
 
