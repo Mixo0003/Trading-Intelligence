@@ -1,7 +1,10 @@
-"""Canonical product types for Crypto / V4.3 multi-asset foundation.
+"""Canonical product types for Market Intelligence multi-asset foundation.
 
 ``unsupported`` is an explicit product classification. It must never be treated
 as an exchange failure, venue outage, or health DOWN condition.
+
+V4.5 keeps ``perpetual`` and ``dated_future`` as registrable families while
+venue capability remains unsupported until verified adapters exist.
 """
 
 from __future__ import annotations

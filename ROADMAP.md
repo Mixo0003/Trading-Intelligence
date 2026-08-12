@@ -157,12 +157,20 @@ MOI (`app/market_opportunity/`, `moi:*`) remains a sibling of Polymarket Opportu
   - No real trading; no LONG/SHORT, TP/SL, futures, funding, or news signals in V4.3
   - MOI/WTI handlers remain importable; not presented as the main guest product
   - Legacy Polymarket, Weather, Copy Intelligence, and Crypto V3 leaves preserved for compatibility
-- [ ] **V4.4** Advanced arbitrage hardening / cross-market expansion (deferred)
-- [ ] **V4.5** Perpetuals / funding / basis tracks (deferred)
+- [x] **V4.4** Catalog-driven cross-exchange spot arbitrage — merged (`a4bbc46`, main merge `09ca984` / PR #21)
+  - Authoritative spot catalog discovery on Binance, BingX, MEXC, OKX, KuCoin
+  - Complete-miss deactivation only after COMPLETE discovery; partial never delists
+  - Executable paper arb unchanged in spirit (books, fees, slippage); Bybit excluded
+- [x] **V4.5** Futures / basis / funding **foundation** (contracts + capability registry)
+  - Product families: spot, perpetual, dated_future (registry-aware)
+  - Perpetual / dated futures remain **unsupported** (no verified futures HTTP adapters)
+  - Normalized snapshot + basis/funding observation contracts; fail closed without approved fee/formula/TTL policies
+  - Does **not** implement complete futures arb, funding-arb engine, LONG/SHORT, TP/SL, or news
 - [ ] **V4.6** LONG/SHORT paper strategies (deferred)
 - [ ] **V4.7** News-based signals (deferred)
+- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.5 foundation (deferred)
 - [ ] Later — Silver / Natural Gas commodity expansion (was formerly labeled V4.3; deferred)
-- [ ] Later — Opportunity scoring calibration & paper outcome tracking (former V4.5/V4.6 MOI slots; deferred)
+- [ ] Later — Opportunity scoring calibration & paper outcome tracking (former MOI slots; deferred)
 
 ### Known non-blocking health note (pre-existing)
 

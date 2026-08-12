@@ -372,14 +372,14 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-V4.3 Market Intelligence UX is **merged**. Prefer the next bounded deferred slice
-only under an explicit operator prompt (for example V4.4 arb hardening, or
-remaining V2.2.2 genuine supported-wallet FOLLOW-event proof / V2.2.3 production
-gates). Do not enable `CRYPTO_OPPORTUNITY_SCANNER_ENABLED` or
-`CRYPTO_OPPORTUNITY_DELIVERY_ENABLED` without a separate approved enablement plan.
-Do not claim LONG/SHORT, futures, funding, or news capabilities until those
+V4.4 catalog-driven spot arbitrage is **merged**. V4.5 futures/basis/funding
+**foundation** (contracts + unsupported futures capabilities) is in progress on
+`feature/v4.5-futures-basis-funding-foundation`. Prefer the next bounded slice
+only under an explicit operator prompt. Do not enable
+`CRYPTO_OPPORTUNITY_SCANNER_ENABLED` or `CRYPTO_OPPORTUNITY_DELIVERY_ENABLED`
+without a separate approved enablement plan. Do not claim complete futures arb,
+funding-arb engines, LONG/SHORT, TP/SL, or news capabilities until those
 versioned slices ship.
-
 ## Fresh Cursor context startup prompt
 
 ```text
