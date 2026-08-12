@@ -932,6 +932,8 @@ def persist_catalog_discovery_result(
 
     Upserts instruments by identity key and updates ``last_seen_at``.
     Never deletes or mass-deactivates instruments missing from a partial result.
+    After a COMPLETE catalog only, instruments absent from that result for the
+    same venue×product are marked ``inactive`` (complete-miss rule).
     """
     from app.crypto.discovery_models import CatalogDiscoveryResult
 
@@ -1043,10 +1045,70 @@ def persist_catalog_discovery_result(
                         "",
                     ),
                 )
+            # Complete-miss rule: only after a COMPLETE catalog may absent
+            # instruments for this venue×product be marked inactive.
+            # Partial/failed/empty never delist (additive upsert only).
+            if result.completeness.value == "complete":
+                present_ids = {
+                    str(row.instrument.venue_market_id) for row in result.instruments
+                }
+                _deactivate_absent_on_connection(
+                    connection,
+                    venue_id=result.venue_id,
+                    product_type=result.product_family.value,
+                    present_venue_market_ids=present_ids,
+                    discovery_session_id=result.session_id,
+                    seen_at=finished_at,
+                )
             connection.commit()
         except Exception:
             connection.rollback()
             raise
+
+
+def _deactivate_absent_on_connection(
+    connection: sqlite3.Connection,
+    *,
+    venue_id: str,
+    product_type: str,
+    present_venue_market_ids: set[str],
+    discovery_session_id: str,
+    seen_at: str,
+) -> int:
+    """Mark active rows inactive when missing from a COMPLETE catalog result."""
+    rows = connection.execute(
+        """
+        SELECT venue_market_id FROM moi_catalog_instruments
+        WHERE venue_id = ? AND product_type = ? AND quality_status = 'active'
+        """,
+        (venue_id, product_type),
+    ).fetchall()
+    deactivated = 0
+    for row in rows:
+        market_id = str(row[0])
+        if market_id in present_venue_market_ids:
+            continue
+        connection.execute(
+            """
+            UPDATE moi_catalog_instruments
+            SET quality_status = 'inactive',
+                discovery_session_id = ?,
+                last_seen_at = ?,
+                diagnostics_json = ?
+            WHERE venue_id = ? AND product_type = ? AND venue_market_id = ?
+              AND quality_status = 'active'
+            """,
+            (
+                discovery_session_id,
+                seen_at,
+                "complete_miss:absent_from_complete_catalog",
+                venue_id,
+                product_type,
+                market_id,
+            ),
+        )
+        deactivated += 1
+    return deactivated
 
 
 def list_catalog_instruments(
@@ -1054,6 +1116,7 @@ def list_catalog_instruments(
     *,
     venue_id: str | None = None,
     product_type: str | None = None,
+    quality_status: str | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Read persisted catalog instruments (no delist side effects)."""
@@ -1067,6 +1130,9 @@ def list_catalog_instruments(
     if product_type:
         clauses.append("product_type = ?")
         params.append(product_type)
+    if quality_status:
+        clauses.append("quality_status = ?")
+        params.append(quality_status)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     bound = max(1, min(int(limit), 5000))
     params.append(bound)

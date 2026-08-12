@@ -61,13 +61,23 @@ System Health may report Overall DEGRADED because `copy_intel` is DOWN while `co
 ### Roadmap
 
 - **V4.1** — Foundation (merged)
-- **V4.2** — WTI-first paper detectors (EIA RWTC + WCESTUS1); Gold deferred (no licensed feed)
-- **V4.3** — Silver + Natural Gas
-- **V4.4** — Crypto & cross-market (V3 unfinished universe/L2/funding stay backlog)
-- **V4.5** — Scoring & Top Opportunities
-- **V4.6** — Paper outcomes & confidence calibration
+- **V4.2** — WTI-first paper detectors (EIA RWTC + WCESTUS1); Gold deferred (merged)
+- **V4.2.1** — Global admin health / diagnostics (merged)
+- **V4.3** — Market Intelligence UX + spot cross-exchange paper arbitrage (merged).
+  Silver / Natural Gas commodity expansion is **deferred** (no longer the V4.3 label).
+  Guest main menu uses Market Intelligence; MOI/WTI are not the main guest product
+  but `moi:*` handlers remain compatible.
+- **V4.4–V4.7** — Deferred: advanced arb hardening, perps/funding/basis, LONG/SHORT,
+  news-based signals
+- **Later** — Silver / NatGas; MOI scoring calibration & paper outcomes
 
-### V4.2 notes (in progress on feature branch)
+### Main-menu note (V4.3)
+
+Admin-only Market Opportunities keyboard is no longer shown on the guest/admin
+**main** menu. Deep-link / stale-client `moi:*` callbacks still work. Polymarket
+Opportunity Scanner (`opp:`) remains under Polymarket.
+
+### V4.2 notes (merged)
 
 - Instrument: EIA WTI Cushing Spot — Daily (`RWTC`) — **official daily print**, not a live
   futures tick; high/low equal close on EIA daily observations.
@@ -78,8 +88,8 @@ System Health may report Overall DEGRADED because `copy_intel` is DOWN while `co
 - Defaults remain disabled / read-only / no auto-alerts
 - Stage A candidates are memory-only; Stage B persists validated paper opportunities only
 - Gold: deferred — no licensed/ToS-cleared price feed; no runnable Gold detectors
-- UA_INVEST / third-party signal services: **not integrated** in V4.2; recorded as a
-  possible **V4.4** product-reference track only (no scraping, no unpaid reuse)
+- UA_INVEST / third-party signal services: **not integrated**; possible later
+  product-reference track only (no scraping, no unpaid reuse)
 
 ### V4.2 System Health / Telegram notification policy
 

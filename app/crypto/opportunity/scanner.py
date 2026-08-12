@@ -1,4 +1,9 @@
-"""V4.3 crypto opportunity scanner orchestration."""
+"""V4.4 crypto opportunity scanner orchestration.
+
+Uses ``build_symbol_universe`` (catalog-driven when the catalog flag is on,
+allowlist fallback when off). On-demand work remains bounded by the existing
+``MAX_SYMBOLS_PER_SCAN`` budget.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ from app.crypto.opportunity.universe import (
 )
 from app.crypto.risk import assert_crypto_read_only, crypto_feature_enabled
 
-# Bound on-demand Top Opportunities work (fail-closed budget).
+# Bound on-demand Top Opportunities work (existing fail-closed budget).
 MAX_SYMBOLS_PER_SCAN = 8
 
 

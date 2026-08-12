@@ -2,7 +2,10 @@
 
 ## Product purpose
 
-Trading-Intelligence is an analysis-only Telegram bot for discovering and analyzing Polymarket weather markets, plus read-only / paper-only Copy Intelligence and admin Health / Storage tooling.
+Trading-Intelligence is an analysis-only Telegram bot for Polymarket weather
+markets, read-only / paper-only Copy Intelligence, admin Health / Storage tooling,
+and **Market Intelligence** (V4.3 spot cross-exchange paper arbitrage under the
+internal `crypto:*` package).
 
 It must:
 
@@ -11,6 +14,7 @@ It must:
 - forecast the correct daily high or daily low for the station’s local date;
 - map the forecast to real Polymarket buckets and live prices;
 - return honest statuses such as VALIDATED, WATCH, FORECAST ONLY, or SKIP;
+- present Market Intelligence as read-only / paper-only (no invented venues or profits);
 - never place trades;
 - never connect to a wallet;
 - never fabricate a signal, price, station, forecast, probability, or outcome.
@@ -114,10 +118,27 @@ Do not perform broad refactors without a proven failing acceptance test.
 
 ## Current verified state
 
-- Product baseline on **main**: Weather Intelligence V1.1 + Trader Intelligence V2 (read-only / paper-only) + Health Monitor V2.1 + Storage Retention **V2.1.1** + Editable Copy Settings **V2.2.1**.
+- Product baseline on **main**: Weather Intelligence V1.1 + Trader Intelligence V2
+  (read-only / paper-only) + Health Monitor V2.1 + Storage Retention **V2.1.1** +
+  Editable Copy Settings **V2.2.1** + MOI foundation **V4.1** + WTI **V4.2** +
+  global admin health **V4.2.1** + **Market Intelligence UX V4.3**
+  (commit `7da710e`, main merge `677b761` / PR #20).
+- **V4.3 Market Intelligence (merged):**
+  - Main menu: Polymarket · Market Intelligence · Settings (+ admin System Health).
+  - Hub: New Opportunities · Filters · Opportunity History · Back.
+  - New Opportunities = spot cross-exchange paper arbitrage (Binance, BingX, MEXC,
+    OKX, KuCoin); Bybit = legacy Crypto V3 only.
+  - Per-user Filters (presets + custom numeric); Preview → Confirm → Cancel;
+    `telegram_id` isolation; stale-revision protection; delivery stays off.
+  - Opportunity History scoped by `telegram_id`.
+  - Scanner and delivery flags default **false**; no real trading; no LONG/SHORT,
+    TP/SL, futures, funding, or news signals in V4.3.
+  - MOI/WTI handlers compatible but not the main guest product.
+  - Focused tests 24 passed; full suite **1535 passed, 2 skipped, 1 warning**;
+    live Telegram verification owner-confirmed for V4.3 UX.
 - **V2.1.1 storage retention — merged to main** (PR #8; merge commit `80bc4b5`, 2026-07 timeframe on main history).
   - Live Telegram verification for V2.1.1: passed (historical).
-  - Full-suite baseline recorded at V2.1.1 completion: **652 passed, 2 skipped** (superseded by later V2.2.1 baseline below).
+  - Full-suite baseline recorded at V2.1.1 completion: **652 passed, 2 skipped** (superseded by later baselines).
 - **V2.2.1 Editable Copy Settings — completed, merged to main, and live-verified** (PR #9 from `feature/v2.2.1-copy-settings`; merge commit `cf6d2f5`).
   - Delivered: nine editable per-user settings; validation bounds; preview / cancel / confirm; Reset to Balanced; stale-token and concurrent-edit protection; per-user poll interval; per-user maximum event age.
   - Verification (PR #9 / V2.2.1 release evidence):
@@ -351,7 +372,13 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-Complete **V2.2.3 Checkpoint 8** release preparation (documentation, full suite, migration proof on temporary databases only). Then, only under an explicit operator prompt: verified production backup → additive `opportunity_intel_v1` migration → controlled live Telegram verification with scanner/alerts still gated. Do not claim production GO before those gates. Keep the genuine supported-wallet V2.2.2 FOLLOW-event proof open as a separate evidence task. Oversized-wallet pagination support remains deferred.
+V4.3 Market Intelligence UX is **merged**. Prefer the next bounded deferred slice
+only under an explicit operator prompt (for example V4.4 arb hardening, or
+remaining V2.2.2 genuine supported-wallet FOLLOW-event proof / V2.2.3 production
+gates). Do not enable `CRYPTO_OPPORTUNITY_SCANNER_ENABLED` or
+`CRYPTO_OPPORTUNITY_DELIVERY_ENABLED` without a separate approved enablement plan.
+Do not claim LONG/SHORT, futures, funding, or news capabilities until those
+versioned slices ship.
 
 ## Fresh Cursor context startup prompt
 

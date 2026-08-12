@@ -289,6 +289,8 @@ def test_honest_spot_arb_card_no_forbidden_claims():
     assert "spot cross-exchange paper arbitrage" in text.lower()
     assert "binance" in text.lower()
     assert "okx" in text.lower()
+    assert "BUY venue:" in text
+    assert "SELL venue:" in text
     # Must not claim these capabilities as available.
     claim_phrases = [
         "open long",

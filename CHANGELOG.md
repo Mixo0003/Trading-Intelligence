@@ -1,8 +1,37 @@
 # Changelog
 
-## Unreleased — V4.2.1 Global Admin Health and Diagnostics
+## V4.3 — Market Intelligence UX (merged)
 
-**Branch:** `feature/v4.2.1-global-admin-health`
+**Commit:** `7da710e` · **Main merge:** `677b761` (PR #20)
+
+### Added / changed
+
+- Guest/admin main menu: **Polymarket · Market Intelligence · Settings**
+  (+ admin **System Health**). Market Research and Market Opportunities removed
+  from visible main keyboards (handlers retained for compatibility).
+- Market Intelligence hub: **New Opportunities · Filters · Opportunity History · Back**.
+- New Opportunities = **spot cross-exchange paper arbitrage** (read-only / paper-only)
+  on Binance, BingX, MEXC, OKX, KuCoin; Bybit remains legacy Crypto V3 only.
+- Per-user Filters with presets and custom numeric input; Preview → Confirm → Cancel;
+  `telegram_id` isolation; stale-revision / token fail-closed; delivery never enabled
+  from this UI.
+- Opportunity History lists delivery / last-sent rows for the current `telegram_id` only.
+- Defaults remain off: `CRYPTO_OPPORTUNITY_SCANNER_ENABLED`,
+  `CRYPTO_OPPORTUNITY_DELIVERY_ENABLED`.
+- No real trading; no LONG/SHORT, TP/SL, futures, funding, or news signals in V4.3.
+- V4.4–V4.7 advanced tracks deferred. MOI/WTI (`moi:*`) remain compatible, not the
+  main guest product. Polymarket, Weather, Copy Intelligence, Crypto V3 leaves preserved.
+
+### Verification
+
+- Focused crypto/MI tests **24 passed**; full suite **1535 passed, 2 skipped, 1 warning**
+  (poller stopped for isolation).
+- Live Telegram verification: owner-confirmed PASS for menus, Filters (including custom
+  numeric), History, admin Health, defaults off.
+
+## V4.2.1 — Global Admin Health and Diagnostics (merged)
+
+**Branch:** `feature/v4.2.1-global-admin-health` (merged to main before V4.3)
 
 ### Added / changed
 
@@ -15,9 +44,9 @@
 - Documented limitation: external process-death monitoring requires a VPS/systemd
   watchdog (not implemented in-bot).
 
-## Unreleased — V4.2 WTI Opportunity Intelligence
+## V4.2 — WTI Opportunity Intelligence (merged)
 
-**Branch:** `feature/v4.2-wti-opportunity-intelligence`
+**Branch:** `feature/v4.2-wti-opportunity-intelligence` (merged to main before V4.3)
 
 ### Added / changed
 
@@ -35,7 +64,7 @@
 - Health Telegram policy: warmup and optional-FRED DEGRADED suppressed; confirmed EIA
   failure alerts once after threshold; one EIA recovery notice; no `updated`-spam.
 - Defaults remain: module disabled, read-only, auto-alerts false.
-- UA_INVEST noted as V4.4 product-reference only — **not** integrated.
+- UA_INVEST noted as later product-reference only — **not** integrated.
 
 ## V4.1 — Market Opportunity Foundation (release prep)
 

@@ -81,8 +81,9 @@ Do not skip stages. Limited Grill Me applies per feature from **V2.2.2 onward** 
 |--------|--------|-------------|
 | Weather Intelligence | Forecasts, scans, signal formatting | Place trades, own Copy alerts |
 | Copy Intelligence | Read-only discovery, watchlist, paper alerts | Sign trades, disable read-only, alert baseline history |
-| Crypto Intelligence | Public market-data reads, spread/health display, paper-only hooks | Trading keys, orders, withdrawals, transfers, wallet access, CCXT in V3.0.0a; further V3 expansion is paused (backlog) |
-| Market Opportunity Intelligence (V4.x) | Paper-only opportunity model, validation, admin Telegram shell (`moi:*`), outcome stubs | Live detectors in V4.1, auto-alerts, invented prices/confidence %, real trading, keys, wallet |
+| Market Intelligence (V4.3; internal `crypto:*`) | Public market-data reads; spot cross-exchange **paper** arb; per-user Filters/History | Trading keys, orders, withdrawals, transfers, wallet access; enable delivery/scanner without approval; claim LONG/SHORT/TP/SL/futures/funding/news in V4.3 |
+| Crypto V3 legacy leaves | Overview / spread / exchanges (incl. Bybit health) for stale clients | Replace V4.3 Market Intelligence hub; put Bybit in V4.3 scanner universe |
+| Market Opportunity Intelligence (V4.x MOI) | Paper-only opportunity model, WTI detectors when enabled, admin `moi:*` shell | Auto-alerts by default; invent prices/confidence %; present MOI as the main guest product after V4.3 |
 | Health Monitor | Deterministic probes, admin diagnostics, incidents | Depend on AI for status, edit `.env`, restart processes, trade |
 | Storage | Metrics, explicit-path cleanup, online backup, gated prune | Bypass dry-run/disabled defaults, commit runtime data, expose absolute paths |
 

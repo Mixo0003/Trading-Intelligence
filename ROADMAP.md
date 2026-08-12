@@ -137,34 +137,47 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
 - [ ] Fully Decimal logarithmic scoring or explicit score-v1 reproducibility policy
 - [ ] Live execution / real trading (explicitly out of scope until approved)
 
-## V4 — Market Opportunity Intelligence
+## V4 — Market Opportunity Intelligence + Market Intelligence
 
 Version naming: **V4.1**, **V4.2**, **V4.3**… (no letter suffixes).
 
-Sibling product to Polymarket Opportunity Scanner (`app/opportunity_intel` / `opp:`). Lives in `app/market_opportunity/` with Telegram namespace `moi:*`.
+MOI (`app/market_opportunity/`, `moi:*`) remains a sibling of Polymarket Opportunity Scanner (`app/opportunity_intel` / `opp:`). V4.3 also delivered the guest-facing **Market Intelligence** hub (internal `crypto:*` package) for spot cross-exchange paper arbitrage.
 
 - [x] **V4.1** Market Opportunity Foundation — paper-only models, lifecycle, empty detector registry, additive `market_opportunity_v1`, admin-only Telegram shell, flags default off; **no live detectors / no auto alerts**
-- [ ] **V4.2** WTI-first paper opportunity intelligence (EIA RWTC + WCESTUS1; Gold deferred until licensed feed)
-- [ ] **V4.3** Commodity expansion — Silver + Natural Gas
-- [ ] **V4.4** Crypto & cross-market intelligence (reuse public quotes; unfinished V3 universe/L2/funding stay backlog; UA_INVEST or similar third-party signal services only with written consent — research reference only in V4.2)
-- [ ] **V4.5** Opportunity scoring & Top Opportunities
-- [ ] **V4.6** Paper outcome tracking & calibration
+- [x] **V4.2** WTI-first paper opportunity intelligence (EIA RWTC + WCESTUS1; Gold deferred until licensed feed) — merged
+- [x] **V4.2.1** Global admin health / diagnostics — merged
+- [x] **V4.3** Market Intelligence UX — merged (`7da710e`, main merge `677b761` / PR #20)
+  - Main menu: Polymarket · Market Intelligence · Settings (+ admin System Health)
+  - Hub: New Opportunities · Filters · Opportunity History · Back
+  - New Opportunities = **spot cross-exchange paper arbitrage** only (read-only / paper-only)
+  - V4.3 venues: Binance, BingX, MEXC, OKX, KuCoin (Bybit = legacy Crypto V3 only)
+  - Per-user Filters: presets + custom numeric input; Preview → Confirm → Cancel; `telegram_id` isolation; stale-revision protection
+  - Opportunity History scoped by `telegram_id`
+  - `CRYPTO_OPPORTUNITY_SCANNER_ENABLED` and `CRYPTO_OPPORTUNITY_DELIVERY_ENABLED` default **false**
+  - No real trading; no LONG/SHORT, TP/SL, futures, funding, or news signals in V4.3
+  - MOI/WTI handlers remain importable; not presented as the main guest product
+  - Legacy Polymarket, Weather, Copy Intelligence, and Crypto V3 leaves preserved for compatibility
+- [ ] **V4.4** Advanced arbitrage hardening / cross-market expansion (deferred)
+- [ ] **V4.5** Perpetuals / funding / basis tracks (deferred)
+- [ ] **V4.6** LONG/SHORT paper strategies (deferred)
+- [ ] **V4.7** News-based signals (deferred)
+- [ ] Later — Silver / Natural Gas commodity expansion (was formerly labeled V4.3; deferred)
+- [ ] Later — Opportunity scoring calibration & paper outcome tracking (former V4.5/V4.6 MOI slots; deferred)
 
 ### Known non-blocking health note (pre-existing)
 
-System Health may show Overall DEGRADED / `copy_intel` DOWN from repeated large-wallet `incomplete_book` baselines. `copy_readonly` remains HEALTHY; Copy jobs keep running; incomplete-baseline wallets stay fail-closed. Not caused by V4.1; large-wallet pagination remains backlog.
+System Health may show Overall DEGRADED / `copy_intel` DOWN from repeated large-wallet `incomplete_book` baselines. `copy_readonly` remains HEALTHY; Copy jobs keep running; incomplete-baseline wallets stay fail-closed. Not caused by V4.3; large-wallet pagination remains backlog.
 
 ### Crypto V3 — paused (not abandoned)
 
-V3.0.0a/b/c leaves remain intact and stable. Further V3 build-out is paused. Backlog:
+V3.0.0a/b/c leaves remain intact for stale Telegram clients (`crypto:overview`, `crypto:spread`, `crypto:exchanges`, gross V3.0.0c path where applicable). Further V3 hub expansion is paused. Backlog:
 
-- Global market universe; all active markets on Binance/Bybit/BingX/MEXC/OKX/KuCoin
-- User-selected exchanges
-- L2 executable arbitrage
+- Global market universe beyond the V4.3 five-venue paper scanner
+- Bybit remains in legacy Crypto V3 adapters only (excluded from V4.3 scanner universe)
 - New-listing detection
-- Funding, basis, and paper execution
+- Funding, basis, and paper execution beyond spot paper arb
 - Market Research hub (`research:*` still placeholder)
-- 24h statistics; net fee/slippage/transfer arb
+- 24h statistics
 
 ## Product development gate
 
