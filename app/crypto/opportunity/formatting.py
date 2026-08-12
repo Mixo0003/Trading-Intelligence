@@ -20,29 +20,26 @@ def format_crypto_opportunity_card(opportunity: PaperNetOpportunity) -> str:
             "CRYPTO OPPORTUNITY",
             "Strategy: spot cross-exchange paper arbitrage",
             "",
-            f"Pair: {opportunity.pair}",
+            f"Symbol: {opportunity.pair}",
             f"Product type: {opportunity.product_type}",
-            (
-                f"Buy venue / executable ask: {opportunity.buy_venue} @ "
-                f"{_money(opportunity.buy_vwap)}"
-            ),
-            (
-                f"Sell venue / executable bid: {opportunity.sell_venue} @ "
-                f"{_money(opportunity.sell_vwap)}"
-            ),
-            f"Gross spread: ${_money(opportunity.gross_spread_usd)}",
+            f"BUY venue: {opportunity.buy_venue}",
+            f"SELL venue: {opportunity.sell_venue}",
+            f"Buy executable price: {_money(opportunity.buy_vwap)}",
+            f"Sell executable price: {_money(opportunity.sell_vwap)}",
+            f"Best ask (top): {_money(opportunity.buy_ask)}",
+            f"Best bid (top): {_money(opportunity.sell_bid)}",
+            f"Executable quantity: {_money(opportunity.executable_base)}",
+            f"Paper allocation: ${opportunity.paper_allocation_usd}",
             f"Trading fees: ${_money(opportunity.trading_fees_usd)}",
             f"Estimated slippage: {_pct(opportunity.estimated_slippage)}",
-            f"Paper allocation: ${opportunity.paper_allocation_usd}",
-            f"Executable quantity: {_money(opportunity.executable_base)}",
-            f"Executable liquidity: ${_money(opportunity.executable_liquidity_usd)}",
-            f"Estimated net profit: ${_money(opportunity.net_profit_usd)}",
+            f"Gross paper profit: ${_money(opportunity.gross_spread_usd)}",
+            f"Net paper profit: ${_money(opportunity.net_profit_usd)}",
             f"ROI: {_pct(opportunity.roi)}",
-            f"Signal age: {opportunity.signal_age_seconds:.1f}s",
+            f"Freshness (signal age): {opportunity.signal_age_seconds:.1f}s",
             f"Checked at: {checked}",
             "",
-            "Public read-only / paper-only. Not a trade recommendation.",
-            "Not LONG/SHORT, TP/SL, futures, funding, or news.",
+            "Public read-only / paper-only. Not guaranteed profit.",
+            "Not a trade recommendation. Not LONG/SHORT, TP/SL, futures, funding, or news.",
         ]
     )
 

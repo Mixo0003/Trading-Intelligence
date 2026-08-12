@@ -305,7 +305,8 @@ def test_telegram_card_no_raw_payload():
     assert opp is not None
     text = format_crypto_opportunity_card(opp)
     assert text.startswith("CRYPTO OPPORTUNITY")
-    assert "Pair:" in text
+    assert "Symbol:" in text or "Pair:" in text
+    assert "BUY venue:" in text or "Buy venue" in text
     assert "Public read-only / paper-only" in text
     assert "{" not in text
     assert "bids" not in text

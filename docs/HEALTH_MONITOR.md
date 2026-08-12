@@ -1,8 +1,8 @@
 # Health Monitor (V4.2.1)
 
 Deterministic operational health for **all** Trading Intelligence product areas:
-Core Runtime, Storage, Polymarket, Weather, Copy, Crypto, Market Opportunities,
-Delivery, and External Sources.
+Core Runtime, Storage, Polymarket, Weather, Copy, Market Intelligence / Crypto,
+Market Opportunity Intelligence (MOI), Delivery, and External Sources.
 
 ## Access (admin-only)
 
@@ -110,7 +110,8 @@ monitoring is **not** implemented by the bot and must be provided separately.
 Admin System Health groups:
 
 - Core Runtime, Storage, Polymarket, Weather, Copy Intelligence,
-  Crypto Intelligence, Market Opportunities, Delivery, External Sources
+  Market Intelligence / Crypto, Market Opportunity Intelligence, Delivery,
+  External Sources
 
 Storage destructive actions remain confirm-gated, dry-run by default, and
 never expose absolute private paths.
