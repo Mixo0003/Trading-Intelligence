@@ -271,6 +271,11 @@ class Settings:
     market_opportunity_read_only: bool
     eia_api_key: str
     fred_api_key: str
+    # V4.3 Slice 2 — public catalog discovery (default off; no scheduler/Telegram).
+    market_opportunity_catalog_discovery_enabled: bool = False
+    # V4.3 crypto opportunity scanner / delivery (default off).
+    crypto_opportunity_scanner_enabled: bool = False
+    crypto_opportunity_delivery_enabled: bool = False
 
     @property
     def scheduled_reports_configured(self) -> bool:
@@ -726,6 +731,12 @@ def load_settings() -> Settings:
         crypto_kucoin_base_url=os.getenv(
             "CRYPTO_KUCOIN_BASE_URL", DEFAULT_KUCOIN_PUBLIC_BASE_URL
         ).rstrip("/"),
+        crypto_opportunity_scanner_enabled=_parse_bool(
+            os.getenv("CRYPTO_OPPORTUNITY_SCANNER_ENABLED", "false")
+        ),
+        crypto_opportunity_delivery_enabled=_parse_bool(
+            os.getenv("CRYPTO_OPPORTUNITY_DELIVERY_ENABLED", "false")
+        ),
         market_opportunity_enabled=_parse_bool(
             os.getenv("MARKET_OPPORTUNITY_ENABLED", "false")
         ),
@@ -737,4 +748,7 @@ def load_settings() -> Settings:
         ),
         eia_api_key=os.getenv("EIA_API_KEY", "").strip(),
         fred_api_key=os.getenv("FRED_API_KEY", "").strip(),
+        market_opportunity_catalog_discovery_enabled=_parse_bool(
+            os.getenv("MARKET_OPPORTUNITY_CATALOG_DISCOVERY_ENABLED", "false")
+        ),
     )

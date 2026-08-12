@@ -81,6 +81,7 @@ def initialize_database(settings: Settings) -> None:
         _ensure_column(connection, "analysis_records", "payload", "TEXT")
 
     from app.database.copy_storage import initialize_copy_schema
+    from app.database.crypto_opportunity_storage import initialize_crypto_opportunity_schema
     from app.database.market_opportunity_storage import initialize_market_opportunity_schema
     from app.database.opportunity_storage import initialize_opportunity_schema
     from app.health.storage import initialize_health_schema
@@ -89,6 +90,7 @@ def initialize_database(settings: Settings) -> None:
     initialize_health_schema(settings)
     initialize_opportunity_schema(settings)
     initialize_market_opportunity_schema(settings)
+    initialize_crypto_opportunity_schema(settings)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
@@ -139,6 +141,11 @@ def upsert_user(
             )
             VALUES (?, 'polymarket', 'weather', 0.05, 0)
         """, (telegram_id,))
+
+    # V4.3 crypto opportunity profile — safe defaults, delivery off.
+    from app.crypto.opportunity.catalog import ensure_default_profile
+
+    ensure_default_profile(settings, int(telegram_id))
 
 
 def save_analysis_record(

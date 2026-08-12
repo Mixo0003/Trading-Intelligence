@@ -11,7 +11,8 @@ from app.crypto.exchanges.base import (
     timed_ms,
     venue_symbol_compact,
 )
-from app.crypto.models import ExchangeHealth, Instrument, Ticker
+from app.crypto.models import ExchangeHealth, Instrument, OrderBookSnapshot, Ticker
+from app.crypto.order_book import DEFAULT_BOOK_LIMIT, build_order_book_snapshot
 
 
 class BinancePublicClient:
@@ -48,6 +49,40 @@ class BinancePublicClient:
             timestamp_ms=None,
             request_count=result.request_count,
             allow_receive_time=True,
+        )
+
+    def fetch_order_book(
+        self,
+        instrument: Instrument,
+        *,
+        limit: int = DEFAULT_BOOK_LIMIT,
+    ) -> ApiSuccess[OrderBookSnapshot] | ApiFailure:
+        symbol = venue_symbol_compact(instrument)
+        result = public_get_json(
+            self._settings,
+            f"{self._base}/api/v3/depth",
+            params={"symbol": symbol, "limit": int(limit)},
+        )
+        if isinstance(result, ApiFailure):
+            return result
+        payload = result.data
+        if not isinstance(payload, dict):
+            return ApiFailure(
+                code="invalid_payload",
+                status_code=None,
+                retryable=False,
+                request_count=result.request_count,
+                message="Unexpected Binance depth payload",
+            )
+        return build_order_book_snapshot(
+            exchange_id=self.exchange_id,
+            instrument=instrument,
+            bids_raw=payload.get("bids"),
+            asks_raw=payload.get("asks"),
+            timestamp_ms=None,
+            request_count=result.request_count,
+            allow_receive_time=True,
+            max_age_seconds=self._settings.crypto_max_quote_age_seconds,
         )
 
     def probe_health(self) -> ExchangeHealth:

@@ -32,6 +32,7 @@ from app.telegram.inline_menus import (
     research_inline_keyboard,
     weather_inline_keyboard,
 )
+from app.database.storage import initialize_database, upsert_user
 from app.telegram.menu import build_telegram_application
 from tests.conftest import make_test_settings
 from tests.test_telegram_commands import _context
@@ -67,11 +68,12 @@ class TestProductHubKeyboards:
         labels = _labels(main_inline_keyboard(is_admin=False))
         assert labels == [
             "📈 Polymarket",
-            "₿ Crypto Intelligence",
-            "📚 Market Research",
+            "📊 Market Intelligence",
             "⚙️ Settings",
         ]
         assert "🩺 System Health" not in labels
+        assert "📚 Market Research" not in labels
+        assert "📊 Market Opportunities" not in labels
 
     def test_health_admin_only_on_main(self):
         guest = _labels(main_inline_keyboard(is_admin=False))
@@ -79,9 +81,10 @@ class TestProductHubKeyboards:
         assert "🩺 System Health" not in guest
         assert "🩺 System Health" in admin
         assert "📊 Market Opportunities" not in guest
-        assert "📊 Market Opportunities" in admin
+        assert "📊 Market Opportunities" not in admin
+        assert "📚 Market Research" not in admin
         assert admin.index("🩺 System Health") < admin.index("⚙️ Settings")
-        assert admin.index("📊 Market Opportunities") < admin.index("⚙️ Settings")
+        assert admin.index("📊 Market Intelligence") < admin.index("🩺 System Health")
 
     def test_polymarket_submenu_routes(self):
         datas = _datas(polymarket_inline_keyboard())
@@ -104,10 +107,9 @@ class TestProductHubKeyboards:
         crypto_labels = _labels(crypto_inline_keyboard())
         research_labels = _labels(research_inline_keyboard())
         assert crypto_labels == [
-            "📊 Market Overview",
-            "💱 Arbitrage Opportunities",
-            "↔️ Spread Monitor",
-            "🏦 Exchanges & Health",
+            "📈 New Opportunities",
+            "🎛 Filters",
+            "🕘 Opportunity History",
             "↩️ Back",
         ]
         assert research_labels == [
@@ -122,8 +124,10 @@ class TestProductHubKeyboards:
         research = _datas(research_inline_keyboard())
         assert all(d.startswith("crypto:") or d == CB_MAIN for d in crypto)
         assert all(d.startswith("research:") or d == CB_MAIN for d in research)
-        assert "crypto:overview" in crypto
         assert "crypto:arb" in crypto
+        assert "crypto:filters" in crypto
+        assert "crypto:history" in crypto
+        assert "crypto:overview" not in crypto
         assert "research:coin" in research
         assert "research:compare" in research
         assert CB_MAIN in crypto
@@ -144,11 +148,12 @@ class TestProductHubKeyboards:
         assert all(
             d.startswith("pm:")
             or d.startswith("crypto:")
-            or d.startswith("research:")
-            or d.startswith("moi:")
             or d.startswith("nav:")
             for d in main_datas
         )
+        assert not any(d.startswith("research:") for d in main_datas)
+        assert not any(d.startswith("moi:") for d in main_datas)
+
         pm_datas = _datas(polymarket_inline_keyboard())
         # Polymarket hub deep-links into existing leaf namespaces.
         assert any(d.startswith("nav:") for d in pm_datas)
@@ -207,22 +212,28 @@ async def test_pm_menu_and_back_path():
 
 
 @pytest.mark.asyncio
-async def test_crypto_and_research_stubs_are_placeholders():
+async def test_crypto_and_research_stubs_are_placeholders(tmp_path):
+    settings = make_test_settings(
+        database_path=str(tmp_path / "crypto_hub.db"),
+        crypto_intel_enabled=False,
+        crypto_intel_read_only=True,
+    )
+    initialize_database(settings)
+    upsert_user(settings, 1, "u", "T")
     update = _callback_update(CB_CRYPTO_MENU)
     context = _context()
+    context.application.bot_data = {"settings": settings}
     await inline_callback_handler(update, context)
     text = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Crypto Intelligence" in text
-    assert "Spread Monitor" in text or "Market Overview" in text or "Arbitrage" in text
+    assert "Market Intelligence" in text
+    assert "spot cross-exchange paper arbitrage" in text.lower()
+    assert "New Opportunities" in text
 
     update = _callback_update(CB_CRYPTO_ARB)
-    context.application.bot_data = {
-        "settings": make_test_settings(crypto_intel_enabled=False)
-    }
     await inline_callback_handler(update, context)
     arb = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Arbitrage Opportunities" in arb
-    assert "disabled" in arb.lower() or "Gross" in arb
+    assert "New Opportunities" in arb or "CRYPTO OPPORTUNITY" in arb
+    assert "disabled" in arb.lower() or "paper" in arb.lower()
 
     update = _callback_update(CB_RESEARCH_MENU)
     await inline_callback_handler(update, context)

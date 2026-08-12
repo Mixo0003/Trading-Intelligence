@@ -11,7 +11,8 @@ from app.crypto.exchanges.base import (
     timed_ms,
     venue_symbol_dash,
 )
-from app.crypto.models import ExchangeHealth, Instrument, Ticker
+from app.crypto.models import ExchangeHealth, Instrument, OrderBookSnapshot, Ticker
+from app.crypto.order_book import DEFAULT_BOOK_LIMIT, build_order_book_snapshot
 
 
 class KucoinPublicClient:
@@ -57,6 +58,50 @@ class KucoinPublicClient:
             timestamp_ms=data.get("time"),
             request_count=result.request_count,
             allow_receive_time=False,
+        )
+
+    def fetch_order_book(
+        self,
+        instrument: Instrument,
+        *,
+        limit: int = DEFAULT_BOOK_LIMIT,
+    ) -> ApiSuccess[OrderBookSnapshot] | ApiFailure:
+        del limit  # KuCoin level2_20 is fixed depth.
+        symbol = venue_symbol_dash(instrument)
+        result = public_get_json(
+            self._settings,
+            f"{self._base}/api/v1/market/orderbook/level2_20",
+            params={"symbol": symbol},
+        )
+        if isinstance(result, ApiFailure):
+            return result
+        payload = result.data
+        if not isinstance(payload, dict):
+            return ApiFailure(
+                code="invalid_payload",
+                status_code=None,
+                retryable=False,
+                request_count=result.request_count,
+                message="Unexpected KuCoin depth payload",
+            )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return ApiFailure(
+                code="empty_book",
+                status_code=None,
+                retryable=False,
+                request_count=result.request_count,
+                message="KuCoin depth empty",
+            )
+        return build_order_book_snapshot(
+            exchange_id=self.exchange_id,
+            instrument=instrument,
+            bids_raw=data.get("bids"),
+            asks_raw=data.get("asks"),
+            timestamp_ms=data.get("time") or data.get("ts"),
+            request_count=result.request_count,
+            allow_receive_time=False,
+            max_age_seconds=self._settings.crypto_max_quote_age_seconds,
         )
 
     def probe_health(self) -> ExchangeHealth:

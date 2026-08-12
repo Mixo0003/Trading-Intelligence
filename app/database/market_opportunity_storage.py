@@ -24,12 +24,16 @@ from app.market_opportunity.models import (
     Provenance,
 )
 from app.market_opportunity.versions import (
+    MARKET_OPPORTUNITY_CATALOG_SCHEMA_MARKER,
+    MARKET_OPPORTUNITY_CATALOG_SCHEMA_VERSION,
     MARKET_OPPORTUNITY_SCHEMA_MARKER,
     MARKET_OPPORTUNITY_SCHEMA_VERSION,
 )
 
 MIGRATION_ID = MARKET_OPPORTUNITY_SCHEMA_MARKER
 SCHEMA_VERSION = MARKET_OPPORTUNITY_SCHEMA_VERSION
+CATALOG_MIGRATION_ID = MARKET_OPPORTUNITY_CATALOG_SCHEMA_MARKER
+CATALOG_SCHEMA_VERSION = MARKET_OPPORTUNITY_CATALOG_SCHEMA_VERSION
 
 
 class MarketOpportunityMigrationError(RuntimeError):
@@ -56,15 +60,112 @@ def is_migration_applied(settings: Settings) -> bool:
 
 
 def initialize_market_opportunity_schema(settings: Settings) -> None:
-    """Idempotent additive apply of market_opportunity_v1."""
+    """Idempotent additive apply of market_opportunity_v1 + catalog v2."""
     with get_connection(settings) as connection:
         connection.execute("BEGIN IMMEDIATE")
         try:
             _apply_v1_on_connection(connection)
+            _apply_catalog_v2_on_connection(connection)
             connection.commit()
         except Exception:
             connection.rollback()
             raise
+
+
+def is_catalog_migration_applied(settings: Settings) -> bool:
+    with get_connection(settings) as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'moi_schema_migrations'
+            """
+        ).fetchone()
+        if row is None:
+            return False
+        found = connection.execute(
+            """
+            SELECT 1 FROM moi_schema_migrations WHERE migration_id = ?
+            """,
+            (CATALOG_MIGRATION_ID,),
+        ).fetchone()
+        return found is not None
+
+
+def _apply_catalog_v2_on_connection(connection: sqlite3.Connection) -> None:
+    """Additive catalog tables. Never DROP or mutate v1 opportunity rows."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS moi_schema_migrations (
+            migration_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    existing = connection.execute(
+        "SELECT 1 FROM moi_schema_migrations WHERE migration_id = ?",
+        (CATALOG_MIGRATION_ID,),
+    ).fetchone()
+    if existing is not None:
+        return
+
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS moi_catalog_discovery_sessions (
+            session_id TEXT PRIMARY KEY,
+            venue_id TEXT NOT NULL,
+            product_type TEXT NOT NULL,
+            completeness TEXT NOT NULL
+                CHECK (completeness IN (
+                    'complete', 'partial', 'unsupported', 'failed', 'empty'
+                )),
+            diagnostics_json TEXT NOT NULL,
+            provenance_json TEXT NOT NULL,
+            pagination_json TEXT NOT NULL,
+            instrument_count INTEGER NOT NULL CHECK (instrument_count >= 0),
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS moi_catalog_instruments (
+            venue_id TEXT NOT NULL,
+            product_type TEXT NOT NULL,
+            venue_market_id TEXT NOT NULL,
+            base_asset TEXT NOT NULL,
+            quote_asset TEXT NOT NULL,
+            normalized_symbol TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            contract_expiry TEXT,
+            venue_status TEXT,
+            quality_status TEXT NOT NULL
+                CHECK (quality_status IN ('active', 'inactive', 'unknown')),
+            source_id TEXT NOT NULL,
+            discovery_session_id TEXT NOT NULL,
+            discovered_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            diagnostics_json TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (venue_id, product_type, venue_market_id),
+            FOREIGN KEY (discovery_session_id)
+                REFERENCES moi_catalog_discovery_sessions (session_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_moi_catalog_sessions_venue_finished
+            ON moi_catalog_discovery_sessions (venue_id, product_type, finished_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_moi_catalog_instruments_symbol
+            ON moi_catalog_instruments (normalized_symbol);
+        CREATE INDEX IF NOT EXISTS idx_moi_catalog_instruments_last_seen
+            ON moi_catalog_instruments (venue_id, product_type, last_seen_at DESC);
+        """
+    )
+    applied_at = datetime.now(timezone.utc).isoformat()
+    connection.execute(
+        """
+        INSERT INTO moi_schema_migrations (migration_id, schema_version, applied_at)
+        VALUES (?, ?, ?)
+        """,
+        (CATALOG_MIGRATION_ID, CATALOG_SCHEMA_VERSION, applied_at),
+    )
 
 
 def _apply_v1_on_connection(connection: sqlite3.Connection) -> None:
@@ -821,4 +922,167 @@ def signal_period_from_uid(opportunity_uid: str) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def persist_catalog_discovery_result(
+    settings: Settings,
+    result: Any,
+) -> None:
+    """Persist a CatalogDiscoveryResult additively.
+
+    Upserts instruments by identity key and updates ``last_seen_at``.
+    Never deletes or mass-deactivates instruments missing from a partial result.
+    """
+    from app.crypto.discovery_models import CatalogDiscoveryResult
+
+    if not isinstance(result, CatalogDiscoveryResult):
+        raise TypeError("result must be CatalogDiscoveryResult")
+    if not is_migration_applied(settings):
+        initialize_market_opportunity_schema(settings)
+    if not is_catalog_migration_applied(settings):
+        initialize_market_opportunity_schema(settings)
+
+    diagnostics_json = json.dumps(
+        [
+            {
+                "code": d.code.value,
+                "message": d.message,
+                "venue_market_id": d.venue_market_id,
+            }
+            for d in result.diagnostics
+        ]
+    )
+    provenance_json = json.dumps(
+        {
+            "source_id": result.provenance.source_id,
+            "endpoint_path": result.provenance.endpoint_path,
+            "fetched_at": result.provenance.fetched_at.astimezone(timezone.utc).isoformat(),
+            "request_count": result.provenance.request_count,
+            "note": result.provenance.note,
+        }
+    )
+    pagination_json = json.dumps(
+        {
+            "mode": result.pagination.mode,
+            "pages_fetched": result.pagination.pages_fetched,
+            "exhausted": result.pagination.exhausted,
+            "next_cursor": result.pagination.next_cursor,
+            "stopped_reason": result.pagination.stopped_reason,
+        }
+    )
+    created_at = datetime.now(timezone.utc).isoformat()
+    started_at = result.started_at.astimezone(timezone.utc).isoformat()
+    finished_at = result.finished_at.astimezone(timezone.utc).isoformat()
+
+    with get_connection(settings) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """
+                INSERT INTO moi_catalog_discovery_sessions (
+                    session_id, venue_id, product_type, completeness,
+                    diagnostics_json, provenance_json, pagination_json,
+                    instrument_count, started_at, finished_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result.session_id,
+                    result.venue_id,
+                    result.product_family.value,
+                    result.completeness.value,
+                    diagnostics_json,
+                    provenance_json,
+                    pagination_json,
+                    len(result.instruments),
+                    started_at,
+                    finished_at,
+                    created_at,
+                ),
+            )
+            for row in result.instruments:
+                inst = row.instrument
+                discovered = row.discovered_at.astimezone(timezone.utc).isoformat()
+                last_seen = row.last_seen_at.astimezone(timezone.utc).isoformat()
+                connection.execute(
+                    """
+                    INSERT INTO moi_catalog_instruments (
+                        venue_id, product_type, venue_market_id,
+                        base_asset, quote_asset, normalized_symbol, display_name,
+                        contract_expiry, venue_status, quality_status, source_id,
+                        discovery_session_id, discovered_at, last_seen_at,
+                        diagnostics_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(venue_id, product_type, venue_market_id) DO UPDATE SET
+                        base_asset = excluded.base_asset,
+                        quote_asset = excluded.quote_asset,
+                        normalized_symbol = excluded.normalized_symbol,
+                        display_name = excluded.display_name,
+                        contract_expiry = excluded.contract_expiry,
+                        venue_status = excluded.venue_status,
+                        quality_status = excluded.quality_status,
+                        source_id = excluded.source_id,
+                        discovery_session_id = excluded.discovery_session_id,
+                        last_seen_at = excluded.last_seen_at,
+                        diagnostics_json = excluded.diagnostics_json
+                    """,
+                    (
+                        inst.venue_id,
+                        inst.product_type.value,
+                        inst.venue_market_id,
+                        inst.base,
+                        inst.quote,
+                        inst.normalized_symbol,
+                        inst.display_name,
+                        inst.contract_expiry,
+                        row.venue_status,
+                        row.quality_status,
+                        row.source_id,
+                        result.session_id,
+                        discovered,
+                        last_seen,
+                        "",
+                    ),
+                )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+
+def list_catalog_instruments(
+    settings: Settings,
+    *,
+    venue_id: str | None = None,
+    product_type: str | None = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Read persisted catalog instruments (no delist side effects)."""
+    if not is_catalog_migration_applied(settings):
+        return []
+    clauses: list[str] = []
+    params: list[Any] = []
+    if venue_id:
+        clauses.append("venue_id = ?")
+        params.append(venue_id)
+    if product_type:
+        clauses.append("product_type = ?")
+        params.append(product_type)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    bound = max(1, min(int(limit), 5000))
+    params.append(bound)
+    with get_connection(settings) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT venue_id, product_type, venue_market_id, base_asset, quote_asset,
+                   normalized_symbol, display_name, contract_expiry, venue_status,
+                   quality_status, source_id, discovery_session_id,
+                   discovered_at, last_seen_at
+            FROM moi_catalog_instruments
+            {where}
+            ORDER BY last_seen_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
 

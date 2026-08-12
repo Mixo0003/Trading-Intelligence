@@ -1,10 +1,9 @@
 HELP_TEXT = """❓ Help
 
 /menu — main menu
-/opportunities — Market Opportunities
+/opportunities — Polymarket Opportunity Scanner
 📈 Polymarket — Weather, Copy, Opportunities
-🪙 Crypto Intelligence — read-only public market data (V3)
-🔎 Market Research — V3 placeholder
+📊 Market Intelligence — spot paper arbitrage, Filters, History
 ⚙️ Settings — operating mode
 🩺 System Health — admins only
 
@@ -16,7 +15,7 @@ START_TEXT = """🚀 TI — Trading Intelligence
 Status: ONLINE
 Mode: ANALYSIS ONLY
 
-Polymarket tools live today. Crypto Overview/Arbitrage/Spread/Exchanges are read-only when enabled; Research remains a V3 placeholder.
+Polymarket tools and Market Intelligence (spot cross-exchange paper arbitrage) are available when enabled.
 Does not place trades or connect a wallet.
 
 Use /menu or Telegram’s Menu button for navigation.

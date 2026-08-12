@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.database.market_opportunity_storage import (
+    CATALOG_MIGRATION_ID,
     MIGRATION_ID,
     initialize_market_opportunity_schema,
+    is_catalog_migration_applied,
     is_migration_applied,
     list_published_opportunity_uids,
 )
@@ -215,23 +217,30 @@ class TestMigrationTempDb:
         assert is_migration_applied(settings)
         initialize_market_opportunity_schema(settings)
         initialize_market_opportunity_schema(settings)
+        assert is_catalog_migration_applied(settings)
         with get_connection(settings) as connection:
-            markers = connection.execute(
-                "SELECT migration_id FROM moi_schema_migrations"
-            ).fetchall()
+            markers = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT migration_id FROM moi_schema_migrations ORDER BY migration_id"
+                ).fetchall()
+            ]
             tables = {
                 row[0]
                 for row in connection.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 ).fetchall()
             }
-        assert [row[0] for row in markers] == [MIGRATION_ID]
+        # Additive V4.3 catalog marker coexists with v1; init is idempotent.
+        assert markers == sorted([MIGRATION_ID, CATALOG_MIGRATION_ID])
         assert {
             "moi_schema_migrations",
             "moi_opportunities",
             "moi_evidence",
             "moi_outcomes",
             "moi_runtime_status",
+            "moi_catalog_discovery_sessions",
+            "moi_catalog_instruments",
         }.issubset(tables)
         assert list_published_opportunity_uids(settings) == []
 
@@ -318,7 +327,9 @@ class TestTelegramAdminGate:
             for btn in row
         ]
         assert "📊 Market Opportunities" not in guest
-        assert "📊 Market Opportunities" in admin
+        assert "📊 Market Opportunities" not in admin
+        assert "📊 Market Intelligence" in guest
+        assert "📊 Market Intelligence" in admin
         pm_labels = [
             btn.text
             for row in polymarket_inline_keyboard().inline_keyboard
@@ -344,6 +355,15 @@ class TestTelegramAdminGate:
         assert CB_OPP.startswith("nav:") or CB_OPP == "nav:opp"
         assert CB_CRYPTO_MENU.startswith("crypto:")
         assert TOP_EMPTY_TEXT.startswith("📊 Top Opportunities")
+        # MOI hub remains importable; main menu no longer surfaces it.
+        main_admin = {
+            btn.callback_data
+            for row in main_inline_keyboard(is_admin=True).inline_keyboard
+            for btn in row
+            if btn.callback_data
+        }
+        assert CB_MOI_MENU not in main_admin
+        assert CB_CRYPTO_MENU in main_admin
 
 
 class TestNoTradingImports:
