@@ -83,3 +83,6 @@ Market Research hub (`research:*`) remains a placeholder.
 - V4.8 adds **unified scoring/calibration contracts** across strategies.
   Scores are not probabilities; weights/thresholds/ranking remain unsupported
   until approved policies exist. Outcomes are immutable once recorded.
+- V4.9 adds an **authoritative source registry** and verified EIA/FRED ingest
+  for news/fundamental overlays on existing opportunities only. Unsupported
+  sources fail closed; news alone never creates a trading signal.

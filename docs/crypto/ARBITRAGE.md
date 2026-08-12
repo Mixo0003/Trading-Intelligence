@@ -28,11 +28,12 @@ public L2 books when the scanner is enabled.
 
 Not LONG/SHORT, TP/SL, news signals. Not real trading. Not guaranteed profit.
 
-V4.5–V4.8 foundation contracts (basis/funding, directional, news overlays,
-unified scoring/calibration) exist in-code for normalization and fail-closed
-validation only. They do **not** change New Opportunities cards or enable
-futures/funding/directional/news/scoring execution. News alone never creates a
-trading signal. Scores are not probabilities or guaranteed profit.
+V4.5–V4.9 foundation contracts (basis/funding, directional, news overlays,
+unified scoring/calibration, verified EIA/FRED news ingest) exist in-code for
+normalization and fail-closed validation only. They do **not** change New
+Opportunities cards or enable futures/funding/directional/news/scoring
+execution. News alone never creates a trading signal. Scores are not
+probabilities or guaranteed profit.
 
 ### Callbacks
 

@@ -184,9 +184,14 @@ MOI (`app/market_opportunity/`, `moi:*`) remains a sibling of Polymarket Opportu
   - Outcome lifecycle (succeeded / failed / expired / unobservable) with immutability
   - Fail closed without approved weight / threshold / ranking policies
   - Does **not** invent numeric weights, probabilities, ROI, or rewrite history
-- [ ] Later — Complete news ingest adapters / approved source registry (deferred)
+- [x] **V4.9** Verified news ingest & authoritative source registry
+  - Registry limited to in-repo verified EIA/FRED routes only (no invented endpoints)
+  - Offline-capable ingest via existing MOI parsers; MOI ``assert_fresh`` freshness policy
+  - Provenance, dedupe, asset mapping; overlays on existing opportunities only
+  - News alone never creates a signal; unsupported sources/event classes fail closed
+- [ ] Later — Additional official source adapters beyond EIA/FRED (deferred)
 - [ ] Later — Approved scoring weights / thresholds / ranking policies (deferred)
-- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.8 foundation (deferred)
+- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.9 foundation (deferred)
 - [ ] Later — Silver / Natural Gas commodity expansion (was formerly labeled V4.3; deferred)
 - [ ] Later — Opportunity scoring calibration & paper outcome tracking (former MOI slots; deferred)
 

@@ -372,13 +372,11 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-V4.7 news/fundamental foundation is **merged**. V4.8 unified scoring &
-calibration **foundation** is in progress on
-`feature/v4.8-unified-scoring-calibration`. Prefer the next bounded slice only
-under an explicit operator prompt. Do not enable
-`CRYPTO_OPPORTUNITY_SCANNER_ENABLED` or `CRYPTO_OPPORTUNITY_DELIVERY_ENABLED`
-without a separate approved enablement plan. Do not invent score weights,
-thresholds, ranking, or probability claims; do not rewrite historical outcomes.
+V4.8 unified scoring foundation is **merged**. V4.9 verified news ingest &
+source registry is in progress on
+`feature/v4.9-verified-news-ingest-source-registry`. Prefer the next bounded
+slice only under an explicit operator prompt. Do not invent endpoints, TTLs,
+ranking, or weights. Do not enable scanner/delivery without approval.
 ## Fresh Cursor context startup prompt
 
 ```text

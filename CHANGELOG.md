@@ -1,8 +1,24 @@
 # Changelog
 
-## V4.8 — Unified Scoring & Calibration Foundation
+## V4.9 — Verified News Ingest & Source Registry
 
-**Branch:** `feature/v4.8-unified-scoring-calibration`
+**Branch:** `feature/v4.9-verified-news-ingest-source-registry`
+
+### Added / changed
+
+- Authoritative source registry (`source_registry.py`) with only in-repo verified
+  EIA/FRED routes (RWTC, WCESTUS1, DCOILWTICO).
+- Verified ingest module (`verified_news_ingest.py`) using existing MOI parsers
+  and ``OfficialFreshnessPolicy`` wrapping MOI ``assert_fresh`` (no new TTLs).
+- Provenance, dedupe, asset mapping, and overlays
+  (confirm/reject/downgrade/suppress) on existing opportunities only.
+- Unsupported sources/event classes fail closed; news alone never creates a
+  signal; no News button; scanner/delivery defaults unchanged.
+- V4.4–V4.8 foundation modules left intact.
+
+## V4.8 — Unified Scoring & Calibration Foundation (merged)
+
+**Commit:** `a573659` · **Main merge:** `95a1bd6` (PR #25)
 
 ### Added / changed
 
