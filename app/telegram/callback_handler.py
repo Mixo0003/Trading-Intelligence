@@ -19,6 +19,8 @@ from app.telegram.inline_menus import (
     CB_COPY_WATCHLIST,
     CB_CRYPTO_ARB,
     CB_CRYPTO_EXCHANGES,
+    CB_CRYPTO_FILTERS,
+    CB_CRYPTO_HISTORY,
     CB_CRYPTO_MENU,
     CB_CRYPTO_OVERVIEW,
     CB_CRYPTO_SPREAD,
@@ -96,6 +98,8 @@ _CRYPTO_LIVE = {
     CB_CRYPTO_ARB,
     CB_CRYPTO_SPREAD,
     CB_CRYPTO_EXCHANGES,
+    CB_CRYPTO_FILTERS,
+    CB_CRYPTO_HISTORY,
 }
 _RESEARCH_STUBS = {
     CB_RESEARCH_COIN,
@@ -175,6 +179,10 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return
     if data == CB_CRYPTO_MENU:
+        from app.crypto.opportunity.catalog import ensure_default_profile
+
+        if user is not None:
+            ensure_default_profile(settings, int(user.id))
         await edit_or_reply(
             update, CRYPTO_MENU_TEXT, reply_markup=crypto_inline_keyboard()
         )
@@ -184,7 +192,7 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         await handle_moi_callback(update, context, data)
         return
-    if data in _CRYPTO_LIVE:
+    if data in _CRYPTO_LIVE or data.startswith("crypto:filters:"):
         from app.telegram.crypto.handlers import handle_crypto_callback
 
         await handle_crypto_callback(update, context, data)
@@ -194,7 +202,7 @@ async def inline_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             update,
             CRYPTO_STUB_TEXT,
             reply_markup=stub_back_keyboard(
-                hub_callback=CB_CRYPTO_MENU, hub_label="Crypto Intelligence"
+                hub_callback=CB_CRYPTO_MENU, hub_label="Market Intelligence"
             ),
         )
         return

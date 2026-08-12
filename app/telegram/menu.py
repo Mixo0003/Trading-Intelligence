@@ -6,6 +6,7 @@ from app.database.storage import initialize_database
 from app.health.scheduler import schedule_health_jobs
 from app.market_opportunity.scheduler import schedule_market_opportunity_jobs
 from app.opportunity_intel.scheduler import schedule_opportunity_jobs
+from app.crypto.opportunity.scheduler import schedule_crypto_opportunity_jobs
 from app.telegram.callback_handler import inline_callback_handler
 from app.telegram.copy_intel.handlers import (
     copy_add_command,
@@ -20,6 +21,7 @@ from app.telegram.copy_intel.handlers import (
     copy_status_command,
     copy_toggle_command,
 )
+from app.telegram.crypto.handlers import crypto_filters_text_input
 from app.telegram.opportunity_intel.handlers import (
     opportunities_command,
     opportunity_settings_text_input,
@@ -90,12 +92,15 @@ def build_telegram_application(settings: Settings) -> Application:
     schedule_report_jobs(app, settings)
     schedule_copy_intel_jobs(app, settings)
     schedule_opportunity_jobs(app, settings)
+    schedule_crypto_opportunity_jobs(app, settings)
     schedule_market_opportunity_jobs(app, settings)
     schedule_health_jobs(app, settings)
     return app
 
 
 async def _settings_text_router(update, context):
+    if await crypto_filters_text_input(update, context):
+        return
     if await opportunity_settings_text_input(update, context):
         return
     await copy_settings_text_input(update, context)

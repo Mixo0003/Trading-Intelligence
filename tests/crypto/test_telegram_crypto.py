@@ -35,16 +35,25 @@ def _callback_update(data: str, *, user_id: int = 1):
 
 
 @pytest.mark.asyncio
-async def test_crypto_hub_updated_copy():
+async def test_crypto_hub_updated_copy(tmp_path):
+    settings = make_test_settings(
+        database_path=str(tmp_path / "hub.db"),
+        crypto_intel_read_only=True,
+    )
+    from app.database.storage import initialize_database, upsert_user
+
+    initialize_database(settings)
+    upsert_user(settings, 1, "u", "T")
     update = _callback_update(CB_CRYPTO_MENU)
     context = _context()
+    context.application.bot_data = {"settings": settings}
     await inline_callback_handler(update, context)
     text = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Crypto Intelligence" in text
-    assert "Market Overview" in text
-    assert "Arbitrage" in text
-    assert "Spread Monitor" in text
+    assert "Market Intelligence" in text
+    assert "New Opportunities" in text
+    assert "spot cross-exchange paper arbitrage" in text.lower()
     assert "not guaranteed profit" in text.lower()
+    assert "LONG/SHORT" in text or "not LONG" in text.lower() or "Not LONG" in text
 
 
 @pytest.mark.asyncio
@@ -59,9 +68,9 @@ async def test_arb_live_disabled_refresh_back(tmp_path):
     context.application.bot_data = {"settings": settings}
     await inline_callback_handler(update, context)
     text = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Arbitrage Opportunities" in text
+    assert "New Opportunities" in text
     assert "disabled" in text.lower()
-    assert "Not guaranteed profit" in text
+    assert "paper" in text.lower()
     markup = update.callback_query.message.edit_text.await_args.kwargs["reply_markup"]
     datas = [
         btn.callback_data
@@ -75,32 +84,28 @@ async def test_arb_live_disabled_refresh_back(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_arb_enabled_uses_collector(tmp_path):
-    from app.crypto.models import ArbReport
+async def test_arb_enabled_uses_top_opportunities(tmp_path):
+    from app.crypto.opportunity.models import ScanReport
 
     settings = make_test_settings(
         database_path=str(tmp_path / "arb2.db"),
         crypto_intel_enabled=True,
         crypto_intel_read_only=True,
+        crypto_opportunity_scanner_enabled=True,
     )
-    fake = ArbReport(
-        enabled=True,
-        symbols=("BTC/USDT",),
-        opportunities=(),
-        rejects=(),
-    )
+    fake = ScanReport(enabled=True, opportunities=(), rejects=())
     update = _callback_update(CB_CRYPTO_ARB)
     context = _context()
     context.application.bot_data = {"settings": settings}
     with patch(
-        "app.telegram.crypto.handlers.collect_arbitrage_opportunities",
+        "app.telegram.crypto.handlers.load_top_crypto_opportunities",
         return_value=fake,
-    ) as collect:
+    ) as load_top:
         await inline_callback_handler(update, context)
-        collect.assert_called_once()
+        load_top.assert_called_once()
     text = update.callback_query.message.edit_text.await_args.args[0]
-    assert "Arbitrage Opportunities" in text
-    assert "not an executable" in text.lower()
+    assert "New Opportunities" in text
+    assert "paper" in text.lower() or "no qualifying" in text.lower()
 
 
 @pytest.mark.asyncio

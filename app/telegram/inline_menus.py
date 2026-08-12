@@ -21,6 +21,11 @@ CB_CRYPTO_OVERVIEW = "crypto:overview"
 CB_CRYPTO_ARB = "crypto:arb"
 CB_CRYPTO_SPREAD = "crypto:spread"
 CB_CRYPTO_EXCHANGES = "crypto:exchanges"
+CB_CRYPTO_FILTERS = "crypto:filters"
+CB_CRYPTO_HISTORY = "crypto:history"
+# Dynamic: crypto:filters:edit:<field>, crypto:filters:set:<field>:<value>,
+# crypto:filters:custom:<field>, crypto:filters:confirm:<token>,
+# crypto:filters:cancel:<token>
 # V4.1 Market Opportunity Intelligence (admin-only hub; distinct from opp:)
 CB_MOI_MENU = "moi:menu"
 CB_MOI_TOP = "moi:top"
@@ -115,22 +120,13 @@ def remove_reply_keyboard() -> ReplyKeyboardRemove:
 def main_inline_keyboard(*, is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton("📈 Polymarket", callback_data=CB_PM_MENU)],
-        [InlineKeyboardButton("₿ Crypto Intelligence", callback_data=CB_CRYPTO_MENU)],
-        [InlineKeyboardButton("📚 Market Research", callback_data=CB_RESEARCH_MENU)],
+        [InlineKeyboardButton("📊 Market Intelligence", callback_data=CB_CRYPTO_MENU)],
         [InlineKeyboardButton("⚙️ Settings", callback_data=CB_SETTINGS)],
     ]
     if is_admin:
         rows.insert(
             -1,
             [InlineKeyboardButton("🩺 System Health", callback_data=CB_HEALTH)],
-        )
-        rows.insert(
-            -1,
-            [
-                InlineKeyboardButton(
-                    "📊 Market Opportunities", callback_data=CB_MOI_MENU
-                )
-            ],
         )
     return InlineKeyboardMarkup(rows)
 
@@ -163,16 +159,15 @@ def polymarket_settings_keyboard() -> InlineKeyboardMarkup:
 def crypto_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📊 Market Overview", callback_data=CB_CRYPTO_OVERVIEW)],
             [
                 InlineKeyboardButton(
-                    "💱 Arbitrage Opportunities", callback_data=CB_CRYPTO_ARB
+                    "📈 New Opportunities", callback_data=CB_CRYPTO_ARB
                 )
             ],
-            [InlineKeyboardButton("↔️ Spread Monitor", callback_data=CB_CRYPTO_SPREAD)],
+            [InlineKeyboardButton("🎛 Filters", callback_data=CB_CRYPTO_FILTERS)],
             [
                 InlineKeyboardButton(
-                    "🏦 Exchanges & Health", callback_data=CB_CRYPTO_EXCHANGES
+                    "🕘 Opportunity History", callback_data=CB_CRYPTO_HISTORY
                 )
             ],
             [InlineKeyboardButton("↩️ Back", callback_data=CB_MAIN)],
@@ -216,7 +211,7 @@ def crypto_overview_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🔄 Refresh", callback_data=CB_CRYPTO_OVERVIEW)],
             [
                 InlineKeyboardButton(
-                    "⬅️ Crypto Intelligence", callback_data=CB_CRYPTO_MENU
+                    "⬅️ Market Intelligence", callback_data=CB_CRYPTO_MENU
                 )
             ],
         ]
@@ -229,7 +224,40 @@ def crypto_arb_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🔄 Refresh", callback_data=CB_CRYPTO_ARB)],
             [
                 InlineKeyboardButton(
-                    "⬅️ Crypto Intelligence", callback_data=CB_CRYPTO_MENU
+                    "⬅️ Market Intelligence", callback_data=CB_CRYPTO_MENU
+                )
+            ],
+        ]
+    )
+
+
+def crypto_filters_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Exchanges", callback_data="crypto:filters:edit:ex")],
+            [InlineKeyboardButton("Paper allocation", callback_data="crypto:filters:edit:pa")],
+            [InlineKeyboardButton("Min net profit", callback_data="crypto:filters:edit:np")],
+            [InlineKeyboardButton("Min ROI", callback_data="crypto:filters:edit:roi")],
+            [InlineKeyboardButton("Max slippage", callback_data="crypto:filters:edit:sl")],
+            [InlineKeyboardButton("Min depth", callback_data="crypto:filters:edit:dep")],
+            [InlineKeyboardButton("Max signal age", callback_data="crypto:filters:edit:age")],
+            [InlineKeyboardButton("Cooldown", callback_data="crypto:filters:edit:cd")],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Market Intelligence", callback_data=CB_CRYPTO_MENU
+                )
+            ],
+        ]
+    )
+
+
+def crypto_history_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔄 Refresh", callback_data=CB_CRYPTO_HISTORY)],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Market Intelligence", callback_data=CB_CRYPTO_MENU
                 )
             ],
         ]
@@ -674,15 +702,16 @@ POLYMARKET_SETTINGS_TEXT = (
     "No new settings schema in this version."
 )
 CRYPTO_MENU_TEXT = (
-    "🪙 Crypto Intelligence\n"
-    "Read-only · public market data · paper-only.\n"
-    "Market Overview, Arbitrage, Spread Monitor, and Exchanges & Health "
-    "are available when enabled.\n"
-    "Arbitrage shows gross price gaps only — not guaranteed profit."
+    "📊 Market Intelligence\n"
+    "Read-only · paper-only · public market data.\n"
+    "New Opportunities shows spot cross-exchange paper arbitrage "
+    "(Binance, BingX, MEXC, OKX, KuCoin) when the scanner is enabled.\n"
+    "Estimated fees, slippage, executable size, net profit, and ROI only — "
+    "not guaranteed profit. Not LONG/SHORT, futures, or news signals."
 )
 CRYPTO_STUB_TEXT = (
-    "🪙 Crypto Intelligence\n"
-    "Coming in V3 — not live.\n"
+    "📊 Market Intelligence\n"
+    "Coming later — not live.\n"
     "This screen is a placeholder only."
 )
 RESEARCH_MENU_TEXT = (

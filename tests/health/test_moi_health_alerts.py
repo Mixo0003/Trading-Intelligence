@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -18,6 +18,40 @@ from tests.conftest import make_test_settings
 
 def _now() -> datetime:
     return datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def _fresh_ok_diag(clock: datetime | None = None) -> dict:
+    """EIA periods relative to ``clock`` so age stays inside freshness ceilings."""
+    clock = clock or _now()
+    return {
+        "wti_price": {
+            "period": (clock.date() - timedelta(days=2)).isoformat(),
+            "bars": 120,
+        },
+        "wti_inventory": {
+            "period": (clock.date() - timedelta(days=7)).isoformat(),
+            "points": 40,
+        },
+        "fred_crosscheck": {"ok": False, "error": "missing_key"},
+        "detector_runtime": {"ok": True, "published": 0, "suppressed": 0},
+        "paper_outcome_runtime": {"ok": True, "measured": 0},
+    }
+
+
+@pytest.fixture
+def freeze_moi_clock(monkeypatch):
+    """Freeze ``evaluate_moi_health`` wall clock used by ``probe_market_opportunity``."""
+    frozen = _now()
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return frozen.replace(tzinfo=None)
+            return frozen.astimezone(tz)
+
+    monkeypatch.setattr("app.market_opportunity.health.datetime", _FrozenDateTime)
+    return frozen
 
 
 @pytest.fixture
@@ -64,17 +98,12 @@ class TestMoiHealthAlertPolicy:
         notes = sync_incidents_from_health(settings, _moi_overall(comp))
         assert notes == []
 
-    def test_fred_missing_optional_no_telegram(self, settings):
+    def test_fred_missing_optional_no_telegram(self, settings, freeze_moi_clock):
+        diag = _fresh_ok_diag(freeze_moi_clock)
         snap = evaluate_moi_health(
             settings,
-            diagnostics={
-                "wti_price": {"period": "2026-08-03", "bars": 120},
-                "wti_inventory": {"period": "2026-07-31", "points": 40},
-                "fred_crosscheck": {"ok": False, "error": "missing_key"},
-                "detector_runtime": {"ok": True, "published": 0, "suppressed": 0},
-                "paper_outcome_runtime": {"ok": True, "measured": 0},
-            },
-            now=_now(),
+            diagnostics=diag,
+            now=freeze_moi_clock,
         )
         assert snap["state"] == "DEGRADED"
         assert "FRED" in snap["detail"]
@@ -88,16 +117,8 @@ class TestMoiHealthAlertPolicy:
         moi_storage.upsert_runtime_status(
             settings,
             status="ok",
-            detail=json.dumps(
-                {
-                    "wti_price": {"period": "2026-08-03", "bars": 120},
-                    "wti_inventory": {"period": "2026-07-31", "points": 40},
-                    "fred_crosscheck": {"ok": False, "error": "missing_key"},
-                    "detector_runtime": {"ok": True, "published": 0, "suppressed": 0},
-                    "paper_outcome_runtime": {"ok": True, "measured": 0},
-                }
-            ),
-            checked_at=_now(),
+            detail=json.dumps(diag),
+            checked_at=freeze_moi_clock,
             enabled_detectors=[],
         )
         comp = probe_market_opportunity(settings)
@@ -167,7 +188,7 @@ class TestMoiHealthAlertPolicy:
             comp = probe_market_opportunity(settings)
             assert sync_incidents_from_health(settings, _moi_overall(comp)) == []
 
-    def test_eia_recovery_one_notification(self, settings):
+    def test_eia_recovery_one_notification(self, settings, freeze_moi_clock):
         from app.database import market_opportunity_storage as moi_storage
         import json
 
@@ -175,7 +196,7 @@ class TestMoiHealthAlertPolicy:
             settings,
             status="down",
             detail=json.dumps({"wti_price": {"error": "fetch_failed"}}),
-            checked_at=_now(),
+            checked_at=freeze_moi_clock,
             enabled_detectors=[],
         )
         alerted = False
@@ -187,19 +208,12 @@ class TestMoiHealthAlertPolicy:
                 alerted = True
         assert alerted
 
+        recovered = _fresh_ok_diag(freeze_moi_clock)
         moi_storage.upsert_runtime_status(
             settings,
             status="ok",
-            detail=json.dumps(
-                {
-                    "wti_price": {"period": "2026-08-03", "bars": 120},
-                    "wti_inventory": {"period": "2026-07-31", "points": 40},
-                    "fred_crosscheck": {"ok": False, "error": "missing_key"},
-                    "detector_runtime": {"ok": True, "published": 0, "suppressed": 0},
-                    "paper_outcome_runtime": {"ok": True, "measured": 0},
-                }
-            ),
-            checked_at=_now(),
+            detail=json.dumps(recovered),
+            checked_at=freeze_moi_clock,
             enabled_detectors=[],
         )
         comp = probe_market_opportunity(settings)
@@ -212,7 +226,12 @@ class TestMoiHealthAlertPolicy:
         _record(notes, settings)
         assert sync_incidents_from_health(settings, _moi_overall(comp)) == []
 
-    def test_runtime_detail_merge_does_not_resurrect_stale_eia_failure(self, settings):
+    def test_runtime_detail_merge_does_not_resurrect_stale_eia_failure(
+        self, settings, freeze_moi_clock
+    ):
+        diag = _fresh_ok_diag(freeze_moi_clock)
+        price_period = diag["wti_price"]["period"]
+        inv_period = diag["wti_inventory"]["period"]
         _write_runtime(
             settings,
             status="down",
@@ -223,7 +242,7 @@ class TestMoiHealthAlertPolicy:
             status="ok",
             detail={
                 "job": "moi_wti_price_refresh",
-                "wti_price": {"period": "2026-08-03", "bars": 120},
+                "wti_price": {"period": price_period, "bars": 120},
                 "fred_crosscheck": {"ok": False, "error": "missing_key"},
             },
         )
@@ -232,7 +251,7 @@ class TestMoiHealthAlertPolicy:
             status="ok",
             detail={
                 "job": "moi_wti_inventory_refresh",
-                "wti_inventory": {"period": "2026-07-31", "points": 40},
+                "wti_inventory": {"period": inv_period, "points": 40},
             },
         )
         # Outcomes-only write previously wiped EIA — must keep healthy price.
@@ -244,13 +263,13 @@ class TestMoiHealthAlertPolicy:
                 "paper_outcome_runtime": {
                     "ok": True,
                     "measured": 0,
-                    "period": "2026-08-03",
+                    "period": price_period,
                 },
             },
         )
-        snap = evaluate_moi_health(settings, now=_now())
+        snap = evaluate_moi_health(settings, now=freeze_moi_clock)
         assert snap["metrics"]["wti_price"]["state"] == "HEALTHY"
-        assert "2026-08-03" in snap["metrics"]["wti_price"]["detail"]
+        assert price_period in snap["metrics"]["wti_price"]["detail"]
         assert snap["metrics"]["warming"] is False
         # Must not fall back to DOWN/missing after outcomes merge.
         assert snap["state"] == "DEGRADED"  # FRED still optional-missing

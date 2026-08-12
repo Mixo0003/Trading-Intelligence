@@ -11,7 +11,13 @@ import requests
 from app.config.settings import Settings
 from app.crypto.api_result import ApiFailure, ApiSuccess
 from app.crypto.freshness import now_ms
-from app.crypto.models import ExchangeHealth, HealthStatus, Instrument, Ticker
+from app.crypto.models import (
+    ExchangeHealth,
+    HealthStatus,
+    Instrument,
+    OrderBookSnapshot,
+    Ticker,
+)
 from app.crypto.risk import assert_crypto_read_only
 from app.http.retry import request_with_retry
 
@@ -25,6 +31,26 @@ class PublicMarketDataClient(Protocol):
     def fetch_ticker(
         self, instrument: Instrument
     ) -> ApiSuccess[Ticker] | ApiFailure: ...
+
+    def probe_health(self) -> ExchangeHealth: ...
+
+
+class PublicOrderBookClient(Protocol):
+    """V4.3 venues that expose public L2 depth."""
+
+    exchange_id: str
+    display_name: str
+
+    def fetch_ticker(
+        self, instrument: Instrument
+    ) -> ApiSuccess[Ticker] | ApiFailure: ...
+
+    def fetch_order_book(
+        self,
+        instrument: Instrument,
+        *,
+        limit: int = 20,
+    ) -> ApiSuccess[OrderBookSnapshot] | ApiFailure: ...
 
     def probe_health(self) -> ExchangeHealth: ...
 

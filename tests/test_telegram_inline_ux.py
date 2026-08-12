@@ -112,8 +112,8 @@ class TestNoPersistentKeyboard:
     def test_main_inline_menu(self):
         labels = _callback_labels(main_inline_keyboard())
         assert "📈 Polymarket" in labels
-        assert "₿ Crypto Intelligence" in labels
-        assert "📚 Market Research" in labels
+        assert "📊 Market Intelligence" in labels
+        assert "📚 Market Research" not in labels
         assert "⚙️ Settings" in labels
         assert "🌤 Weather Intelligence" not in labels
 
