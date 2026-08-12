@@ -166,9 +166,14 @@ MOI (`app/market_opportunity/`, `moi:*`) remains a sibling of Polymarket Opportu
   - Perpetual / dated futures remain **unsupported** (no verified futures HTTP adapters)
   - Normalized snapshot + basis/funding observation contracts; fail closed without approved fee/formula/TTL policies
   - Does **not** implement complete futures arb, funding-arb engine, LONG/SHORT, TP/SL, or news
-- [ ] **V4.6** LONG/SHORT paper strategies (deferred)
+- [x] **V4.6** Directional trading intelligence **foundation** (LONG/SHORT contracts)
+  - Strategy labels: trend, breakout, momentum, mean reversion, order-book imbalance
+  - Volume/volatility evidence presence with fail-closed missing-source behavior
+  - Fail closed without approved signal formula, risk/TP-SL policy, or freshness policy
+  - Does **not** invent thresholds, ranking, confidence, or complete directional execution
+  - Spot paper arb / New Opportunities path unchanged; Top Opportunities remain unified
 - [ ] **V4.7** News-based signals (deferred)
-- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.5 foundation (deferred)
+- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.6 foundation (deferred)
 - [ ] Later — Silver / Natural Gas commodity expansion (was formerly labeled V4.3; deferred)
 - [ ] Later — Opportunity scoring calibration & paper outcome tracking (former MOI slots; deferred)
 

@@ -73,5 +73,7 @@ Market Research hub (`research:*`) remains a placeholder.
 - Guest New Opportunities remain **spot paper arb** only (V4.3/V4.4).
 - V4.5 adds **foundation contracts** for perpetual/dated futures, basis, and funding
   observations. Those product families stay **unsupported** in the venue registry
-  until verified adapters and approved fee/formula policies exist. No complete
-  futures arb, funding-arb engine, LONG/SHORT, TP/SL, or news signals.
+  until verified adapters and approved fee/formula policies exist.
+- V4.6 adds **directional foundation contracts** (LONG/SHORT + strategy/evidence
+  labels). Signal formulas, TP/SL, ranking, and confidence remain unsupported
+  until approved policies exist. No complete directional engine or news signals.
