@@ -178,8 +178,15 @@ MOI (`app/market_opportunity/`, `moi:*`) remains a sibling of Polymarket Opportu
   - Provenance required: URL, publisher/source type, timestamps, asset, dedupe key, verification
   - Fail closed without approved source registry, freshness, or ranking policies
   - Ambiguous labels (Gold/Oil/etc.) rejected; Bybit excluded from V4 venues
+- [x] **V4.8** Unified scoring & calibration **foundation**
+  - Universal score contract across spot arb, basis/funding, directional, news overlays
+  - Explainable component labels; strategy evidence normalization refs
+  - Outcome lifecycle (succeeded / failed / expired / unobservable) with immutability
+  - Fail closed without approved weight / threshold / ranking policies
+  - Does **not** invent numeric weights, probabilities, ROI, or rewrite history
 - [ ] Later — Complete news ingest adapters / approved source registry (deferred)
-- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.7 foundation (deferred)
+- [ ] Later — Approved scoring weights / thresholds / ranking policies (deferred)
+- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.8 foundation (deferred)
 - [ ] Later — Silver / Natural Gas commodity expansion (was formerly labeled V4.3; deferred)
 - [ ] Later — Opportunity scoring calibration & paper outcome tracking (former MOI slots; deferred)
 

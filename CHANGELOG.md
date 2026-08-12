@@ -1,8 +1,24 @@
 # Changelog
 
-## V4.7 — News & Fundamental Intelligence Foundation
+## V4.8 — Unified Scoring & Calibration Foundation
 
-**Branch:** `feature/v4.7-news-fundamental-intelligence`
+**Branch:** `feature/v4.8-unified-scoring-calibration`
+
+### Added / changed
+
+- Unified scoring foundation (`app/crypto/opportunity/unified_scoring.py`) with
+  strategy kinds for spot arb, basis, funding, directional, and news overlays.
+- Explainable score component labels and strategy evidence normalization refs;
+  fail closed without approved weight / threshold / ranking policies.
+- Paper outcome lifecycle contracts (succeeded / failed / expired / unobservable)
+  with immutability; calibration records require real outcomes (no fabrication).
+- Status cards state score is not a probability and not guaranteed profit.
+- V4.4–V4.7 modules, Filters/History isolation, and scanner/delivery defaults
+  unchanged.
+
+## V4.7 — News & Fundamental Intelligence Foundation (merged)
+
+**Commit:** `c989e3a` · **Main merge:** `639f071` (PR #24)
 
 ### Added / changed
 
