@@ -1,8 +1,28 @@
 # Changelog
 
-## V4.5 — Futures / Basis / Funding Foundation
+## V4.6 — Directional Trading Intelligence Foundation
 
-**Branch:** `feature/v4.5-futures-basis-funding-foundation`
+**Branch:** `feature/v4.6-directional-trading-intelligence`
+
+### Added / changed
+
+- Directional foundation module (`app/crypto/opportunity/directional.py`) with
+  LONG/SHORT sides and strategy labels: trend, breakout, momentum, mean
+  reversion, order-book imbalance.
+- Evidence presence for reference price, order-book depth, volume, and
+  volatility; fail closed when volume/volatility sources are missing (no
+  verified crypto volume/volatility adapters in-repo).
+- Fail-closed evaluators when signal formula, risk/TP-SL policy, or freshness
+  policy is missing; futures products remain unsupported without verified adapters.
+- Honest foundation cards may show side, strategy, symbol, venue, reference
+  price, signal age, and evidence — paper-only / not guaranteed.
+- V4.3/V4.4 spot paper arbitrage, Filters, History isolation, and scanner/
+  delivery defaults unchanged. Top Opportunities remain unified (no new
+  per-strategy Telegram buttons).
+
+## V4.5 — Futures / Basis / Funding Foundation (merged)
+
+**Commit:** `640f515` · **Main merge:** `e99ae03` (PR #22)
 
 ### Added / changed
 
