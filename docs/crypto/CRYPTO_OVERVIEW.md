@@ -80,3 +80,6 @@ Market Research hub (`research:*`) remains a placeholder.
 - V4.7 adds **news/fundamental overlay contracts** on existing opportunities
   only. News alone never creates a trading signal; no separate News button.
   Source registry / freshness / ranking remain fail-closed until approved.
+- V4.8 adds **unified scoring/calibration contracts** across strategies.
+  Scores are not probabilities; weights/thresholds/ranking remain unsupported
+  until approved policies exist. Outcomes are immutable once recorded.
