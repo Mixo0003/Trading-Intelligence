@@ -26,8 +26,11 @@ public L2 books when the scanner is enabled.
 
 ### Non-claims
 
-Not LONG/SHORT, TP/SL, futures, funding, basis, or news signals. Not real trading.
-Not guaranteed profit.
+Not LONG/SHORT, TP/SL, news signals. Not real trading. Not guaranteed profit.
+
+V4.5 foundation contracts for basis/funding exist in-code for normalization and
+fail-closed validation only. They do **not** change New Opportunities cards or
+enable futures/funding execution.
 
 ### Callbacks
 

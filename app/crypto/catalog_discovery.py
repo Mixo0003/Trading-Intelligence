@@ -1,11 +1,12 @@
-"""Public read-only spot catalog discovery for V4.3 venues.
+"""Public read-only spot catalog discovery for Market Intelligence venues.
 
 Uses only verified public REST catalog endpoints (official exchange docs) and
 the existing ``public_get_json`` helper. Does not authenticate, trade, or
 mutate venue state.
 
-Perpetual and dated futures remain ``unsupported`` — no unverified futures
-catalog endpoints are called.
+V4.5 foundation: perpetual and dated futures remain ``unsupported`` — no
+unverified futures catalog endpoints are called and completeness is never
+claimed for those product families.
 
 Pagination: all five spot catalog endpoints return a single full payload
 (no cursor). Partial results are returned when HTTP/parsing fails closed or
@@ -130,7 +131,11 @@ def discover_catalog(
     now: datetime | None = None,
     session_id: str | None = None,
 ) -> CatalogDiscoveryResult:
-    """Discover catalog for a venue product family (spot only in Slice 2)."""
+    """Discover catalog for a venue product family (capability-aware).
+
+    Spot uses verified public adapters. Perpetual/dated futures remain
+    unsupported when the venue registry declares them unsupported.
+    """
     family = require_product_family(product_family)
     clock = now or datetime.now(timezone.utc)
     if clock.tzinfo is None:
@@ -138,7 +143,37 @@ def discover_catalog(
     clock = clock.astimezone(timezone.utc)
     sid = session_id or f"moi-cat-{uuid.uuid4().hex}"
 
-    if family != ProductType.SPOT:
+    if not is_v43_venue(venue_id):
+        return _terminal(
+            session_id=sid,
+            venue_id=venue_id,
+            product_family=family,
+            completeness=DiscoveryCompleteness.UNSUPPORTED,
+            instruments=(),
+            diagnostics=(
+                DiscoveryDiagnostic(
+                    code=DiscoveryDiagnosticCode.UNSUPPORTED_PRODUCT,
+                    message=f"venue {venue_id!r} is not in the Market Intelligence registry",
+                ),
+            ),
+            provenance=DiscoveryProvenance(
+                source_id="v45_unsupported_venue",
+                endpoint_path="",
+                fetched_at=clock,
+                request_count=0,
+            ),
+            started_at=clock,
+            finished_at=clock,
+            pagination=PaginationState(
+                mode="none",
+                pages_fetched=0,
+                exhausted=True,
+                stopped_reason="unsupported_venue",
+            ),
+        )
+
+    venue = require_v43_venue(venue_id)
+    if not venue.supports(family):
         return _terminal(
             session_id=sid,
             venue_id=venue_id,
@@ -149,13 +184,14 @@ def discover_catalog(
                 DiscoveryDiagnostic(
                     code=DiscoveryDiagnosticCode.UNSUPPORTED_PRODUCT,
                     message=(
-                        f"{family.value} catalog discovery is unsupported in V4.3 "
-                        "Slice 2 (no verified adapter catalog contract)"
+                        f"{family.value} catalog discovery is unsupported "
+                        "(no verified futures adapter in repository; "
+                        "V4.5 foundation does not call unverified endpoints)"
                     ),
                 ),
             ),
             provenance=DiscoveryProvenance(
-                source_id="v43_unsupported_product",
+                source_id="v45_unsupported_product",
                 endpoint_path="",
                 fetched_at=clock,
                 request_count=0,
@@ -167,6 +203,38 @@ def discover_catalog(
                 pages_fetched=0,
                 exhausted=True,
                 stopped_reason="unsupported_product",
+            ),
+        )
+    if family != ProductType.SPOT:
+        # Registry claimed support but no verified adapter exists — fail closed.
+        return _terminal(
+            session_id=sid,
+            venue_id=venue_id,
+            product_family=family,
+            completeness=DiscoveryCompleteness.FAILED,
+            instruments=(),
+            diagnostics=(
+                DiscoveryDiagnostic(
+                    code=DiscoveryDiagnosticCode.UNSUPPORTED_PRODUCT,
+                    message=(
+                        f"{family.value} marked supported without a verified "
+                        "adapter; refusing to invent an HTTP catalog path"
+                    ),
+                ),
+            ),
+            provenance=DiscoveryProvenance(
+                source_id="v45_missing_adapter",
+                endpoint_path="",
+                fetched_at=clock,
+                request_count=0,
+            ),
+            started_at=clock,
+            finished_at=clock,
+            pagination=PaginationState(
+                mode="none",
+                pages_fetched=0,
+                exhausted=True,
+                stopped_reason="missing_verified_adapter",
             ),
         )
     return discover_spot_catalog(

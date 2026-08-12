@@ -1,12 +1,13 @@
-"""V4.3 venue registry, capabilities, and canonical instrument identity.
+"""Venue registry, capabilities, and canonical instrument identity.
 
-Verified capability facts:
-- Five V4.3 venues expose public spot ``fetch_ticker`` + ``probe_health``.
-- Slice 2 adds public spot catalog discovery via official exchangeInfo /
-  instruments / symbols endpoints (see ``app.crypto.catalog_discovery``).
-- Order-book fetch, funding, and open interest remain unimplemented.
+Verified capability facts (V4.3–V4.5):
+- Five Market Intelligence venues expose public spot ``fetch_ticker``,
+  ``probe_health``, spot catalog discovery, and public L2 order books
+  (see ``app.crypto.catalog_discovery`` / exchange adapters).
+- Funding and open interest remain unimplemented (capability ``False``).
 - Perpetual and dated futures remain ``unsupported`` (product classification),
-  never as venue health failures.
+  never as venue health failures — V4.5 foundation does not add futures HTTP
+  adapters or claim futures catalog completeness.
 
 Bybit remains in Crypto V3 (``EXCHANGE_IDS`` / ``build_clients``) and is
 intentionally absent from this registry.
@@ -23,7 +24,7 @@ from app.crypto.product_types import (
     require_product_family,
 )
 
-# V4.3 registry order (locked). Bybit is excluded.
+# Market Intelligence registry order (locked). Bybit is excluded.
 V43_EXCHANGE_IDS: tuple[str, ...] = (
     "binance",
     "bingx",
@@ -138,7 +139,7 @@ class VenueProductCapability:
 
 @dataclass(frozen=True)
 class VenueRegistration:
-    """Canonical V4.3 exchange registry entry (capability-aware)."""
+    """Canonical Market Intelligence exchange registry entry (capability-aware)."""
 
     venue_id: str
     display_name: str
@@ -175,6 +176,18 @@ class VenueRegistration:
     def supports(self, product_family: ProductType) -> bool:
         return self.product(product_family).supported
 
+    def supported_product_families(self) -> tuple[ProductType, ...]:
+        """Product families declared supported for this venue (registry order)."""
+        return tuple(
+            entry.product_family for entry in self.products if entry.supported
+        )
+
+    def unsupported_product_families(self) -> tuple[ProductType, ...]:
+        """Product families declared unsupported (not a venue outage)."""
+        return tuple(
+            entry.product_family for entry in self.products if not entry.supported
+        )
+
 
 @dataclass(frozen=True)
 class CanonicalInstrument:
@@ -193,6 +206,12 @@ class CanonicalInstrument:
     normalized_symbol: str
     display_name: str = ""
     contract_expiry: str | None = None
+    # Optional authoritative constraints when a verified source provides them.
+    # Not persisted as separate catalog columns in this foundation slice.
+    settlement: str | None = None
+    tick_size: str | None = None
+    quantity_step: str | None = None
+    contract_code: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.product_type, ProductType):
@@ -213,6 +232,12 @@ class CanonicalInstrument:
             and self.contract_expiry is None
         ):
             raise ValueError("dated_future instruments require contract_expiry")
+        if self.product_type == ProductType.SPOT and self.contract_code is not None:
+            raise ValueError("spot instruments must not set contract_code")
+        for field_name in ("settlement", "tick_size", "quantity_step", "contract_code"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _identifier(value, field_name, maximum=64)
 
     @property
     def identity_key(self) -> tuple[str, str, str]:
@@ -226,7 +251,7 @@ def _spot_supported() -> VenueProductCapability:
 
 
 def _default_products() -> tuple[VenueProductCapability, ...]:
-    """Verified spot ticker support; perpetual/dated futures unsupported."""
+    """Verified spot support; perpetual/dated futures unsupported (V4.5)."""
     return (
         _spot_supported(),
         VenueProductCapability.unsupported(ProductType.PERPETUAL),

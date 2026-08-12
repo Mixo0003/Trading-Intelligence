@@ -1,5 +1,36 @@
 # Changelog
 
+## V4.5 — Futures / Basis / Funding Foundation
+
+**Branch:** `feature/v4.5-futures-basis-funding-foundation`
+
+### Added / changed
+
+- Capability-aware registry helpers for spot / perpetual / dated_future on Binance,
+  BingX, MEXC, OKX, KuCoin; spot remains supported; perpetual and dated futures
+  remain **unsupported** (no new futures HTTP catalog adapters).
+- Optional instrument constraint fields on `CanonicalInstrument` (settlement,
+  tick_size, quantity_step, contract_code) for in-memory normalization only.
+- Normalized market snapshot contracts with explicit capability presence,
+  provenance, and fail-closed validation (bid/ask, mark/index, funding fields).
+- Basis and funding observation contracts plus fail-closed evaluators when fee
+  policy, funding formula, or freshness policy is missing.
+- V4.4 spot catalog and paper arbitrage path unchanged; scanner/delivery defaults
+  remain off; Bybit remains legacy Crypto V3 only.
+- No real trading, LONG/SHORT, TP/SL, news signals, guaranteed profit, or invented
+  APR/ROI/liquidation formulas.
+
+## V4.4 — Catalog-Driven Spot Arbitrage (merged)
+
+**Commit:** `a4bbc46` · **Main merge:** `09ca984` (PR #21)
+
+### Added / changed
+
+- Catalog-driven spot universe for Market Intelligence venues; complete-miss only
+  on COMPLETE discovery; partial discovery never delists.
+- Executable paper arb cards with BUY/SELL venue, fees, slippage, net, ROI.
+- V4.3 UX Filters / History / isolation preserved.
+
 ## V4.3 — Market Intelligence UX (merged)
 
 **Commit:** `7da710e` · **Main merge:** `677b761` (PR #20)
@@ -19,7 +50,7 @@
 - Defaults remain off: `CRYPTO_OPPORTUNITY_SCANNER_ENABLED`,
   `CRYPTO_OPPORTUNITY_DELIVERY_ENABLED`.
 - No real trading; no LONG/SHORT, TP/SL, futures, funding, or news signals in V4.3.
-- V4.4–V4.7 advanced tracks deferred. MOI/WTI (`moi:*`) remain compatible, not the
+- MOI/WTI (`moi:*`) remain compatible, not the
   main guest product. Polymarket, Weather, Copy Intelligence, Crypto V3 leaves preserved.
 
 ### Verification

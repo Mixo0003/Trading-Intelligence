@@ -66,10 +66,12 @@ Still importable / callable for stale Telegram clients; **not** on the V4.3 hub:
 
 Market Research hub (`research:*`) remains a placeholder.
 
-## Safety / non-claims (V4.3)
+## Safety / non-claims
 
 - Public REST only; no trading API keys; no orders, withdrawals, transfers, wallets.
 - Read-only / paper-only analysis; not guaranteed profit.
-- No LONG/SHORT, TP/SL, perpetuals, dated futures, funding, basis, stocks, ETFs,
-  indices, forex, commodities, or news-based signals in V4.3.
-- Advanced arb / perps / LONG-SHORT / news remain **V4.4–V4.7 deferred**.
+- Guest New Opportunities remain **spot paper arb** only (V4.3/V4.4).
+- V4.5 adds **foundation contracts** for perpetual/dated futures, basis, and funding
+  observations. Those product families stay **unsupported** in the venue registry
+  until verified adapters and approved fee/formula policies exist. No complete
+  futures arb, funding-arb engine, LONG/SHORT, TP/SL, or news signals.
