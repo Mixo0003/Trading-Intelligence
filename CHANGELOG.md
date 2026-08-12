@@ -1,8 +1,25 @@
 # Changelog
 
-## V4.9 — Verified News Ingest & Source Registry
+## V4.10 — Scoring Policy & Ranking Enablement
 
-**Branch:** `feature/v4.9-verified-news-ingest-source-registry`
+**Branch:** `feature/v4.10-scoring-policy-ranking-enablement`
+
+### Added / changed
+
+- Scoring policy contracts (`scoring_policy.py`) for explicit weights,
+  thresholds, ranking keys, confidence labels, and score versions.
+- Policy validation for completeness, approval, and provenance alignment;
+  deterministic ranking only under a complete approved ``ScoringPolicy``.
+- Explainable weighted contributions (presence × policy weight); confidence
+  labels are diagnostic only (not probabilities).
+- No baked-in default policy; missing/contradictory/incomplete policies fail
+  closed. Historical outcomes remain immutable.
+- V4.4–V4.9 modules, Filters/History isolation, and scanner/delivery defaults
+  unchanged.
+
+## V4.9 — Verified News Ingest & Source Registry (merged)
+
+**Commit:** `7c99d26` · **Main merge:** `8908a3f` (PR #26)
 
 ### Added / changed
 

@@ -86,3 +86,6 @@ Market Research hub (`research:*`) remains a placeholder.
 - V4.9 adds an **authoritative source registry** and verified EIA/FRED ingest
   for news/fundamental overlays on existing opportunities only. Unsupported
   sources fail closed; news alone never creates a trading signal.
+- V4.10 adds **scoring policy contracts** and deterministic ranking **only**
+  when a complete approved ``ScoringPolicy`` is supplied. No baked-in default
+  weights/thresholds; confidence labels are not probabilities.
