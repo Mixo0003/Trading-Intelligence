@@ -9,8 +9,10 @@ strategy-specific payloads separate from the universal score contract.
 
 Does **not** invent numeric weights, thresholds, confidence/probability
 formulas, ROI formulas, or ranking policies. Evaluation fails closed until
-approved policy objects exist. Does not rewrite historical outcomes or
-fabricate measurements. Does not change V4.4–V4.7 modules, scanner, or
+approved policy objects exist. V4.10 adds explicit ``scoring_policy`` contracts
+and deterministic ranking **only** when a complete approved ``ScoringPolicy``
+is supplied (no baked-in defaults). Does not rewrite historical outcomes or
+fabricate measurements. Does not change V4.4–V4.9 modules, scanner, or
 delivery defaults.
 """
 

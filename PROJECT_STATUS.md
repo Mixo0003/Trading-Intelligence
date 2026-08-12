@@ -372,11 +372,11 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-V4.8 unified scoring foundation is **merged**. V4.9 verified news ingest &
-source registry is in progress on
-`feature/v4.9-verified-news-ingest-source-registry`. Prefer the next bounded
-slice only under an explicit operator prompt. Do not invent endpoints, TTLs,
-ranking, or weights. Do not enable scanner/delivery without approval.
+V4.9 verified news ingest & source registry is **merged**. V4.10 scoring policy
+& ranking enablement is in progress on
+`feature/v4.10-scoring-policy-ranking-enablement`. Prefer the next bounded
+slice only under an explicit operator prompt. Do not invent product-default
+weights, endpoints, or TTLs. Do not enable scanner/delivery without approval.
 ## Fresh Cursor context startup prompt
 
 ```text
