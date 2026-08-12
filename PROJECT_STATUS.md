@@ -372,15 +372,13 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-V4.5 futures/basis/funding foundation is **merged**. V4.6 directional trading
-intelligence **foundation** is in progress on
-`feature/v4.6-directional-trading-intelligence`. Prefer the next bounded slice
-only under an explicit operator prompt. Do not enable
-`CRYPTO_OPPORTUNITY_SCANNER_ENABLED` or `CRYPTO_OPPORTUNITY_DELIVERY_ENABLED`
-without a separate approved enablement plan. Do not invent directional
-thresholds, TP/SL, ranking, or confidence formulas; do not claim complete
-directional execution, news signals, or real trading until those versioned
-slices ship.
+V4.6 directional foundation is **merged**. V4.7 news/fundamental intelligence
+**foundation** is in progress on `feature/v4.7-news-fundamental-intelligence`.
+Prefer the next bounded slice only under an explicit operator prompt. Do not
+enable `CRYPTO_OPPORTUNITY_SCANNER_ENABLED` or
+`CRYPTO_OPPORTUNITY_DELIVERY_ENABLED` without a separate approved enablement
+plan. Do not invent news source registries, TTLs, ranking, or confidence; do
+not claim news-alone trading signals or complete news engines until approved.
 ## Fresh Cursor context startup prompt
 
 ```text

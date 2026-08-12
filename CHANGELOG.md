@@ -1,8 +1,25 @@
 # Changelog
 
-## V4.6 — Directional Trading Intelligence Foundation
+## V4.7 — News & Fundamental Intelligence Foundation
 
-**Branch:** `feature/v4.6-directional-trading-intelligence`
+**Branch:** `feature/v4.7-news-fundamental-intelligence`
+
+### Added / changed
+
+- News/fundamental foundation module (`app/crypto/opportunity/news_fundamentals.py`)
+  with event-class labels, full provenance evidence contracts, and overlay actions
+  (confirm / reject / downgrade / suppress) on **existing** opportunities only.
+- Hard rule: news alone never creates a trading signal; no separate News button.
+- Deduplication, unverified/irrelevant/contradictory rejection, ambiguous asset
+  label rejection (Gold/Oil/etc.), V4 venue/product gates.
+- Background integration entrypoint fails closed without approved source registry
+  / freshness policy. No invented ranking, confidence, TTLs, or profitability.
+- V4.3–V4.6 spot arb, directional foundation, Filters/History isolation, and
+  scanner/delivery defaults unchanged.
+
+## V4.6 — Directional Trading Intelligence Foundation (merged)
+
+**Commit:** `5cd2dc1` · **Main merge:** `378c7b6` (PR #23)
 
 ### Added / changed
 

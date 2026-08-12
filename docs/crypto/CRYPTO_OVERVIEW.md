@@ -76,4 +76,7 @@ Market Research hub (`research:*`) remains a placeholder.
   until verified adapters and approved fee/formula policies exist.
 - V4.6 adds **directional foundation contracts** (LONG/SHORT + strategy/evidence
   labels). Signal formulas, TP/SL, ranking, and confidence remain unsupported
-  until approved policies exist. No complete directional engine or news signals.
+  until approved policies exist.
+- V4.7 adds **news/fundamental overlay contracts** on existing opportunities
+  only. News alone never creates a trading signal; no separate News button.
+  Source registry / freshness / ranking remain fail-closed until approved.
