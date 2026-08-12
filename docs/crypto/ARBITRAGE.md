@@ -28,10 +28,10 @@ public L2 books when the scanner is enabled.
 
 Not LONG/SHORT, TP/SL, news signals. Not real trading. Not guaranteed profit.
 
-V4.5 foundation contracts for basis/funding and V4.6 directional foundation
-contracts exist in-code for normalization and fail-closed validation only. They
-do **not** change New Opportunities cards or enable futures/funding/directional
-execution.
+V4.5–V4.7 foundation contracts (basis/funding, directional, news overlays)
+exist in-code for normalization and fail-closed validation only. They do
+**not** change New Opportunities cards or enable futures/funding/directional/
+news execution. News alone never creates a trading signal.
 
 ### Callbacks
 

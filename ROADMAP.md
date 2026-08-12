@@ -172,8 +172,14 @@ MOI (`app/market_opportunity/`, `moi:*`) remains a sibling of Polymarket Opportu
   - Fail closed without approved signal formula, risk/TP-SL policy, or freshness policy
   - Does **not** invent thresholds, ranking, confidence, or complete directional execution
   - Spot paper arb / New Opportunities path unchanged; Top Opportunities remain unified
-- [ ] **V4.7** News-based signals (deferred)
-- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.6 foundation (deferred)
+- [x] **V4.7** News & fundamental intelligence **foundation**
+  - Evidence overlays on **existing** opportunities only (confirm / reject / downgrade / suppress)
+  - News alone never creates a trading signal; no separate News button
+  - Provenance required: URL, publisher/source type, timestamps, asset, dedupe key, verification
+  - Fail closed without approved source registry, freshness, or ranking policies
+  - Ambiguous labels (Gold/Oil/etc.) rejected; Bybit excluded from V4 venues
+- [ ] Later — Complete news ingest adapters / approved source registry (deferred)
+- [ ] Later — Advanced arb hardening / cross-market expansion beyond V4.4–V4.7 foundation (deferred)
 - [ ] Later — Silver / Natural Gas commodity expansion (was formerly labeled V4.3; deferred)
 - [ ] Later — Opportunity scoring calibration & paper outcome tracking (former MOI slots; deferred)
 
