@@ -1,4 +1,4 @@
-"""Telegram handlers for Market Opportunity Scanner (cached data only)."""
+"""Telegram handlers for Market Opportunity Scanner."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.database import opportunity_storage
-from app.opportunity_intel.catalog import load_top_opportunities
+from app.opportunity_intel.catalog import load_trade_candidates
 from app.opportunity_intel.categories import KNOWN_CATEGORY_IDS, KNOWN_CATEGORY_SET
 from app.opportunity_intel.settings import ALLOCATION_PRESETS_USD
 from app.opportunity_intel.models import LiveMode
@@ -68,7 +68,7 @@ from app.telegram.opportunity_intel.formatting import (
     format_alert_settings_card,
     format_filters_card,
     format_live_mode_screen,
-    format_opportunity_card,
+    format_trade_candidate_card,
     format_signal_history,
 )
 
@@ -128,7 +128,7 @@ async def show_top_opportunities(update: Update, context: ContextTypes.DEFAULT_T
     telegram_id = int(user.id)
 
     def work():
-        return load_top_opportunities(settings, telegram_id=telegram_id)
+        return load_trade_candidates(settings, telegram_id=telegram_id)
 
     result = await _offload(work)
     if result.status != "ready":
@@ -138,7 +138,7 @@ async def show_top_opportunities(update: Update, context: ContextTypes.DEFAULT_T
         return
     blocks = [result.message, ""]
     for entry in result.entries:
-        blocks.append(format_opportunity_card(entry.payload))
+        blocks.append(format_trade_candidate_card(entry.payload, entry.decision))
         blocks.append("")
     text = "\n".join(blocks).rstrip()
     await edit_or_reply(update, text, reply_markup=opportunity_inline_keyboard())

@@ -1,5 +1,37 @@
 # Changelog
 
+## V2.2.9 — Polymarket Trade Candidate Decision Layer
+
+**Branch:** `codex/v2.2.9-polymarket-trade-candidate`
+
+### Added / changed
+
+- Category-balanced active-market shortlist and Gamma tag-slug normalization;
+  politics, geopolitics, and weather are no longer crowded out by sports volume.
+- Fresh read-only Top Opportunities analysis: exact resolution rules/source,
+  current Gamma live state, CLOB history, two-sided book, entry VWAP, exit-share
+  capacity, per-market fee schedule, and net paper profit.
+- Deterministic PRE_MOVE_SETUP, ENTRY_TRIGGER, MOMENTUM_CONTINUATION,
+  EXECUTED_IMPULSE, EXIT / TAKE_PROFIT, WAIT, and SKIP states.
+- Exact-market evidence policy: one official or two independent trusted sources;
+  social sources are warning-only; conflicts force WAIT. No external publisher
+  is called without an approved adapter, and news alone never creates ENTER.
+- Ukrainian `POLYMARKET TRADE CANDIDATE` Telegram card for both on-demand Top
+  Opportunities and automatic delivery. Automatic delivery refreshes Gamma,
+  history, fees, and the two-sided CLOB book immediately before each send and
+  never falls back to the legacy card when that refresh fails. ENTER remains
+  paper-only and never places an order.
+
+### Verification
+
+- Focused Opportunity Scanner: **395 passed**.
+- Copy/Weather/Telegram/scheduler regressions: **505 passed**.
+- Full suite: **1635 passed, 2 skipped, 1 pre-existing warning**.
+- Bounded public live proof: ambiguous LoL live score → WAIT; NATO × Russia No
+  after the impulse → EXECUTED_IMPULSE / WAIT with zero-fee schedule.
+- Live Telegram restart verification: **passed** with one logical poller and a
+  successful scanner cycle; operator approved release after manual review.
+
 ## V4.10 — Scoring Policy & Ranking Enablement
 
 **Branch:** `feature/v4.10-scoring-policy-ranking-enablement`
