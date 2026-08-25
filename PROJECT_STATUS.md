@@ -152,7 +152,32 @@ Do not perform broad refactors without a proven failing acceptance test.
 - Safety defaults unchanged: real cleanup and pruning remain disabled / dry-run; no automatic VACUUM or `journal_mode` changes; backup creation is explicit and admin-confirmed.
 - Copy freshness: baseline/watermarks/`processed_copy_events`; re-enable starts a new baseline; no alerts until baseline `COMPLETE`.
 - Health: deterministic probes, admin-only System Health UX (`ADMIN_IDS`), deduplicated incidents; AI explainer off by default.
-- The real `.env` was not modified as part of V2.1 / V2.1.1 / V2.2.1 / V2.2.2 / V2.2.3 source work.
+- The real `.env` was not modified as part of V2.1 / V2.1.1 / V2.2.1 / V2.2.2 / V2.2.3 / V2.2.9 source work.
+
+### V2.2.9 — Polymarket Trade Candidate Decision Layer
+
+- Branch: `codex/v2.2.9-polymarket-trade-candidate`.
+- Implementation and automated verification complete; controlled live Telegram
+  restart passed with one logical poller and a successful scanner cycle.
+- Top Opportunities now performs bounded fresh public Gamma/CLOB reads and
+  renders the Ukrainian `POLYMARKET TRADE CANDIDATE` decision card.
+- Automatic delivery now refreshes the same facts immediately before send and
+  renders the same decision contract instead of the legacy momentum card.
+- Decision states: PRE_MOVE_SETUP, ENTRY_TRIGGER, MOMENTUM_CONTINUATION,
+  EXECUTED_IMPULSE, EXIT / TAKE_PROFIT, WAIT, SKIP.
+- ENTER requires verified rules, a forward catalyst, acceptable executable
+  price, sufficient bid-side exit shares, positive net paper P/L after the
+  official per-market fee curve and slippage, target, and invalidation.
+- Category balance includes politics, geopolitics, and weather; missing Gamma
+  `live` flags no longer invalidate otherwise active non-live markets.
+- Evidence contract requires one official or two independent trusted sources,
+  exact market/entity/date/outcome mapping, and conflict → WAIT. Runtime does
+  not scrape or invent Reuters/AP/ESPN/HLTV/Liquipedia endpoints; those adapters
+  remain fail-closed until separately verified.
+- Verification: Opportunity **395 passed**; cross-module **505 passed**; final
+  full suite **1635 passed, 2 skipped, 1 pre-existing warning**; bounded public live
+  proof passed for active LoL and NATO × Russia markets.
+- Read-only / paper-only; no trading keys, signing, wallets, or orders.
 
 ### V2.2.3 — Market Opportunity Scanner
 

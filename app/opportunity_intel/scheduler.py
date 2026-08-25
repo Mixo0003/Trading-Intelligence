@@ -190,6 +190,7 @@ async def market_opportunity_scan_job(context) -> None:
                     send_message=context.bot.send_message,
                     now=datetime.now(timezone.utc),
                     auto_alerts_enabled=True,
+                    fresh_trade_candidate_cards=True,
                 )
             finish_job_execution(
                 settings,

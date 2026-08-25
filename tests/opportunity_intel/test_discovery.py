@@ -359,8 +359,60 @@ def test_normal_and_live_classification_are_explicit():
         now=NOW,
     )
     assert result.status == ResultStatus.COMPLETE
-    assert result.markets == ()
-    assert result.diagnostics[0].code == OpportunityDiagnosticCode.MARKET_STATUS_INVALID
+    assert len(result.markets) == 1
+    assert result.markets[0].mode == ObservationMode.NORMAL
+
+
+def test_gamma_tag_slug_is_used_instead_of_numeric_transport_id():
+    market = _complete_market(
+        _event(tags=[{"id": "100265", "slug": "geopolitics"}])
+    )
+    assert market.category_ids == ("geopolitics",)
+
+
+def test_shortlist_round_robins_categories_without_changing_family_rank():
+    sports = _complete_market(
+        _event(
+            tags=[{"id": "1", "slug": "sports"}],
+            markets=[_market(volume_24h="100000")],
+        )
+    )
+    geopolitics = replace(
+        sports,
+        event_id="event-geo",
+        market_id="market-geo",
+        condition_id="condition-geo",
+        category_ids=("geopolitics",),
+        volume_24h_usd=Decimal("50000"),
+        outcomes=tuple(
+            replace(outcome, asset_id=f"geo-{outcome.index}")
+            for outcome in sports.outcomes
+        ),
+    )
+    weather = replace(
+        sports,
+        event_id="event-weather",
+        market_id="market-weather",
+        condition_id="condition-weather",
+        category_ids=("weather",),
+        volume_24h_usd=Decimal("25000"),
+        outcomes=tuple(
+            replace(outcome, asset_id=f"weather-{outcome.index}")
+            for outcome in sports.outcomes
+        ),
+    )
+    selected = shortlist_outcomes(
+        [sports, geopolitics, weather],
+        now=NOW,
+        strict_live_demand=False,
+        max_candidates=4,
+    )
+    assert [candidate.category_ids for candidate in selected] == [
+        ("sports",),
+        ("geopolitics",),
+        ("weather",),
+        ("sports",),
+    ]
 
 
 def test_normal_shortlist_balanced_thresholds_and_price_hint():

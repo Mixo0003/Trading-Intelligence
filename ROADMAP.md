@@ -107,6 +107,19 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
 - [ ] **V2.2.6** Full Polymarket Discovery and Market Normalization
 - [ ] **V2.2.7** Paper Arbitrage Intelligence
 - [ ] **V2.2.8** Notifications, Digest Mode and Final UX
+- [x] **V2.2.9** Polymarket Trade Candidate Decision Layer
+  - implementation and automated verification complete on
+    `codex/v2.2.9-polymarket-trade-candidate`
+  - fresh Top Opportunities decisions: ENTER / WAIT / EXIT / SKIP
+  - PRE_MOVE / ENTRY / MOMENTUM / EXECUTED_IMPULSE / TAKE_PROFIT stages
+  - resolution rules, official Gamma live state, CLOB entry/exit depth,
+    per-market fees, and net paper P/L
+  - exact-market evidence contract; external publisher adapters remain
+    fail-closed until individually approved and verified
+  - on-demand and automatic delivery use the same fresh decision card; failed
+    pre-send refreshes are retried and never fall back to the legacy card
+  - full suite: **1635 passed, 2 skipped, 1 warning**
+  - controlled live Telegram restart passed with one logical poller
 
 ## Later (not started) / V2.2.3 mandatory backlog
 

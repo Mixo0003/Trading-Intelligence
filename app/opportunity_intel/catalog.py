@@ -20,6 +20,11 @@ from app.opportunity_intel.models import (
     ScannerStatus,
     SignalStatus,
 )
+from app.opportunity_intel.live_trade_analysis import (
+    LiveTradeAnalysisFailure,
+    analyze_live_trade_snapshot,
+    fetch_live_trade_snapshot,
+)
 from app.opportunity_intel.payload import DeliveryCardPayload, build_delivery_card_payload
 from app.opportunity_intel.settings import (
     OpportunityScannerSettings,
@@ -31,6 +36,7 @@ from app.opportunity_intel.top_eligibility import (
     evaluate_top_opportunity_eligibility,
 )
 from app.polymarket.client import PolymarketClient
+from app.opportunity_intel.trade_candidate import TradeAction, TradeCandidateDecision
 
 TOP_OPPORTUNITIES_LIMIT = 3
 
@@ -52,6 +58,21 @@ class CatalogEntry:
 class TopOpportunitiesResult:
     status: str
     entries: tuple[CatalogEntry, ...]
+    message: str
+
+
+@dataclass(frozen=True)
+class TradeCandidateCatalogEntry:
+    signal: OpportunitySignal
+    payload: DeliveryCardPayload
+    decision: TradeCandidateDecision
+    score: Decimal
+
+
+@dataclass(frozen=True)
+class TradeCandidatesResult:
+    status: str
+    entries: tuple[TradeCandidateCatalogEntry, ...]
     message: str
 
 
@@ -280,4 +301,93 @@ def load_top_opportunities(
         status="ready",
         entries=tuple(selected),
         message=f"Top {len(selected)} cached opportunities",
+    )
+
+
+def load_trade_candidates(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    now: datetime | None = None,
+    limit: int = TOP_OPPORTUNITIES_LIMIT,
+    gamma_client: Any | None = None,
+    history_client: Any | None = None,
+    book_client: Any | None = None,
+) -> TradeCandidatesResult:
+    """Upgrade current Top entries with fresh V2.2.9 execution decisions.
+
+    The existing persisted Top contract remains backward compatible. This path
+    performs fresh public reads and never writes, sends, or places an order.
+    """
+    clock = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    base = load_top_opportunities(
+        settings,
+        telegram_id=telegram_id,
+        now=clock,
+        limit=limit,
+        gamma_client=gamma_client,
+    )
+    if base.status != "ready":
+        return TradeCandidatesResult(base.status, (), base.message)
+
+    user_settings = resolve_user_settings(settings, telegram_id)
+    selected: list[TradeCandidateCatalogEntry] = []
+    for entry in base.entries:
+        signal = entry.signal
+        bundle = opportunity_storage.load_persisted_observation_bundle(
+            settings,
+            asset_id=signal.asset_id,
+            observed_at=signal.source_observed_at,
+        )
+        if bundle is None:
+            continue
+        snapshot = fetch_live_trade_snapshot(
+            settings,
+            signal=signal,
+            bundle=bundle,
+            now=clock,
+            gamma_client=gamma_client,
+            history_client=history_client,
+            book_client=book_client,
+        )
+        if isinstance(snapshot, LiveTradeAnalysisFailure):
+            continue
+        analysis = analyze_live_trade_snapshot(
+            signal=signal,
+            bundle=bundle,
+            snapshot=snapshot,
+            allocation_usd=user_settings.paper_allocation_usd,
+            maximum_slippage=user_settings.maximum_slippage,
+            now=clock,
+        )
+        if isinstance(analysis, LiveTradeAnalysisFailure):
+            continue
+        if analysis.decision.action == TradeAction.SKIP:
+            continue
+        selected.append(
+            TradeCandidateCatalogEntry(
+                signal=signal,
+                payload=analysis.payload,
+                decision=analysis.decision,
+                score=signal.score,
+            )
+        )
+
+    if not selected:
+        return TradeCandidatesResult(
+            status="empty",
+            entries=(),
+            message="Scanner is ready. No current markets pass the trade-candidate safety checks.",
+        )
+    action_rank = {
+        TradeAction.ENTER: 0,
+        TradeAction.EXIT: 1,
+        TradeAction.WAIT: 2,
+        TradeAction.SKIP: 3,
+    }
+    selected.sort(key=lambda item: (action_rank[item.decision.action], -item.score))
+    return TradeCandidatesResult(
+        status="ready",
+        entries=tuple(selected[: max(1, min(limit, TOP_OPPORTUNITIES_LIMIT))]),
+        message=f"Top {len(selected[:limit])} verified trade candidates",
     )

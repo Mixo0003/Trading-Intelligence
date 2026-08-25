@@ -44,6 +44,16 @@ _CURSOR_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{1,512}$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _CATEGORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 
+_SHORTLIST_CATEGORY_FAMILIES: tuple[tuple[str, frozenset[str]], ...] = (
+    ("weather", frozenset({"weather", "climate", "climate-weather", "temperature"})),
+    ("geopolitics", frozenset({"geopolitics", "nato", "ukraine", "foreign-policy"})),
+    ("politics", frozenset({"politics", "elections", "world"})),
+    ("sports", frozenset({"sports", "esports", "e-sports"})),
+    ("crypto", frozenset({"crypto", "finance"})),
+    ("business", frozenset({"business", "tech", "science"})),
+    ("culture", frozenset({"pop-culture", "music", "movies", "television"})),
+)
+
 
 class ResultStatus(StrEnum):
     NOT_STARTED = "NOT_STARTED"
@@ -764,7 +774,39 @@ def shortlist_outcomes(
             item.asset_id,
         )
     )
-    return tuple(candidates[:max_candidates])
+    # Preserve the activity ranking inside each family, but round-robin the
+    # represented families so one high-volume vertical cannot consume every
+    # bounded CLOB evaluation slot. This changes coverage, not signal scoring.
+    buckets: dict[str, list[OutcomeCandidate]] = {}
+    for candidate in candidates:
+        family = _shortlist_category_family(candidate.category_ids)
+        buckets.setdefault(family, []).append(candidate)
+    family_order = tuple(buckets)
+    balanced: list[OutcomeCandidate] = []
+    offsets = {family: 0 for family in family_order}
+    while len(balanced) < max_candidates:
+        added = False
+        for family in family_order:
+            offset = offsets[family]
+            bucket = buckets[family]
+            if offset >= len(bucket):
+                continue
+            balanced.append(bucket[offset])
+            offsets[family] = offset + 1
+            added = True
+            if len(balanced) >= max_candidates:
+                break
+        if not added:
+            break
+    return tuple(balanced)
+
+
+def _shortlist_category_family(category_ids: tuple[str, ...]) -> str:
+    categories = frozenset(category_ids)
+    for family, tags in _SHORTLIST_CATEGORY_FAMILIES:
+        if categories & tags:
+            return family
+    return "other"
 
 
 class CompleteDiscoveryCache:
@@ -1045,7 +1087,9 @@ def _category_ids(value: Any) -> tuple[str, ...] | None:
     for tag in value:
         if not isinstance(tag, dict):
             return None
-        candidate = tag.get("id") or tag.get("slug")
+        # Gamma's numeric tag IDs are transport identities. Telegram category
+        # filters and cross-category coverage use stable human-readable slugs.
+        candidate = tag.get("slug") or tag.get("id")
         if not isinstance(candidate, (str, int)) or isinstance(candidate, bool):
             return None
         text = str(candidate)
@@ -1102,7 +1146,7 @@ def _datetime_value(value: Any) -> datetime | None:
 
 def _classify_mode(
     event: dict[str, Any], market: dict[str, Any]
-) -> ObservationMode | None:
+) -> ObservationMode:
     flags = [
         value
         for value in (
@@ -1113,8 +1157,6 @@ def _classify_mode(
         )
         if isinstance(value, bool)
     ]
-    if not flags:
-        return None
     return (
         ObservationMode.LIVE_STRICT
         if any(flags)
