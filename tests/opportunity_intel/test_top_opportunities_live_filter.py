@@ -134,7 +134,7 @@ def test_keeps_valid_current_live_opportunity(settings):
     assert result.status == "ready"
     assert len(result.entries) == 1
     text = format_opportunity_card(result.entries[0].payload, now=NOW)
-    assert text.startswith("MARKET OPPORTUNITY")
+    assert text.startswith("📈 MOMENTUM СИГНАЛ")
     assert "opportunity_uid" not in text
     assert "event_slug" not in text
     assert "wave_at" not in text

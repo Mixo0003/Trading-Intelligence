@@ -78,6 +78,10 @@ async def _renew_lock_loop(
 async def market_opportunity_scan_job(context) -> None:
     """Return quickly; blocking scan/delivery work runs off the event loop."""
     settings: Settings = context.application.bot_data["settings"]
+    from app.opportunity_intel.live_edge.scheduler import schedule_live_edge_jobs
+
+    # Arm Live Edge in this process if the toggle was turned ON after startup.
+    schedule_live_edge_jobs(context.application, settings)
     if not scanner_armed(settings):
         return
 

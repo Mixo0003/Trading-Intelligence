@@ -18,9 +18,9 @@ from app.opportunity_intel.display_labels import (
     alert_mode_label,
     live_mode_label,
 )
-from app.opportunity_intel.models import LiveMode, ObservationMode
+from app.opportunity_intel.models import LiveMode, MovementDirection, ObservationMode
 from app.opportunity_intel.payload import DeliveryCardPayload
-from app.opportunity_intel.reason_text import reason_codes_to_text
+from app.opportunity_intel.reason_text import reason_codes_to_uk_lines
 from app.opportunity_intel.status_view import ScannerStatusView
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
@@ -35,59 +35,51 @@ def sanitize_plain(text: str, *, maximum: int = 500) -> str:
     return cleaned[:maximum]
 
 
+def market_title_plain(text: str, *, maximum: int = 400) -> str:
+    """Keep the original Polymarket title; strip only control characters."""
+    return _CONTROL_RE.sub("", text.replace("\r", ""))[:maximum]
+
+
 def format_opportunity_card(payload: DeliveryCardPayload, *, now: datetime | None = None) -> str:
-    """Human-readable Opportunity alert / Top Opportunities card.
+    """Short Ukrainian Momentum / Top Opportunities card.
 
     Never emits raw JSON, dict repr, internal UIDs, or bare reason_codes.
+    Market titles stay exactly as Polymarket provided them.
     """
-    _ = now  # Absolute signal/end timestamps; clock reserved for API compat.
-    signal_family = _signal_family_label(payload.signal_family.value)
+    _ = now
     lines = [
-        "MARKET OPPORTUNITY",
-        f"{signal_family} (analysis only)",
+        "📈 MOMENTUM СИГНАЛ",
+        market_title_plain(payload.question, maximum=400),
+        f"🎯 Сторона: {sanitize_plain(payload.outcome, maximum=80)}",
+        f"💵 Вхід: {_pp(payload.execution_vwap)}",
+        f"📊 Score: {_score(payload.canonical_score)}",
+        (
+            f"💰 ${_money(payload.allocation_usd)}: "
+            f"VWAP {_pp(payload.execution_vwap)}, slippage {_pct(payload.slippage)}"
+        ),
+        "🧠 ВЕРДИКТ:",
+        _momentum_verdict(payload),
+        "Чому:",
     ]
-    if payload.mode == ObservationMode.LIVE_STRICT:
-        lines.extend(["LIVE / IN-PLAY", "EXTRA SAFETY CHECKS"])
-    lines.extend(
-        [
-            "",
-            f"Market: {sanitize_plain(payload.question, maximum=400)}",
-            f"Outcome: {sanitize_plain(payload.outcome, maximum=80)}",
-            f"Direction: {payload.direction.value}",
-            f"Score: {_score(payload.canonical_score)} / 100",
-            f"Signal type: {signal_family}",
-            f"Why this signal triggered: {reason_codes_to_text(payload.reason_codes)}",
-            "",
-            "Price",
-            f"Trader/execution price: {_pp(payload.execution_vwap)}",
-            f"Midpoint: {_pp(payload.midpoint)}",
-            f"Best bid: {_pp(payload.best_bid)}",
-            f"Best ask: {_pp(payload.best_ask)}",
-            "",
-            "Execution",
-            f"Proposed allocation: ${_money(payload.allocation_usd)}",
-            f"Executable ask depth: ${_money(payload.executable_ask_depth_usd)}",
-            f"Slippage: {_pct(payload.slippage)}",
-            "",
-            "Liquidity",
-            f"Total liquidity: ${_money(payload.liquidity_usd)}",
-            f"24h volume: ${_money(payload.volume_24h_usd)}",
-            "",
-            f"Signal time (UTC): {_ts_utc(payload.signal_at)}",
-            f"Market end (UTC): {_ts_utc(payload.end_at)}",
-            (
-                "Disclaimer: analysis-only paper view of executable momentum and "
-                "book quality. Not fair value, not arbitrage, no profit promise, "
-                "and not a claim of true event probability."
-            ),
-        ]
-    )
+    for reason in reason_codes_to_uk_lines(payload.reason_codes, limit=3):
+        lines.append(f"✅ {reason}")
     if payload.market_link:
-        lines.append(f"Open market: {payload.market_link}")
+        lines.extend(["🔗 Відкрити на Polymarket", payload.market_link])
     text = "\n".join(lines)
     if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
         text = text[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
     return text
+
+
+def _momentum_verdict(payload: DeliveryCardPayload) -> str:
+    moving = (
+        "Ціна швидко рухається вгору."
+        if payload.direction == MovementDirection.UP
+        else "Ціна швидко рухається вниз."
+    )
+    if payload.mode == ObservationMode.LIVE_STRICT:
+        return f"Live-ринок. {moving}"
+    return moving
 
 
 def format_filters_card(scanner) -> str:
@@ -110,6 +102,11 @@ def format_filters_card(scanner) -> str:
             f"Maximum slippage: {_pct(scanner.maximum_slippage)}",
             f"Categories: {categories}",
             f"Live mode: {live_mode_label(scanner.live_mode)}",
+            (
+                "🔥 Live Edge Opportunities: "
+                f"{'✅ ON' if getattr(scanner, 'live_edge_enabled', False) else '❌ OFF'}"
+            ),
+            "Find underpriced live markets using verified event data.",
             "",
             "Filters decide which markets qualify.",
             "Alert timing lives under Alert Settings.",
@@ -181,7 +178,7 @@ def format_signal_history(signals, markets_by_asset: dict[str, tuple[str, str]])
         title, outcome = markets_by_asset.get(signal.asset_id, ("Market", "—"))
         lines.extend(
             [
-                f"{sanitize_plain(title, maximum=120)} ({sanitize_plain(outcome, maximum=40)})",
+                f"{market_title_plain(title, maximum=120)} ({sanitize_plain(outcome, maximum=40)})",
                 (
                     f"Score { _score(signal.score) } | {signal.direction.value} | "
                     f"{'LIVE' if signal.mode.value == 'LIVE_STRICT' else 'NORMAL'} | "
@@ -208,6 +205,18 @@ def format_live_mode_screen(*, live_mode: LiveMode) -> str:
         [
             "Live Mode",
             f"Current status: {live_mode_label(live_mode)}",
+        ]
+    )
+
+
+def format_live_edge_screen(*, enabled: bool) -> str:
+    status = "✅ ON" if enabled else "❌ OFF"
+    return "\n".join(
+        [
+            "🔥 Live Edge Opportunities",
+            f"Current status: {status}",
+            "",
+            "Find underpriced live markets using verified event data.",
         ]
     )
 
@@ -303,5 +312,6 @@ __all__ = [
     "format_live_mode_help",
     "format_opportunity_card",
     "format_signal_history",
+    "market_title_plain",
     "sanitize_plain",
 ]

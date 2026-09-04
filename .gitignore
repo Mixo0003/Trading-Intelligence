@@ -1,8 +1,15 @@
 .env
 *.sqlite3
+*.sqlite
 *.db
+*.db-wal
+*.db-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.bak
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 venv/
 logs/

@@ -58,39 +58,19 @@ def test_alert_text_is_human_readable_not_json():
     text = format_opportunity_card(_payload(), now=NOW)
     expected = "\n".join(
         [
-            "MARKET OPPORTUNITY",
-            "Executable Momentum (analysis only)",
-            "",
-            "Market: Will it rain in Paris?",
-            "Outcome: Yes",
-            "Direction: UP",
-            "Score: 81.5 / 100",
-            "Signal type: Executable Momentum",
-            "Why this signal triggered: Fast 5-minute move; Tight spread",
-            "",
-            "Price",
-            "Trader/execution price: 0.5612",
-            "Midpoint: 0.5500",
-            "Best bid: 0.5400",
-            "Best ask: 0.5600",
-            "",
-            "Execution",
-            "Proposed allocation: $250.00",
-            "Executable ask depth: $1,500.00",
-            "Slippage: 1.23%",
-            "",
-            "Liquidity",
-            "Total liquidity: $100,000.00",
-            "24h volume: $250,000.00",
-            "",
-            "Signal time (UTC): 2026-08-03 18:00:00 UTC",
-            "Market end (UTC): 2026-08-04 02:00:00 UTC",
-            (
-                "Disclaimer: analysis-only paper view of executable momentum and "
-                "book quality. Not fair value, not arbitrage, no profit promise, "
-                "and not a claim of true event probability."
-            ),
-            "Open market: https://polymarket.com/event/market-one",
+            "📈 MOMENTUM СИГНАЛ",
+            "Will it rain in Paris?",
+            "🎯 Сторона: Yes",
+            "💵 Вхід: 0.5612",
+            "📊 Score: 81.5",
+            "💰 $250.00: VWAP 0.5612, slippage 1.23%",
+            "🧠 ВЕРДИКТ:",
+            "Ціна швидко рухається вгору.",
+            "Чому:",
+            "✅ швидкий рух за 5 хвилин",
+            "✅ вузький спред",
+            "🔗 Відкрити на Polymarket",
+            "https://polymarket.com/event/market-one",
         ]
     )
     assert text == expected
@@ -109,5 +89,6 @@ def test_alert_hides_link_when_slug_invalid_and_omits_none():
         _payload(event_slug="bad slug with spaces"), now=NOW
     )
     assert "Open market:" not in text
+    assert "🔗 Відкрити на Polymarket" not in text
     assert "None" not in text
     assert "Polymarket:" not in text

@@ -18,6 +18,7 @@ from app.opportunity_intel.scheduler import schedule_opportunity_jobs
 from app.opportunity_intel.settings_edit import (
     ALERT_FIELD_KEYS,
     FILTER_FIELD_KEYS,
+    apply_live_edge_immediate,
     apply_live_mode_immediate,
     cancel_confirmation,
     create_edit_confirmation,
@@ -49,6 +50,9 @@ from app.telegram.inline_menus import (
     CB_OSET_CONFIRM,
     CB_OSET_EDIT,
     CB_OSET_LIVE,
+    CB_OSET_LIVE_EDGE,
+    CB_OSET_LIVE_EDGE_OFF,
+    CB_OSET_LIVE_EDGE_ON,
     CB_OSET_RESET,
     CB_OSET_RESET_NO,
     CB_OSET_RESET_OK,
@@ -59,6 +63,7 @@ from app.telegram.inline_menus import (
     opportunity_confirm_keyboard,
     opportunity_filters_keyboard,
     opportunity_inline_keyboard,
+    opportunity_live_edge_keyboard,
     opportunity_live_mode_keyboard,
     opportunity_reset_confirm_keyboard,
     opportunity_settings_keyboard,
@@ -67,6 +72,7 @@ from app.telegram.nav import edit_or_reply, open_main_menu
 from app.telegram.opportunity_intel.formatting import (
     format_alert_settings_card,
     format_filters_card,
+    format_live_edge_screen,
     format_live_mode_screen,
     format_opportunity_card,
     format_signal_history,
@@ -131,16 +137,36 @@ async def show_top_opportunities(update: Update, context: ContextTypes.DEFAULT_T
         return load_top_opportunities(settings, telegram_id=telegram_id)
 
     result = await _offload(work)
-    if result.status != "ready":
+    live_edge_blocks: list[str] = []
+    sub = await _offload(lambda: get_or_default_subscription(settings, telegram_id))
+    if sub.settings.live_edge_enabled:
+        from app.opportunity_intel.live_edge.catalog import load_live_edge_cards
+
+        cards = await _offload(
+            lambda: load_live_edge_cards(
+                settings, telegram_id=telegram_id, user_settings=sub.settings
+            )
+        )
+        live_edge_blocks = [card.text for card in cards]
+    if result.status != "ready" and not live_edge_blocks:
         await edit_or_reply(
             update, result.message, reply_markup=opportunity_inline_keyboard()
         )
         return
-    blocks = [result.message, ""]
-    for entry in result.entries:
-        blocks.append(format_opportunity_card(entry.payload))
+    blocks: list[str] = []
+    if result.status == "ready":
+        blocks.append(result.message)
         blocks.append("")
-    text = "\n".join(blocks).rstrip()
+        for entry in result.entries:
+            blocks.append(format_opportunity_card(entry.payload))
+            blocks.append("")
+    elif live_edge_blocks:
+        blocks.append(result.message)
+        blocks.append("")
+    for text_block in live_edge_blocks:
+        blocks.append(text_block)
+        blocks.append("")
+    text = "\n".join(blocks).rstrip() or result.message
     await edit_or_reply(update, text, reply_markup=opportunity_inline_keyboard())
 
 
@@ -242,6 +268,53 @@ async def _set_live_mode_from_callback(
     )
 
 
+async def show_live_edge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings = _settings(context)
+    user = update.effective_user
+    if user is None:
+        return
+
+    def work():
+        sub = get_or_default_subscription(settings, int(user.id))
+        return format_live_edge_screen(enabled=sub.settings.live_edge_enabled)
+
+    text = await _offload(work)
+    await edit_or_reply(
+        update,
+        text,
+        reply_markup=opportunity_live_edge_keyboard(),
+    )
+
+
+async def _set_live_edge_from_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    enabled: bool,
+) -> None:
+    settings = _settings(context)
+    user = update.effective_user
+    if user is None:
+        return
+    operator_id = int(user.id)
+
+    def work():
+        return apply_live_edge_immediate(
+            settings, telegram_id=operator_id, enabled=enabled
+        )
+
+    sub = await _offload(work)
+    from app.opportunity_intel.live_edge.scheduler import schedule_live_edge_jobs
+
+    schedule_live_edge_jobs(context.application, settings)
+    text = format_live_edge_screen(enabled=sub.settings.live_edge_enabled)
+    await edit_or_reply(
+        update,
+        text,
+        reply_markup=opportunity_live_edge_keyboard(),
+    )
+
+
 def _remove_opportunity_scan_jobs(application) -> None:
     from app.opportunity_intel.scheduler import (
         OPPORTUNITY_SCAN_JOB_NAME,
@@ -274,7 +347,24 @@ async def show_signal_history(update: Update, context: ContextTypes.DEFAULT_TYPE
             state = opportunity_storage.load_market_state(settings, signal.asset_id)
             if state is not None:
                 markets[signal.asset_id] = (state.question, state.outcome)
-        return format_signal_history(signals, markets)
+        text = format_signal_history(signals, markets)
+        user = update.effective_user
+        if user is not None:
+            from app.database import live_edge_storage
+            from app.opportunity_intel.live_edge.formatting import (
+                format_live_edge_history_block,
+            )
+            from app.opportunity_intel.settings_edit import get_or_default_subscription
+
+            sub = get_or_default_subscription(settings, int(user.id))
+            if sub.settings.live_edge_enabled:
+                rows = live_edge_storage.list_history(
+                    settings, telegram_id=int(user.id), limit=8
+                )
+                extra = format_live_edge_history_block(rows)
+                if extra:
+                    text = f"{text}\n\n{extra}"
+        return text
 
     text = await _offload(work)
     await edit_or_reply(update, text, reply_markup=opportunity_inline_keyboard())
@@ -341,6 +431,9 @@ async def handle_opportunity_callback(
         CB_OSET_RESET_NO,
         CB_OSET_CAT,
         CB_OSET_LIVE,
+        CB_OSET_LIVE_EDGE,
+        CB_OSET_LIVE_EDGE_ON,
+        CB_OSET_LIVE_EDGE_OFF,
         CB_OSET_ALERT,
     }:
         await handle_opportunity_settings_flow(update, context, data)
@@ -421,6 +514,16 @@ async def handle_opportunity_settings_flow(
 
     if data == CB_OSET_LIVE:
         await show_live_mode(update, context, back_callback=CB_OPP_FILTERS)
+        return
+
+    if data == CB_OSET_LIVE_EDGE:
+        await show_live_edge(update, context)
+        return
+    if data == CB_OSET_LIVE_EDGE_ON:
+        await _set_live_edge_from_callback(update, context, enabled=True)
+        return
+    if data == CB_OSET_LIVE_EDGE_OFF:
+        await _set_live_edge_from_callback(update, context, enabled=False)
         return
 
     if data == CB_OSET_ALERT:

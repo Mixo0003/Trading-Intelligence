@@ -372,11 +372,11 @@ Wallet connection, order placement, automatic trading, and automatic copying rem
 
 ## Highest-priority next task
 
-V4.9 verified news ingest & source registry is **merged**. V4.10 scoring policy
-& ranking enablement is in progress on
-`feature/v4.10-scoring-policy-ranking-enablement`. Prefer the next bounded
-slice only under an explicit operator prompt. Do not invent product-default
-weights, endpoints, or TTLs. Do not enable scanner/delivery without approval.
+V2.4.4 Live Edge Opportunities is complete on
+`feature/v2.4.4-live-edge-opportunities` and frozen except for real bugs.
+Short Ukrainian Telegram cards are the user-facing format. V4.x remains paused
+and must not be mixed into this release.
+
 ## Fresh Cursor context startup prompt
 
 ```text

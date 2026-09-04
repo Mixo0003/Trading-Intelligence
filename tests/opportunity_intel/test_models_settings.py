@@ -56,6 +56,7 @@ def test_balanced_defaults_are_exact_and_immutable():
     assert value.maximum_slippage == BALANCED_MAXIMUM_SLIPPAGE
     assert value.paper_allocation_usd == BALANCED_PAPER_ALLOCATION_USD
     assert value.live_mode == LiveMode.OFF
+    assert value.live_edge_enabled is False
     assert value.alert_mode == AlertMode.ON_DEMAND_ONLY
     assert value.cooldown_seconds == BALANCED_COOLDOWN_SECONDS
     assert value.categories == CategoryAllowlist()

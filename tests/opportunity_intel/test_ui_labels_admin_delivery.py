@@ -436,8 +436,8 @@ def test_opportunity_card_hides_strict_enum_name():
         source_observed_at=now,
     )
     text = format_opportunity_card(payload, now=now)
-    assert "LIVE / IN-PLAY" in text
-    assert "EXTRA SAFETY CHECKS" in text
+    assert "Live-ринок" in text
+    assert "EXTRA SAFETY CHECKS" not in text
     assert "STRICT" not in text
 
 

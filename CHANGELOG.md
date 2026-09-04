@@ -1,5 +1,46 @@
 # Changelog
 
+## V2.4.4 — Live Edge Opportunities
+
+**Branch:** `feature/v2.4.4-live-edge-opportunities`
+
+### Added / changed
+
+- Optional per-user **Live Edge Opportunities** toggle in Top Opportunities Filters
+  (default **OFF**). Existing Opportunity Scanner scoring, shortlist, and
+  Top Opportunities path are unchanged when the toggle is OFF.
+- Isolated `app/opportunity_intel/live_edge/` branch: independent Gamma discovery
+  (not sports-only, no 100-outcome shortlist, no 6-hour remaining-time gate),
+  category adapters, event matching, conservative edge/EV, Ukrainian cards.
+- Production live-state providers (fail closed when empty/stale): Leaguepedia
+  cargoquery (lol.fandom.com) for named LoL series state; BO3.gg widget-matches
+  for CS2; OpenDota live (named Dota only); TheSportsDB livescore; MLB Stats API;
+  OpenLigaDB; Binance public spot; NWS METAR via Weather Intelligence.
+  Ordered per-sport fallback: LoL Leaguepedia → LoL Esports (optional key) →
+  PandaScore (optional ``LIVE_ESPORTS_PROVIDER_API_KEY``; free REST = named
+  running series, not in-map frames) → liquipedia.net; CS2 BO3 → PandaScore →
+  liquipedia.net; Dota OpenDota → PandaScore → liquipedia.net.
+  Later providers may replace a same-event snapshot only when they add
+  verified in-map/round metrics and do not disagree; conflicts stay
+  ``SOURCE_CONFLICT`` (no BUY).
+  Liquipedia.net cargoquery remains disabled (verified). Riot ``getLive`` remains
+  HTTP 403 without a working key. PandaScore without a token is AUTH_REQUIRED.
+- Evidence tiers HIGH/MEDIUM/LOW; BUY requires HIGH. Remaining-map combinatorics
+  instead of a hardcoded 2–0 = 95% table. CLOB `/fee-rate` used when it returns
+  a verified `base_fee`; otherwise fee is labeled unavailable.
+- Signal types: live map/game winner, live match, near-resolution, general,
+  WAIT candidates with trigger monitoring.
+- Additive `live_edge_*` SQLite tables. Analysis/alerts only — no real trading.
+- Optional INSTANT WATCH Telegram notices (cap 3 per user / 30 minutes, fingerprint
+  dedupe). BUY/WAIT still take priority. CLOB quotes retry modest future-timestamp
+  skew; empty books stay unquoted.
+- Scan-lock renew during long cycles; batch signal persist; SQLite busy timeout
+  with locked-write retry. Delivery does not invent BUY.
+- Short Ukrainian Telegram cards for WATCH / WAIT / BUY / TOO LATE and Momentum /
+  Top Opportunities. Original Polymarket titles are preserved. Validated
+  Polymarket links use ``🔗 Відкрити на Polymarket``. Technical provider/evidence
+  copy stays in logs and storage, not on normal cards.
+
 ## V4.10 — Scoring Policy & Ranking Enablement
 
 **Branch:** `feature/v4.10-scoring-policy-ranking-enablement`

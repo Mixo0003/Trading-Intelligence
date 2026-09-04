@@ -86,6 +86,18 @@ def test_empty_book_missing_sides():
     assert result.diagnostic_code == OpportunityDiagnosticCode.BOOK_EMPTY
 
 
+def test_empty_book_zero_levels_not_future_timestamp():
+    result = validate_public_book_payload(
+        _payload(bids=[], asks=[], timestamp=1785191932003),
+        requested_asset=ASSET,
+        mode=ObservationMode.NORMAL,
+        received_at=1000.0,
+    )
+    assert isinstance(result, BookAdapterFailure)
+    assert result.source_code == "empty_book"
+    assert result.diagnostic_code == OpportunityDiagnosticCode.BOOK_EMPTY
+
+
 def test_one_sided_book():
     result = validate_public_book_payload(
         _payload(asks=[]),
@@ -191,6 +203,40 @@ def test_public_client_uses_unauthenticated_book_endpoint():
     )
     assert isinstance(result, BookAdapterSuccess)
     assert result.status == ResultStatus.COMPLETE
+
+
+def test_public_client_retries_small_future_timestamp():
+    response = MagicMock()
+    response.status_code = 200
+    response.request_count = 1
+    response.json.return_value = _payload(timestamp=1005.0)
+
+    client = PublicOrderBookClient(
+        base_url="https://clob.polymarket.com",
+        request_get=lambda url, **kwargs: response,
+    )
+    result = client.fetch(
+        ASSET, mode=ObservationMode.NORMAL, received_at=1000.0
+    )
+    assert isinstance(result, BookAdapterSuccess)
+    assert result.book.best_ask == pytest.approx(0.52)
+
+
+def test_public_client_rejects_large_future_timestamp():
+    response = MagicMock()
+    response.status_code = 200
+    response.request_count = 1
+    response.json.return_value = _payload(timestamp=1200.0)
+
+    client = PublicOrderBookClient(
+        base_url="https://clob.polymarket.com",
+        request_get=lambda url, **kwargs: response,
+    )
+    result = client.fetch(
+        ASSET, mode=ObservationMode.NORMAL, received_at=1000.0
+    )
+    assert isinstance(result, BookAdapterFailure)
+    assert result.source_code == "future_timestamp"
 
 
 def test_map_book_failure_codes():

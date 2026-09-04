@@ -95,6 +95,13 @@ V2.2.x work uses numbered versions such as **V2.2.1**, **V2.2.2**, and **V2.2.3*
   - Scheduler with timeout containment; shared CLOB budget 50; Gamma budget 10; health
   - Additive migrations `opportunity_intel_v1` + `v2_resumable_discovery` + `v3_persisted_catalog`
   - See `docs/MARKET_OPPORTUNITY_SCANNER.md`
+- [x] **V2.4.4** Live Edge Opportunities (`feature/v2.4.4-live-edge-opportunities`; frozen except real bugs)
+  - Optional toggle in Top Opportunities Settings; default OFF
+  - Isolated live-edge module parallel to existing Opportunity Scanner
+  - Broad active-Polymarket discovery; fail-closed evaluators without verified live state
+  - Map/Game Winner, Near Resolution, WAIT triggers; short Ukrainian alerts; original market titles
+  - Named LoL series via Leaguepedia; CS2 via BO3.gg; Dota via OpenDota (named teams); optional PandaScore key for named running series (not free-tier in-map)
+  - Optional INSTANT WATCH notices; validated Polymarket links; no real trading
 - [ ] **Next major intelligence direction — Arbitrage Intelligence** (backlog only; not V2.2.3)
   - same-market YES/NO inconsistencies
   - mutually exclusive outcome inconsistencies

@@ -99,6 +99,7 @@ _AUDITABLE_SETTING_KEYS = frozenset(
         "paper_allocation_usd",
         "categories",
         "live_mode",
+        "live_edge_enabled",
         "cooldown_seconds",
         "alert_mode",
         "quiet_hours",
@@ -314,6 +315,12 @@ def _ensure_opportunity_columns(connection: sqlite3.Connection) -> None:
         ("baseline_reset_code", "TEXT"),
     ):
         _ensure_column(connection, "opportunity_market_state", column, col_type)
+    _ensure_column(
+        connection,
+        "opportunity_subscriptions",
+        "live_edge_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
 
 
 def _ensure_delivery_foundations(connection: sqlite3.Connection) -> None:
@@ -1055,6 +1062,7 @@ def _settings_payload(value: OpportunityScannerSettings) -> dict[str, Any]:
             "category_ids": sorted(value.categories.category_ids),
         },
         "live_mode": value.live_mode.value,
+        "live_edge_enabled": bool(value.live_edge_enabled),
         "cooldown_seconds": value.cooldown_seconds,
         "alert_mode": value.alert_mode.value,
         "quiet_hours": (
@@ -1094,6 +1102,7 @@ def _settings_from_payload(payload: dict[str, Any]) -> OpportunityScannerSetting
             category_ids=frozenset(categories_payload["category_ids"]),
         ),
         live_mode=LiveMode(payload["live_mode"]),
+        live_edge_enabled=bool(payload.get("live_edge_enabled", False)),
         cooldown_seconds=int(payload["cooldown_seconds"]),
         alert_mode=AlertMode(payload["alert_mode"]),
         quiet_hours=quiet,
@@ -1133,11 +1142,11 @@ def save_subscription(
                     minimum_liquidity_usd, minimum_24h_volume_usd,
                     maximum_relative_spread, maximum_absolute_spread,
                     maximum_slippage, paper_allocation_usd,
-                    all_categories, category_ids_json, live_mode,
+                    all_categories, category_ids_json, live_mode, live_edge_enabled,
                     cooldown_seconds, alert_mode, quiet_start, quiet_end,
                     timezone_name, created_at, updated_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1154,6 +1163,7 @@ def save_subscription(
                     int(categories["all_categories"]),
                     json.dumps(categories["category_ids"], separators=(",", ":")),
                     scanner.live_mode.value,
+                    int(scanner.live_edge_enabled),
                     scanner.cooldown_seconds,
                     scanner.alert_mode.value,
                     quiet["start"] if quiet else None,
@@ -1181,7 +1191,7 @@ def save_subscription(
                 minimum_liquidity_usd = ?, minimum_24h_volume_usd = ?,
                 maximum_relative_spread = ?, maximum_absolute_spread = ?,
                 maximum_slippage = ?, paper_allocation_usd = ?,
-                all_categories = ?, category_ids_json = ?, live_mode = ?,
+                all_categories = ?, category_ids_json = ?, live_mode = ?, live_edge_enabled = ?,
                 cooldown_seconds = ?, alert_mode = ?, quiet_start = ?,
                 quiet_end = ?, timezone_name = ?, updated_at = ?
             WHERE telegram_id = ? AND revision = ?
@@ -1199,6 +1209,7 @@ def save_subscription(
                 int(categories["all_categories"]),
                 json.dumps(categories["category_ids"], separators=(",", ":")),
                 scanner.live_mode.value,
+                int(scanner.live_edge_enabled),
                 scanner.cooldown_seconds,
                 scanner.alert_mode.value,
                 quiet["start"] if quiet else None,
@@ -2074,6 +2085,11 @@ def _subscription_from_row(row: sqlite3.Row) -> OpportunitySubscription:
                 "category_ids": categories,
             },
             "live_mode": row["live_mode"],
+            "live_edge_enabled": bool(
+                row["live_edge_enabled"]
+            )
+            if "live_edge_enabled" in row.keys()
+            else False,
             "cooldown_seconds": row["cooldown_seconds"],
             "alert_mode": row["alert_mode"],
             "quiet_hours": quiet,
@@ -3265,6 +3281,7 @@ _TABLE_DDL = (
         all_categories INTEGER NOT NULL CHECK(all_categories IN (0, 1)),
         category_ids_json TEXT NOT NULL,
         live_mode TEXT NOT NULL CHECK(live_mode IN ('OFF', 'STRICT')),
+        live_edge_enabled INTEGER NOT NULL DEFAULT 0 CHECK(live_edge_enabled IN (0, 1)),
         cooldown_seconds INTEGER NOT NULL
             CHECK(cooldown_seconds BETWEEN 900 AND 86400),
         alert_mode TEXT NOT NULL

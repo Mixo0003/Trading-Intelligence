@@ -89,6 +89,9 @@ def initialize_database(settings: Settings) -> None:
     initialize_copy_schema(settings)
     initialize_health_schema(settings)
     initialize_opportunity_schema(settings)
+    from app.database.live_edge_storage import initialize_live_edge_schema
+
+    initialize_live_edge_schema(settings)
     initialize_market_opportunity_schema(settings)
     initialize_crypto_opportunity_schema(settings)
 

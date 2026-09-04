@@ -84,6 +84,8 @@ Do not skip stages. Limited Grill Me applies per feature from **V2.2.2 onward** 
 | Market Intelligence (V4.3–V4.10; internal `crypto:*`) | Public market-data reads; spot cross-exchange **paper** arb; V4.5–V4.8 foundation contracts; V4.9 EIA/FRED-verified news ingest + source registry (fail-closed); V4.10 scoring policy contracts + deterministic ranking only under complete approved policy; per-user Filters/History | Trading keys, orders, withdrawals, transfers, wallet access; enable delivery/scanner without approval; invent endpoints/TTLs/default weights/ranking/confidence; create signals from news alone; rewrite historical outcomes; claim complete engines |
 | Crypto V3 legacy leaves | Overview / spread / exchanges (incl. Bybit health) for stale clients | Replace V4.3 Market Intelligence hub; put Bybit in V4.3 scanner universe |
 | Market Opportunity Intelligence (V4.x MOI) | Paper-only opportunity model, WTI detectors when enabled, admin `moi:*` shell | Auto-alerts by default; invent prices/confidence %; present MOI as the main guest product after V4.3 |
+| Polymarket Opportunity Scanner (`opp:`) | Executable momentum scoring; Top Opportunities | Place trades; invent fair value |
+| Live Edge Opportunities (V2.4.4) | Optional parallel Top Opportunities branch; verified live-state edge/EV; map/near-resolution | Invent probability; real orders; replace existing scanner |
 | Health Monitor | Deterministic probes, admin diagnostics, incidents | Depend on AI for status, edit `.env`, restart processes, trade |
 | Storage | Metrics, explicit-path cleanup, online backup, gated prune | Bypass dry-run/disabled defaults, commit runtime data, expose absolute paths |
 

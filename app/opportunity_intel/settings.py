@@ -121,6 +121,7 @@ class OpportunityScannerSettings:
     paper_allocation_usd: Decimal = BALANCED_PAPER_ALLOCATION_USD
     categories: CategoryAllowlist = field(default_factory=CategoryAllowlist)
     live_mode: LiveMode = LiveMode.OFF
+    live_edge_enabled: bool = False
     cooldown_seconds: int = BALANCED_COOLDOWN_SECONDS
     alert_mode: AlertMode = AlertMode.ON_DEMAND_ONLY
     quiet_hours: QuietHours | None = None
@@ -170,6 +171,8 @@ class OpportunityScannerSettings:
             raise TypeError("categories must be CategoryAllowlist")
         if not isinstance(self.live_mode, LiveMode):
             raise ValueError("live_mode must be OFF or STRICT")
+        if not isinstance(self.live_edge_enabled, bool):
+            raise ValueError("live_edge_enabled must be a bool")
         if (
             not isinstance(self.cooldown_seconds, int)
             or not COOLDOWN_SECONDS_BOUNDS[0]

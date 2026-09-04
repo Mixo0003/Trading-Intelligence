@@ -274,10 +274,10 @@ def test_same_wave_for_admin_and_user_with_allocation_payloads(settings):
     assert {row.opportunity_uid for row in rows} == {signal.opportunity_uid}
     admin_text = next(r for r in rows if r.telegram_id == ADMIN_ID).payload_text
     user_text = next(r for r in rows if r.telegram_id == USER_ID).payload_text
-    assert admin_text.startswith("MARKET OPPORTUNITY")
-    assert user_text.startswith("MARKET OPPORTUNITY")
-    assert "Proposed allocation: $100.00" in admin_text
-    assert "Proposed allocation: $250.00" in user_text
+    assert admin_text.startswith("📈 MOMENTUM СИГНАЛ")
+    assert user_text.startswith("📈 MOMENTUM СИГНАЛ")
+    assert "💰 $100.00" in admin_text
+    assert "💰 $250.00" in user_text
     assert f"Score: {signal.score}" in admin_text or "Score:" in admin_text
     assert "{" not in admin_text and "}" not in admin_text
     assert "opportunity_uid" not in admin_text

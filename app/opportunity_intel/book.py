@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ import requests
 from app.config.settings import Settings
 from app.copy_intel.api_result import ApiFailure, ApiSuccess
 from app.copy_intel.order_book import (
+    CLOCK_SKEW_TOLERANCE_SECONDS,
     ValidatedOrderBook,
     parse_validated_order_book,
 )
@@ -26,6 +28,9 @@ from app.opportunity_intel.settings import (
 )
 
 BOOK_TIMEOUT_SECONDS = 15
+# CLOB clocks often lead local time by a few seconds. Copy Intel still
+# rejects that at 2s; Live Edge / Opportunity only retry within this cap.
+_FUTURE_TIMESTAMP_SKEW_CAP_SECONDS = 60.0
 
 _FAILURE_CODE_MAP: dict[str, OpportunityDiagnosticCode] = {
     "request_error": OpportunityDiagnosticCode.BOOK_UNAVAILABLE,
@@ -39,6 +44,7 @@ _FAILURE_CODE_MAP: dict[str, OpportunityDiagnosticCode] = {
     "crossed_or_locked_book": OpportunityDiagnosticCode.BOOK_CROSSED,
     "empty_bids": OpportunityDiagnosticCode.BOOK_ONE_SIDED,
     "empty_asks": OpportunityDiagnosticCode.BOOK_ONE_SIDED,
+    "empty_book": OpportunityDiagnosticCode.BOOK_EMPTY,
     "missing_bids": OpportunityDiagnosticCode.BOOK_EMPTY,
     "missing_asks": OpportunityDiagnosticCode.BOOK_EMPTY,
 }
@@ -153,6 +159,21 @@ def validate_public_book_payload(
     request_count: int = 1,
 ) -> BookAdapterResult:
     """Reuse ``parse_validated_order_book`` with mode-specific freshness."""
+    if isinstance(payload, dict):
+        bids = payload.get("bids")
+        asks = payload.get("asks")
+        if (
+            isinstance(bids, list)
+            and isinstance(asks, list)
+            and len(bids) == 0
+            and len(asks) == 0
+        ):
+            return BookAdapterFailure(
+                status=ResultStatus.PERMANENT_FAILURE,
+                diagnostic_code=OpportunityDiagnosticCode.BOOK_EMPTY,
+                request_count=request_count,
+                source_code="empty_book",
+            )
     parsed = parse_validated_order_book(
         payload,
         requested_asset=requested_asset,
@@ -289,13 +310,44 @@ class PublicOrderBookClient:
                 request_count=request_count,
                 source_code="invalid_json",
             )
-        return validate_public_book_payload(
+        result = validate_public_book_payload(
             payload,
             requested_asset=asset_id,
             mode=mode,
             received_at=received,
             request_count=request_count,
         )
+        if (
+            isinstance(result, BookAdapterFailure)
+            and result.source_code == "future_timestamp"
+        ):
+            retry_received = _received_at_for_future_book(payload, received)
+            if retry_received is not None:
+                result = validate_public_book_payload(
+                    payload,
+                    requested_asset=asset_id,
+                    mode=mode,
+                    received_at=retry_received,
+                    request_count=request_count,
+                )
+        return result
+
+
+def _received_at_for_future_book(payload: Any, received: float) -> float | None:
+    """Shift receive-time only when CLOB timestamp is slightly ahead of local clock."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        book_ts = float(payload.get("timestamp"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(book_ts) or book_ts <= 0:
+        return None
+    candidate = book_ts / 1000.0 if book_ts > 1e12 else book_ts
+    skew = candidate - received
+    if skew <= 0 or skew > _FUTURE_TIMESTAMP_SKEW_CAP_SECONDS:
+        return None
+    return received + skew + CLOCK_SKEW_TOLERANCE_SECONDS
 
 
 def _decimal_price(value: float) -> Decimal:
