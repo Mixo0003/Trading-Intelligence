@@ -22,6 +22,7 @@ from app.opportunity_intel.models import LiveMode, MovementDirection, Observatio
 from app.opportunity_intel.payload import DeliveryCardPayload
 from app.opportunity_intel.reason_text import reason_codes_to_uk_lines
 from app.opportunity_intel.status_view import ScannerStatusView
+from app.opportunity_intel.trade_candidate import TradeCandidateDecision
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -80,6 +81,68 @@ def _momentum_verdict(payload: DeliveryCardPayload) -> str:
     if payload.mode == ObservationMode.LIVE_STRICT:
         return f"Live-ринок. {moving}"
     return moving
+
+
+def format_trade_candidate_card(
+    payload: DeliveryCardPayload,
+    decision: TradeCandidateDecision,
+) -> str:
+    """V2.2.9 Ukrainian paper decision card from fresh verified facts."""
+    projection = decision.projection
+    lines = [
+        "POLYMARKET TRADE CANDIDATE",
+        "",
+        f"Рішення: {decision.action.value}",
+        f"Стан: {decision.stage.value}",
+        f"Ринок: {market_title_plain(payload.question, maximum=400)}",
+        f"Результат: {sanitize_plain(payload.outcome, maximum=80)}",
+        "",
+        f"Поточна ціна: {_pp(decision.current_price)}",
+        f"Допустимий вхід: ≤ {_pp(decision.maximum_entry_price)}",
+        f"Ціль продажу: {_pp(decision.target_price)}",
+        (
+            "Скасування прогнозу: "
+            f"{sanitize_plain(decision.invalidation, maximum=300)}"
+        ),
+        "",
+        f"Якість виконання: {decision.execution_quality}",
+        f"Ліквідність: {decision.liquidity_quality}",
+        f"Прослизання входу: {_pct(decision.entry_slippage)}",
+    ]
+    if decision.exit_slippage is not None:
+        lines.append(f"Оцінка прослизання виходу: {_pct(decision.exit_slippage)}")
+    if projection is not None:
+        lines.extend(
+            [
+                (
+                    "Після комісій і прослизання: "
+                    f"{_signed_money(projection.net_profit_usd)} "
+                    f"({_signed_pct(projection.net_return)})"
+                ),
+                (
+                    "Комісії входу/виходу: "
+                    f"${_money(projection.entry_fee_usd)} / "
+                    f"${_money(projection.exit_fee_usd)}"
+                ),
+            ]
+        )
+    lines.extend(["", "Докази:"])
+    lines.extend(f"- {sanitize_plain(item, maximum=350)}" for item in decision.evidence_lines)
+    lines.extend(
+        [
+            "",
+            "Висновок:",
+            sanitize_plain(decision.conclusion, maximum=600),
+            "",
+            "Paper-only аналітика: бот не створює реальних ордерів і не гарантує прибуток.",
+        ]
+    )
+    if payload.market_link:
+        lines.append(f"Відкрити ринок: {payload.market_link}")
+    text = "\n".join(lines)
+    if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
+        text = text[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
+    return text
 
 
 def format_filters_card(scanner) -> str:
@@ -288,6 +351,16 @@ def _money(value: Decimal) -> str:
     return f"{quantized:,.2f}"
 
 
+def _signed_money(value: Decimal) -> str:
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}${_money(abs(value))}"
+
+
+def _signed_pct(value: Decimal) -> str:
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}{_pct(abs(value))}"
+
+
 def _ts_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -311,6 +384,7 @@ __all__ = [
     "format_filters_card",
     "format_live_mode_help",
     "format_opportunity_card",
+    "format_trade_candidate_card",
     "format_signal_history",
     "market_title_plain",
     "sanitize_plain",

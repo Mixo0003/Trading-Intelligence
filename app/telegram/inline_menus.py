@@ -106,6 +106,9 @@ CB_OSET_RESET_OK = "oset:rok"
 CB_OSET_RESET_NO = "oset:rno"
 CB_OSET_CAT = "oset:cat"
 CB_OSET_LIVE = "oset:lm"
+CB_OSET_LIVE_EDGE = "oset:le"
+CB_OSET_LIVE_EDGE_ON = "oset:le:on"
+CB_OSET_LIVE_EDGE_OFF = "oset:le:off"
 CB_OSET_ALERT = "oset:am"
 # Legacy combined edit menu; routed to Alert Settings for backwards compatibility.
 CB_OSET_EDIT_LEGACY = CB_OSET_EDIT
@@ -567,6 +570,11 @@ def opportunity_filters_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Categories", callback_data=CB_OSET_CAT),
                 InlineKeyboardButton("Live mode", callback_data=CB_OSET_LIVE),
             ],
+            [
+                InlineKeyboardButton(
+                    "🔥 Live Edge", callback_data=CB_OSET_LIVE_EDGE
+                )
+            ],
             [InlineKeyboardButton("⬅️ Back", callback_data=CB_OPP)],
         ]
     )
@@ -621,6 +629,18 @@ def opportunity_live_mode_keyboard(
         [
             [InlineKeyboardButton("ON", callback_data=CB_OPP_LIVE_ON)],
             [InlineKeyboardButton("OFF", callback_data=CB_OPP_LIVE_OFF)],
+            [InlineKeyboardButton("⬅️ Back", callback_data=back_callback)],
+        ]
+    )
+
+
+def opportunity_live_edge_keyboard(
+    *, back_callback: str = CB_OPP_FILTERS
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ ON", callback_data=CB_OSET_LIVE_EDGE_ON)],
+            [InlineKeyboardButton("❌ OFF", callback_data=CB_OSET_LIVE_EDGE_OFF)],
             [InlineKeyboardButton("⬅️ Back", callback_data=back_callback)],
         ]
     )

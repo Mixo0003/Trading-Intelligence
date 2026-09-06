@@ -18,8 +18,15 @@ from app.database.opportunity_storage import (
     upsert_market_state,
 )
 from app.database.storage import initialize_database, upsert_user
-from app.opportunity_intel.catalog import load_top_opportunities
-from app.opportunity_intel.discovery import ValidatedMarket, ValidatedOutcome
+from app.opportunity_intel.catalog import (
+    TradeCandidatesResult,
+    load_top_opportunities,
+    load_trade_candidates,
+)
+from app.copy_intel.order_book import BookLevel, ValidatedOrderBook
+from app.opportunity_intel.book import adapt_validated_book
+from app.opportunity_intel.discovery import ResultStatus, ValidatedMarket, ValidatedOutcome
+from app.opportunity_intel.history import HistoryPoint, HistoryReadResult
 from app.opportunity_intel.models import (
     CanonicalObservation,
     ExecutionMetrics,
@@ -60,6 +67,7 @@ from app.telegram.menu import build_telegram_application
 from app.telegram.opportunity_intel.formatting import (
     format_live_mode_help,
     format_opportunity_card,
+    format_trade_candidate_card,
     sanitize_plain,
 )
 from tests.conftest import make_test_settings
@@ -384,6 +392,72 @@ def test_top_opportunities_catalog_filters_and_limit(settings):
     assert result.entries[0].payload.allocation_usd == Decimal("100")
 
 
+def test_v229_trade_candidates_refresh_history_book_and_render_wait(settings):
+    _seed_ready(settings)
+    now = datetime.now(timezone.utc)
+    gamma = _live_gamma_client(
+        now=now,
+        market_overrides={
+            "description": "This market resolves from the official published result.",
+            "resolutionSource": "https://official.example/result",
+            "feesEnabled": True,
+            "feeSchedule": {
+                "rate": "0.04",
+                "exponent": 1,
+                "takerOnly": True,
+            },
+        },
+    )
+    history = MagicMock()
+    history.fetch.return_value = HistoryReadResult(
+        asset_id="asset-1",
+        status=ResultStatus.COMPLETE,
+        points=(
+            HistoryPoint(at=now - timedelta(hours=1), price=Decimal("0.50")),
+            HistoryPoint(at=now - timedelta(minutes=15), price=Decimal("0.52")),
+            HistoryPoint(at=now - timedelta(minutes=5), price=Decimal("0.54")),
+            HistoryPoint(at=now, price=Decimal("0.56")),
+        ),
+    )
+    book = ValidatedOrderBook(
+        asset_id="asset-1",
+        book_hash="fresh",
+        quote_at=now.timestamp(),
+        received_at=now.timestamp(),
+        quote_age_seconds=0,
+        bids=(BookLevel(price=0.54, size=1000),),
+        asks=(BookLevel(price=0.56, size=1000),),
+        best_bid=0.54,
+        best_ask=0.56,
+        midpoint=0.55,
+        spread=0.02,
+        visible_ask_depth_usd=560,
+        visible_bid_depth_usd=540,
+        min_order_size=5,
+    )
+    book_client = MagicMock()
+    book_client.fetch.return_value = adapt_validated_book(
+        book,
+        requested_asset="asset-1",
+        mode=ObservationMode.NORMAL,
+    )
+    result = load_trade_candidates(
+        settings,
+        telegram_id=42,
+        now=now,
+        gamma_client=gamma,
+        history_client=history,
+        book_client=book_client,
+    )
+    assert result.status == "ready"
+    assert result.entries[0].decision.action.value == "WAIT"
+    text = format_trade_candidate_card(
+        result.entries[0].payload, result.entries[0].decision
+    )
+    assert text.startswith("POLYMARKET TRADE CANDIDATE")
+    assert "Рішення: WAIT" in text
+
+
 def test_top_opportunities_status_messages(settings):
     empty = load_top_opportunities(
         settings, telegram_id=42, gamma_client=_live_gamma_client()
@@ -555,8 +629,12 @@ async def test_top_callback_uses_cached_path(settings):
             return_value=client,
         ),
         patch(
-            "app.telegram.opportunity_intel.handlers.load_top_opportunities",
-            wraps=load_top_opportunities,
+            "app.telegram.opportunity_intel.handlers.load_trade_candidates",
+            return_value=TradeCandidatesResult(
+                status="empty",
+                entries=(),
+                message="No verified trade candidates.",
+            ),
         ) as mocked,
     ):
         await inline_callback_handler(update, context)
@@ -568,7 +646,7 @@ async def test_top_callback_uses_cached_path(settings):
     assert "fetch_validated_order_book" not in source
     assert "run_cycle" not in source
     text = update.callback_query.message.edit_text.await_args.args[0]
-    assert "📈 MOMENTUM СИГНАЛ" in text
+    assert text == "No verified trade candidates."
     assert "opportunity_uid" not in text
     assert not text.lstrip().startswith("{")
 

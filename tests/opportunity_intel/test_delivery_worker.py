@@ -105,6 +105,29 @@ async def test_pending_send_success(settings):
 
 
 @pytest.mark.asyncio
+async def test_fresh_trade_candidate_card_replaces_legacy_payload(
+    settings, monkeypatch
+):
+    _seed_pending(settings)
+    monkeypatch.setattr(
+        "app.opportunity_intel.delivery_worker.render_fresh_trade_candidate_card",
+        lambda *_args, **_kwargs: "POLYMARKET TRADE CANDIDATE\n\nРішення: WAIT",
+    )
+    send = AsyncMock(return_value=None)
+
+    result = await process_opportunity_deliveries(
+        settings,
+        send_message=send,
+        now=NOW,
+        fresh_trade_candidate_cards=True,
+    )
+
+    assert result.sent == 1
+    assert send.await_args.kwargs["text"].startswith("POLYMARKET TRADE CANDIDATE")
+    assert "MARKET OPPORTUNITY" not in send.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
 async def test_retryable_failure(settings):
     _seed_pending(settings)
 

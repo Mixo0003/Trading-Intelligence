@@ -19,8 +19,11 @@ from app.opportunity_intel.delivery import (
     mark_send_success,
     prepare_authorized_send,
 )
-from app.opportunity_intel.models import DeliveryStatus
-from app.opportunity_intel.telegram_errors import classify_telegram_send_outcome
+from app.opportunity_intel.models import DeliveryStatus, OpportunityDiagnosticCode
+from app.opportunity_intel.telegram_errors import (
+    TelegramSendClassification,
+    classify_telegram_send_outcome,
+)
 from app.opportunity_intel.versions import (
     DELIVERY_TELEGRAM_CONCURRENCY,
     DELIVERY_WORKER_BATCH_SIZE,
@@ -29,6 +32,14 @@ from app.opportunity_intel.versions import (
 logger = logging.getLogger(__name__)
 
 TelegramSendFn = Callable[..., Awaitable[Any]]
+
+
+class FreshTradeCandidateUnavailable(RuntimeError):
+    """Sanitized fail-closed result for a fresh pre-send analysis."""
+
+    def __init__(self, code) -> None:
+        super().__init__("fresh trade-candidate analysis unavailable")
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,7 @@ async def process_opportunity_deliveries(
     batch_size: int = DELIVERY_WORKER_BATCH_SIZE,
     concurrency: int = DELIVERY_TELEGRAM_CONCURRENCY,
     auto_alerts_enabled: bool | None = None,
+    fresh_trade_candidate_cards: bool = False,
 ) -> DeliveryWorkerResult:
     """Process due delivery rows with atomic claim + auth recheck.
 
@@ -115,10 +127,65 @@ async def process_opportunity_deliveries(
                 return
 
             delivery = prepared.delivery
+            payload_text = delivery.payload_text
+            if fresh_trade_candidate_cards:
+                try:
+                    payload_text = await asyncio.to_thread(
+                        render_fresh_trade_candidate_card,
+                        settings,
+                        telegram_id=delivery.telegram_id,
+                        opportunity_uid=delivery.opportunity_uid,
+                        now=clock,
+                    )
+                except FreshTradeCandidateUnavailable as exc:
+                    status = await asyncio.to_thread(
+                        mark_send_failure,
+                        settings,
+                        telegram_id=delivery.telegram_id,
+                        opportunity_uid=delivery.opportunity_uid,
+                        claim_id=prepared.claim_id,
+                        classification=TelegramSendClassification(
+                            code=exc.code,
+                            retryable=True,
+                        ),
+                        now=clock,
+                    )
+                    async with lock:
+                        if status == DeliveryStatus.RETRY_WAIT:
+                            counters["retry_wait"] += 1
+                        else:
+                            counters["dead_letter"] += 1
+                        failure_categories[exc.code.value] = (
+                            failure_categories.get(exc.code.value, 0) + 1
+                        )
+                    return
+                except Exception:
+                    logger.exception("Fresh trade-candidate rendering failed")
+                    status = await asyncio.to_thread(
+                        mark_send_failure,
+                        settings,
+                        telegram_id=delivery.telegram_id,
+                        opportunity_uid=delivery.opportunity_uid,
+                        claim_id=prepared.claim_id,
+                        classification=TelegramSendClassification(
+                            code=OpportunityDiagnosticCode.DELIVERY_FAILURE,
+                            retryable=True,
+                        ),
+                        now=clock,
+                    )
+                    async with lock:
+                        if status == DeliveryStatus.RETRY_WAIT:
+                            counters["retry_wait"] += 1
+                        else:
+                            counters["dead_letter"] += 1
+                        failure_categories["fresh_card_render"] = (
+                            failure_categories.get("fresh_card_render", 0) + 1
+                        )
+                    return
             try:
                 await send_message(
                     chat_id=delivery.telegram_id,
-                    text=delivery.payload_text,
+                    text=payload_text,
                 )
             except Exception as exc:
                 classification = classify_telegram_send_outcome(exc)
@@ -169,3 +236,55 @@ async def process_opportunity_deliveries(
         skipped=counters["skipped"],
         failure_categories=dict(failure_categories),
     )
+
+
+def render_fresh_trade_candidate_card(
+    settings: Settings,
+    *,
+    telegram_id: int,
+    opportunity_uid: str,
+    now: datetime,
+) -> str:
+    """Refresh Gamma, history, and both sides of the book before Telegram send."""
+    from app.opportunity_intel.live_trade_analysis import (
+        LiveTradeAnalysisFailure,
+        analyze_live_trade_snapshot,
+        fetch_live_trade_snapshot,
+    )
+    from app.opportunity_intel.models import OpportunityDiagnosticCode
+    from app.telegram.opportunity_intel.formatting import format_trade_candidate_card
+
+    signal = opportunity_storage.load_signal(settings, opportunity_uid)
+    subscription = opportunity_storage.load_subscription(settings, telegram_id)
+    if signal is None or subscription is None:
+        raise FreshTradeCandidateUnavailable(
+            OpportunityDiagnosticCode.AUTHORIZATION_REVOKED
+        )
+    bundle = opportunity_storage.load_persisted_observation_bundle(
+        settings,
+        asset_id=signal.asset_id,
+        observed_at=signal.source_observed_at,
+    )
+    if bundle is None:
+        raise FreshTradeCandidateUnavailable(
+            OpportunityDiagnosticCode.LIVE_DATA_INCONSISTENT
+        )
+    snapshot = fetch_live_trade_snapshot(
+        settings,
+        signal=signal,
+        bundle=bundle,
+        now=now,
+    )
+    if isinstance(snapshot, LiveTradeAnalysisFailure):
+        raise FreshTradeCandidateUnavailable(snapshot.diagnostic_code)
+    analysis = analyze_live_trade_snapshot(
+        signal=signal,
+        bundle=bundle,
+        snapshot=snapshot,
+        allocation_usd=subscription.settings.paper_allocation_usd,
+        maximum_slippage=subscription.settings.maximum_slippage,
+        now=now,
+    )
+    if isinstance(analysis, LiveTradeAnalysisFailure):
+        raise FreshTradeCandidateUnavailable(analysis.diagnostic_code)
+    return format_trade_candidate_card(analysis.payload, analysis.decision)

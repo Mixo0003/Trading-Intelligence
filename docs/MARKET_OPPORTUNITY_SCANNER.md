@@ -14,6 +14,31 @@ branch `feature/v2.2.3-market-opportunity-scanner`.
 
 This is **not** production GO, **not** live-verified, and **not released**.
 
+## V2.2.9 Trade Candidate addendum
+
+V2.2.9 adds a backward-compatible fresh decision layer to Top Opportunities
+and automatic delivery. The persisted V2.2.3 signal/history schema is unchanged.
+
+- Fresh facts: Gamma tradeability and resolution rules/source, official Gamma
+  sports live/score state, CLOB 5m/15m/1h history, full book, ask-side paper
+  entry, bid-share exit capacity, and Gamma `feeSchedule`.
+- States: PRE_MOVE_SETUP, ENTRY_TRIGGER, MOMENTUM_CONTINUATION,
+  EXECUTED_IMPULSE, EXIT / TAKE_PROFIT, WAIT, SKIP.
+- Actions: ENTER, WAIT, EXIT, SKIP. ENTER is analysis only and cannot place an
+  order.
+- Forward catalysts currently proven from exact official live-state advantage,
+  verified exact-market evidence supplied through the evidence contract, or
+  deterministic No-side deadline decay. Price movement alone is insufficient.
+- Evidence requires one official or two independent trusted sources; social
+  sources are warning-only; stale/irrelevant/conflicting rows cannot confirm a
+  catalyst. External publisher adapters are not guessed or scraped.
+- The Telegram handler offloads the entire live read/decision path; no network
+  request blocks the update handler.
+- The delivery worker repeats the fresh analysis immediately before an
+  automatic send. If that refresh is unavailable it retries fail-closed and
+  does not send the persisted legacy momentum card.
+- See `docs/GRILL_ME_V229.md` and `docs/FINAL_PLAN_V229.md`.
+
 ## Product purpose
 
 Discover active Polymarket markets from **public** Gamma / CLOB data, score

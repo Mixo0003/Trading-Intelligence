@@ -198,6 +198,7 @@ async def test_job_callback_spawns_background_work(settings):
         assert start_mock.called
         assert await_mock.called
         deliver.assert_awaited()
+        assert deliver.await_args.kwargs["fresh_trade_candidate_cards"] is True
 
 
 @pytest.mark.asyncio

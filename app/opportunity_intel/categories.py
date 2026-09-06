@@ -9,6 +9,8 @@ _CATEGORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 # Curated closed catalog for Telegram toggles (callback-safe identifiers).
 KNOWN_CATEGORY_IDS: tuple[str, ...] = (
     "politics",
+    "geopolitics",
+    "weather",
     "sports",
     "crypto",
     "finance",
@@ -24,6 +26,8 @@ KNOWN_CATEGORY_SET = frozenset(KNOWN_CATEGORY_IDS)
 
 CATEGORY_LABELS: dict[str, str] = {
     "politics": "Politics",
+    "geopolitics": "Geopolitics",
+    "weather": "Weather",
     "sports": "Sports",
     "crypto": "Crypto",
     "finance": "Finance",
