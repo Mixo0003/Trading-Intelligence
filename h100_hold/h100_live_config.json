@@ -1,0 +1,10 @@
+{
+  "bot_id": "h100_hold",
+  "stake_usd": 100,
+  "profit_lock_usd": 30,
+  "day_stop_usd": 10.0,
+  "leverage": 3,
+  "notes": "Файл-контракт панелі «H100 Hold (live)»: панель пише сюди настройки власника (stake_usd = маржа, ноціонал = stake_usd * leverage; profit_lock_usd = поріг OWNER_RULE_PROFIT_LOCK_30; day_stop_usd = додатна величина, у виконавці це DAY_STOP_USD = -day_stop_usd). Станом на 2026-11-03 live_executor.py тримає ті самі значення константами в коді (MARGIN=100, PROFIT_LOCK_USD=30, DAY_STOP_USD=-15) і цей файл ще не читає — прийняття контракту лишається за виконавцем.",
+  "updated_at": "2026-11-03T17:46:34Z",
+  "updated_by": 8405011197
+}
